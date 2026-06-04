@@ -1,7 +1,6 @@
 @import './themes/variables.css';
-@import "tailwindcss/theme.css" layer(theme);
-@import "tailwindcss/preflight.css" layer(base);
-@import "tailwindcss/utilities.css" layer(utilities);
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
 
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
@@ -27,16 +26,7 @@
   --radius-lg: 12px;
 }
 
-@layer app {
-
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-
+/* App layout styles */
   html,
   body {
     width: 100%;
@@ -133,6 +123,7 @@
     cursor: pointer;
     border-radius: 4px;
     transition: all 0.15s;
+    position: relative;
   }
 
   .ws-titlebar-btn:hover {
@@ -174,8 +165,9 @@
 
   .ws-content {
     flex: 1;
-    overflow: auto;
+    overflow: hidden;
     background: var(--bg-base);
+    min-height: 0;
   }
 
   .ws-statusbar {
@@ -196,4 +188,27 @@
     align-items: center;
     gap: 4px;
   }
+
+/* === Unlayered styles — highest cascade priority ===
+   Ant Design cssinjs also injects unlayered styles. These rules ensure
+   portal containers (Modal, Message, etc.) are properly positioned even
+   when overflow:hidden is set on html/body/#root. */
+
+.ant-modal-root {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 11000 !important;
+}
+
+.ant-modal-mask {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 11000 !important;
+}
+
+.ant-modal-wrap {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 11000 !important;
+  overflow: auto !important;
 }

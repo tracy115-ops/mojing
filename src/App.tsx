@@ -24,14 +24,10 @@ const App: React.FC = () => {
   return (
     <>
       <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} duration={3000} />
-      <StyleProvider layer>
+      <StyleProvider>
         <ConfigProvider
           locale={antdLocale}
           theme={{
-            cssVar: {
-              key: `aiws-${isDark ? 'dark' : 'light'}`,
-              prefix: 'ant',
-            },
             token: {
               ...activeTheme.token,
               zIndexPopupBase: 11000,

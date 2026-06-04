@@ -7,6 +7,22 @@ dist-ssr/
 
 # Tauri
 src-tauri/target/
+src-tauri/gen/
+src-tauri/Cargo.lock
+
+# Build artifacts
+tsconfig.tsbuildinfo
+
+# Debug screenshots
+/modal-test*.png
+/dev-current.png
+/dev-mode-current.png
+/prod-build-style.png
+/production-light-theme.png
+/theme-toggle.png
+
+# Playwright
+.playwright-mcp/
 
 # Environment
 *.local

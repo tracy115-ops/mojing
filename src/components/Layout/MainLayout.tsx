@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Menu, Button, Tooltip } from 'antd';
+import React, { useState, useCallback } from 'react';
+import { Menu, Button, Tooltip, Modal } from 'antd';
 import {
   BookOutlined,
   PictureOutlined,
@@ -14,6 +14,9 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const tauriWin = () => getCurrentWindow() as any;
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useTranslation } from '@/i18n';
 import NovelView from '@/components/Novel/NovelView';
@@ -21,7 +24,7 @@ import ComicView from '@/components/Comic/ComicView';
 import VideoView from '@/components/Video/VideoView';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
 
-type ViewKey = 'novels' | 'comics' | 'videos' | 'settings';
+type ViewKey = 'novels' | 'comics' | 'videos';
 
 const MainLayout: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewKey>('novels');
@@ -34,8 +37,7 @@ const MainLayout: React.FC = () => {
 
   const handleWindowAction = useCallback(async (action: 'minimize' | 'maximize' | 'close') => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      const win = getCurrentWindow();
+      const win = tauriWin();
       switch (action) {
         case 'minimize': await win.minimize(); break;
         case 'maximize': {
@@ -78,15 +80,24 @@ const MainLayout: React.FC = () => {
       case 'novels': return <NovelView />;
       case 'comics': return <ComicView />;
       case 'videos': return <VideoView />;
-      case 'settings': return <SettingsPanel />;
       default: return <NovelView />;
     }
   };
 
+  const handleTitlebarMouseDown = useCallback(async (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('.ant-btn') || target.closest('.ant-tooltip')) return;
+    try {
+      await tauriWin().startDragging();
+    } catch {
+      // Not in Tauri
+    }
+  }, []);
+
   return (
     <div className="ws-shell">
-      {/* TitleBar */}
-      <div className="ws-titlebar" data-tauri-drag-region>
+      <div className="ws-titlebar" onMouseDown={handleTitlebarMouseDown}>
         <Tooltip title={sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')} placement="right">
           <Button
             type="text"
@@ -97,7 +108,7 @@ const MainLayout: React.FC = () => {
           />
         </Tooltip>
 
-        <div className="ws-titlebar-title" data-tauri-drag-region>
+        <div className="ws-titlebar-title">
           MoJing 墨境
         </div>
 
@@ -130,11 +141,13 @@ const MainLayout: React.FC = () => {
           <div className="ws-sidebar-nav">
             <Menu
               mode="inline"
-              selectedKeys={[activeView]}
+              selectedKeys={[settingsOpen ? 'settings' : activeView]}
               onClick={({ key }) => {
-                setActiveView(key as ViewKey);
                 if (key === 'settings') {
                   setSettingsOpen(true);
+                } else {
+                  setSettingsOpen(false);
+                  setActiveView(key as ViewKey);
                 }
               }}
               items={menuItems}
@@ -151,10 +164,26 @@ const MainLayout: React.FC = () => {
         </div>
       </div>
 
+      {/* Settings Modal */}
+      <Modal
+        title={t('settings.title')}
+        open={settingsOpen}
+        onCancel={() => setSettingsOpen(false)}
+        footer={null}
+        width={780}
+        destroyOnClose
+        getContainer={() => document.getElementById('root')!}
+        styles={{
+          body: { maxHeight: 'calc(100vh - 200px)', overflow: 'auto' },
+        }}
+      >
+        <SettingsPanel />
+      </Modal>
+
       {/* StatusBar */}
       <div className="ws-statusbar">
         <span className="ws-statusbar-item">
-          {t(`sidebar.${activeView}`)}
+          {settingsOpen ? t('sidebar.settings') : t(`sidebar.${activeView}`)}
         </span>
         <span className="ws-statusbar-item">
           {t('settings.general.theme')}: {t(`settings.general.theme.${settings.appearance.theme}`)}

@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Divider, Space, message } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AppSettings } from '@/types';
+
+const ProviderSettings = React.lazy(() => import('./ProviderSettings'));
 
 const SettingsPanel: React.FC = () => {
   const { t } = useTranslation();
@@ -199,6 +201,15 @@ const SettingsPanel: React.FC = () => {
             />
           </Form.Item>
         </Form>
+      ),
+    },
+    {
+      key: 'providers',
+      label: t('settings.nav.providers'),
+      children: (
+        <Suspense fallback={<div>{t('common.loading')}</div>}>
+          <ProviderSettings />
+        </Suspense>
       ),
     },
   ];

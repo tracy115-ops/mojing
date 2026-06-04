@@ -1,6 +1,6 @@
-import ReactDOM from 'react-dom/client';
 import '@ant-design/v5-patch-for-react-19';
-import './styles/style-layers.css';
+import ReactDOM from 'react-dom/client';
+import App from './App';
 import './styles/global.css';
 
 const readInitialTheme = (): 'dark' | 'light' => {
@@ -29,9 +29,4 @@ const readInitialTheme = (): 'dark' | 'light' => {
 };
 
 document.documentElement.setAttribute('data-theme', readInitialTheme());
-
-const root = ReactDOM.createRoot(document.getElementById('root')!);
-root.render(<div className="app-loading-shell" />);
-void import('./App').then(({ default: App }) => {
-  root.render(<App />);
-});
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
