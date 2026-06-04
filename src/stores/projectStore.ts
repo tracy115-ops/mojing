@@ -132,9 +132,12 @@ export const useProjectStore = create<ProjectState>()(
           projects: s.projects.map((p) => {
             if (p.id !== projectId || p.type !== 'novel') return p;
             const meta = p.metadata as NovelMetadata;
+            const remaining = meta.chapters.filter((c) => c.id !== chapterId);
+            const currentWordCount = remaining.reduce((sum, c) => sum + c.wordCount, 0);
+            const reindexed = remaining.map((c, i) => ({ ...c, order: i }));
             return {
               ...p,
-              metadata: { ...meta, chapters: meta.chapters.filter((c) => c.id !== chapterId) },
+              metadata: { ...meta, chapters: reindexed, currentWordCount },
               updatedAt: new Date().toISOString(),
             };
           }),
@@ -273,14 +276,13 @@ export const useProjectStore = create<ProjectState>()(
           projects: s.projects.map((p) => {
             if (p.id !== projectId || p.type !== 'video') return p;
             const meta = p.metadata as VideoMetadata;
+            const updatedScenes = meta.scenes.map((sc) =>
+              sc.id === sceneId ? { ...sc, ...updates } : sc,
+            );
+            const duration = updatedScenes.reduce((sum, sc) => sum + sc.duration, 0);
             return {
               ...p,
-              metadata: {
-                ...meta,
-                scenes: meta.scenes.map((sc) =>
-                  sc.id === sceneId ? { ...sc, ...updates } : sc,
-                ),
-              },
+              metadata: { ...meta, scenes: updatedScenes, duration },
               updatedAt: new Date().toISOString(),
             };
           }),

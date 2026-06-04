@@ -28,7 +28,7 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
         <Form.Item name="title" label={t('project.create')} rules={[{ required: true }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="description" label="简介">
+        <Form.Item name="description" label={t('common.description')}>
           <Input.TextArea rows={3} />
         </Form.Item>
         <div style={{ display: 'flex', gap: 16 }}>
@@ -40,11 +40,11 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
               { value: 'pixel', label: t('comic.style.pixel') },
             ]} />
           </Form.Item>
-          <Form.Item name="panelLayout" label="分格布局" style={{ flex: 1 }}>
+          <Form.Item name="panelLayout" label={t('comic.panelLayout')} style={{ flex: 1 }}>
             <Select options={[
-              { value: 'grid', label: '网格' },
-              { value: 'free', label: '自由' },
-              { value: 'manga-row', label: '条漫' },
+              { value: 'grid', label: t('comic.panelLayout.grid') },
+              { value: 'free', label: t('comic.panelLayout.free') },
+              { value: 'manga-row', label: t('comic.panelLayout.manga-row') },
             ]} />
           </Form.Item>
         </div>

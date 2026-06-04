@@ -95,7 +95,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
                   </Tag>
                   {project.type === 'novel' && (
                     <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
-                      {(project.metadata as { currentWordCount?: number }).currentWordCount?.toLocaleString() ?? 0} 字
+                      {t('novel.wordCount', { count: (project.metadata as { currentWordCount?: number }).currentWordCount?.toLocaleString() ?? '0' })}
                     </Tag>
                   )}
                 </div>

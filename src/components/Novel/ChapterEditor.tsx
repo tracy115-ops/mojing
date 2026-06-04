@@ -150,7 +150,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         <Input
           value={chapter.title}
           onChange={(e) => { onUpdate({ title: e.target.value }); }}
-          placeholder={t('novel.chapters')}
+          placeholder={t('novel.chapterTitle')}
           variant="borderless"
           style={{ fontSize: 15, fontWeight: 600, padding: '4px 0' }}
         />
@@ -169,7 +169,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                 <Input.TextArea
                   value={chapter.outline}
                   onChange={(e) => debouncedSave('outline', e.target.value)}
-                  placeholder="章节大纲..."
+                  placeholder={t("novel.outlinePlaceholder")}
                   style={{ height: 'calc(100% - 40px)', resize: 'none' }}
                   disabled={generating === 'outline'}
                 />
@@ -196,15 +196,15 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                 <Input.TextArea
                   value={streamContent || chapter.content}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
-                  placeholder="章节正文..."
+                  placeholder={t("novel.contentPlaceholder")}
                   style={{ flex: 1, resize: 'none', minHeight: 300 }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{wc.toLocaleString()} 字</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
                   <Space>
                     {generating === 'content' ? (
                       <Button size="small" danger onClick={handleStopGeneration}>
-                        停止生成
+                        {t('novel.stopGeneration')}
                       </Button>
                     ) : (
                       <Button

@@ -77,7 +77,8 @@ const ProviderSettings: React.FC = () => {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [form] = Form.useForm();
 
-  const healthStatus = useProviderStore((s) => s.healthStatus);
+  const healthStatus = store.healthStatus;
+  const endpoints = store.endpoints;
 
   const handleAddEndpoint = (category: 'llm' | 'image' | 'video') => {
     setAddCategory(category);
@@ -152,7 +153,7 @@ const ProviderSettings: React.FC = () => {
       key: 'status',
       width: 100,
       render: (_: unknown, record: ApiEndpoint) => {
-        const health = healthStatus.get(record.id);
+        const health = healthStatus[record.id];
         if (testingId === record.id) return <LoadingOutlined spin />;
         if (!health) return <Tag>—</Tag>;
         return health.available
@@ -174,8 +175,6 @@ const ProviderSettings: React.FC = () => {
       ),
     },
   ];
-
-  const endpoints = store.endpoints;
 
   const renderProviderSelector = (
     category: 'llm' | 'image' | 'video',

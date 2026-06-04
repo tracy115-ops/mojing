@@ -53,15 +53,13 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
 interface ProviderState {
   config: ProviderConfig;
   endpoints: ApiEndpoint[];
-  healthStatus: Map<string, ProviderHealth>;
+  healthStatus: Record<string, ProviderHealth>;
 
-  // Endpoint management
   addEndpoint: (endpoint: Omit<ApiEndpoint, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateEndpoint: (id: string, updates: Partial<ApiEndpoint>) => void;
   removeEndpoint: (id: string) => void;
   getEndpoint: (id: string) => ApiEndpoint | undefined;
 
-  // Provider routing
   setLLMProvider: (provider: LLMProviderId, model?: string, endpointId?: string) => void;
   setImageProvider: (provider: ImageProviderId, model?: string, endpointId?: string) => void;
   setVideoProvider: (provider: VideoProviderId, model?: string, endpointId?: string) => void;
@@ -72,10 +70,8 @@ interface ProviderState {
   setImageFallback: (provider: ImageProviderId, endpointId?: string) => void;
   setVideoFallback: (provider: VideoProviderId, endpointId?: string) => void;
 
-  // Health
   checkHealth: (endpointId: string) => Promise<ProviderHealth>;
 
-  // Config access helpers
   getActiveEndpoint: (category: 'llm' | 'image' | 'video') => ApiEndpoint | undefined;
   getFallbackEndpoint: (category: 'llm' | 'image' | 'video') => ApiEndpoint | undefined;
 
@@ -89,7 +85,7 @@ export const useProviderStore = create<ProviderState>()(
     (set, get) => ({
       config: DEFAULT_PROVIDER_CONFIG,
       endpoints: [],
-      healthStatus: new Map(),
+      healthStatus: {},
 
       addEndpoint: (endpoint) => {
         const now = new Date().toISOString();
@@ -231,11 +227,7 @@ export const useProviderStore = create<ProviderState>()(
 
         if (!endpoint) {
           health.error = 'Endpoint not found';
-          set((s) => {
-            const updated = new Map(s.healthStatus);
-            updated.set(endpointId, health);
-            return { healthStatus: updated };
-          });
+          set((s) => ({ healthStatus: { ...s.healthStatus, [endpointId]: health } }));
           return health;
         }
 
@@ -258,11 +250,7 @@ export const useProviderStore = create<ProviderState>()(
           health.error = err instanceof Error ? err.message : 'Connection failed';
         }
 
-        set((s) => {
-          const updated = new Map(s.healthStatus);
-          updated.set(endpointId, health);
-          return { healthStatus: updated };
-        });
+        set((s) => ({ healthStatus: { ...s.healthStatus, [endpointId]: health } }));
         return health;
       },
 
@@ -279,7 +267,7 @@ export const useProviderStore = create<ProviderState>()(
       },
 
       reset: () => {
-        set({ config: DEFAULT_PROVIDER_CONFIG, endpoints: [], healthStatus: new Map() });
+        set({ config: DEFAULT_PROVIDER_CONFIG, endpoints: [], healthStatus: {} });
       },
     }),
     {
@@ -294,7 +282,7 @@ export const useProviderStore = create<ProviderState>()(
           ...current,
           config: saved?.config ?? current.config,
           endpoints: saved?.endpoints ?? current.endpoints,
-          healthStatus: new Map(),
+          healthStatus: {},
         };
       },
     },

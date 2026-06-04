@@ -104,7 +104,7 @@ const ComicWorkspace: React.FC<ComicWorkspaceProps> = ({ projectId }) => {
             <Card size="small" title={<span><UserOutlined /> {selectedChar.name}</span>}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>描述</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('comic.characterDescription')}</Text>
                   <Input.TextArea
                     value={selectedChar.description}
                     onChange={(e) => updateComicCharacter(projectId, selectedChar.id, { description: e.target.value })}
@@ -112,12 +112,12 @@ const ComicWorkspace: React.FC<ComicWorkspaceProps> = ({ projectId }) => {
                   />
                 </div>
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>外貌描述</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('comic.characterAppearance')}</Text>
                   <Input.TextArea
                     value={selectedChar.appearance}
                     onChange={(e) => updateComicCharacter(projectId, selectedChar.id, { appearance: e.target.value })}
                     rows={3}
-                    placeholder="详细描述角色外貌，用于AI生成参考..."
+                    placeholder={t('comic.characterAppearancePlaceholder')}
                   />
                 </div>
               </Space>
@@ -126,8 +126,8 @@ const ComicWorkspace: React.FC<ComicWorkspaceProps> = ({ projectId }) => {
 
           {/* Page/Panel area placeholder */}
           <Card size="small" title={<span><PictureOutlined /> {t('comic.panels')}</span>}>
-            <Empty description="漫画分格编辑功能开发中" image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Text type="secondary">添加角色后，可基于小说内容自动生成漫画分格脚本</Text>
+            <Empty description={t('comic.panels.comingSoon')} image={Empty.PRESENTED_IMAGE_SIMPLE}>
+              <Text type="secondary">{t('comic.panels.hint')}</Text>
             </Empty>
           </Card>
         </Space>
@@ -145,14 +145,14 @@ const ComicWorkspace: React.FC<ComicWorkspaceProps> = ({ projectId }) => {
         getContainer={() => document.getElementById('root')!}
       >
         <Form form={charForm} layout="vertical" size="small">
-          <Form.Item name="name" label="角色名称" rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('comic.characterName')} rules={[{ required: true }]}>
             <Input />
           </Form.Item>
           <Form.Item name="description" label="角色描述">
-            <Input.TextArea rows={2} placeholder="性格、背景等..." />
+            <Input.TextArea rows={2} placeholder={t('comic.characterNamePlaceholder')} />
           </Form.Item>
-          <Form.Item name="appearance" label="外貌描述">
-            <Input.TextArea rows={3} placeholder="用于AI生成参考的外貌描述..." />
+          <Form.Item name="appearance" label={t('comic.characterAppearance')}>
+            <Input.TextArea rows={3} placeholder={t('comic.characterDescPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>

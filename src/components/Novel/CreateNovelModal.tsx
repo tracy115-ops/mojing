@@ -32,10 +32,10 @@ const CreateNovelModal: React.FC<CreateNovelModalProps> = ({ open, onOk, onCance
       getContainer={() => document.getElementById('root')!}
     >
       <Form form={form} layout="vertical" size="small" initialValues={{ genre: 'fantasy', targetWordCount: 100000, style: 'literary', language: 'zh-CN' }}>
-        <Form.Item name="title" label={t('project.create') + ' ' + t('novel.title')} rules={[{ required: true, message: t('common.noData') }]}>
+        <Form.Item name="title" label={t('project.create') + ' ' + t('novel.title')} rules={[{ required: true, message: t('common.required') }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="description" label="简介">
+        <Form.Item name="description" label={t('common.description')}>
           <Input.TextArea rows={3} />
         </Form.Item>
         <div style={{ display: 'flex', gap: 16 }}>
@@ -56,11 +56,11 @@ const CreateNovelModal: React.FC<CreateNovelModalProps> = ({ open, onOk, onCance
         <div style={{ display: 'flex', gap: 16 }}>
           <Form.Item name="style" label={t('novel.style')} style={{ flex: 1 }}>
             <Select options={[
-              { value: 'literary', label: '文学风' },
-              { value: 'light', label: '轻松风' },
-              { value: 'suspense', label: '悬疑风' },
-              { value: 'epic', label: '史诗风' },
-              { value: 'humorous', label: '幽默风' },
+              { value: 'literary', label: t('novel.style.literary') },
+              { value: 'light', label: t('novel.style.light') },
+              { value: 'suspense', label: t('novel.style.suspense') },
+              { value: 'epic', label: t('novel.style.epic') },
+              { value: 'humorous', label: t('novel.style.humorous') },
             ]} />
           </Form.Item>
           <Form.Item name="language" label={t('settings.general.language')} style={{ flex: 1 }}>

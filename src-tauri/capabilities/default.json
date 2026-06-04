@@ -32,6 +32,9 @@
     "dialog:allow-ask",
     "os:default",
     "process:default",
-    "process:allow-exit"
+    "process:allow-exit",
+    "core:tray:default",
+    "core:tray:allow-set-icon",
+    "core:tray:allow-set-tooltip"
   ]
 }

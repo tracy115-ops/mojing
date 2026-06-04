@@ -7,19 +7,19 @@ import type { VideoMetadata, VideoScene } from '@/types';
 
 const { Text, Paragraph } = Typography;
 
-const STATUS_LABELS: Record<VideoScene['status'], { color: string; label: string }> = {
-  scripted: { color: 'default', label: '脚本' },
-  storyboarded: { color: 'processing', label: '分镜' },
-  generated: { color: 'warning', label: '已生成' },
-  complete: { color: 'success', label: '完成' },
-};
-
 interface VideoWorkspaceProps {
   projectId: string;
 }
 
 const VideoWorkspace: React.FC<VideoWorkspaceProps> = ({ projectId }) => {
   const { t } = useTranslation();
+
+  const STATUS_LABELS: Record<VideoScene['status'], { color: string; label: string }> = {
+    scripted: { color: 'default', label: t('video.sceneStatus.scripted') },
+    storyboarded: { color: 'processing', label: t('video.sceneStatus.storyboarded') },
+    generated: { color: 'warning', label: t('video.sceneStatus.generated') },
+    complete: { color: 'success', label: t('video.sceneStatus.complete') },
+  };
   const project = useProjectStore((s) => s.projects.find((p) => p.id === projectId));
   const addScene = useProjectStore((s) => s.addScene);
   const deleteScene = useProjectStore((s) => s.deleteScene);
@@ -101,19 +101,19 @@ const VideoWorkspace: React.FC<VideoWorkspaceProps> = ({ projectId }) => {
             <Card size="small" title={<span><PlayCircleOutlined /> {selectedScene.title}</span>}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>场景标题</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('video.sceneTitle')}</Text>
                   <Input
                     value={selectedScene.title}
                     onChange={(e) => updateScene(projectId, selectedScene.id, { title: e.target.value })}
                   />
                 </div>
                 <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>场景描述</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{t('video.sceneDescription')}</Text>
                   <Input.TextArea
                     value={selectedScene.description}
                     onChange={(e) => updateScene(projectId, selectedScene.id, { description: e.target.value })}
                     rows={4}
-                    placeholder="描述场景内容、人物动作、环境..."
+                    placeholder={t('video.sceneDescPlaceholder')}
                   />
                 </div>
                 <div style={{ display: 'flex', gap: 16 }}>
@@ -127,11 +127,11 @@ const VideoWorkspace: React.FC<VideoWorkspaceProps> = ({ projectId }) => {
                     />
                   </div>
                   <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>过渡效果</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('video.transitionEffect')}</Text>
                     <Input
                       value={selectedScene.transition ?? ''}
                       onChange={(e) => updateScene(projectId, selectedScene.id, { transition: e.target.value })}
-                      placeholder="淡入淡出 / 切换 / 缩放..."
+                      placeholder={t('video.transitionPlaceholder')}
                       style={{ width: 200 }}
                     />
                   </div>

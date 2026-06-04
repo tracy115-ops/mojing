@@ -28,7 +28,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({ open, onOk, onCance
         <Form.Item name="title" label={t('project.create')} rules={[{ required: true }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="description" label="简介">
+        <Form.Item name="description" label={t('common.description')}>
           <Input.TextArea rows={3} />
         </Form.Item>
         <div style={{ display: 'flex', gap: 16 }}>
@@ -42,19 +42,19 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({ open, onOk, onCance
           </Form.Item>
           <Form.Item name="resolution" label={t('video.resolution')} style={{ flex: 1 }}>
             <Select options={[
-              { value: '1920x1080', label: '1080p' },
-              { value: '3840x2160', label: '4K' },
-              { value: '1280x720', label: '720p' },
+              { value: '1920x1080', label: t('video.resolution.1080p') },
+              { value: '3840x2160', label: t('video.resolution.4k') },
+              { value: '1280x720', label: t('video.resolution.720p') },
             ]} />
           </Form.Item>
         </div>
         <div style={{ display: 'flex', gap: 16 }}>
-          <Form.Item name="aspectRatio" label="宽高比" style={{ flex: 1 }}>
+          <Form.Item name="aspectRatio" label={t('video.aspectRatio')} style={{ flex: 1 }}>
             <Select options={[
-              { value: '16:9', label: '16:9' },
-              { value: '9:16', label: '9:16 (竖屏)' },
-              { value: '1:1', label: '1:1' },
-              { value: '21:9', label: '21:9 (电影)' },
+              { value: '16:9', label: t('video.aspectRatio.16:9') },
+              { value: '9:16', label: t('video.aspectRatio.9:16') },
+              { value: '1:1', label: t('video.aspectRatio.1:1') },
+              { value: '21:9', label: t('video.aspectRatio.21:9') },
             ]} />
           </Form.Item>
           <Form.Item name="fps" label="FPS" style={{ flex: 1 }}>

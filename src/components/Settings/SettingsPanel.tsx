@@ -89,22 +89,22 @@ const SettingsPanel: React.FC = () => {
               style={{ width: 200 }}
             />
           </Form.Item>
-          <Form.Item label="主题色">
+          <Form.Item label={t('settings.appearance.colorPrimary')}>
             <Select
               value={settings.appearance.colorPrimary}
               onChange={(val) => updateAppearanceSettings({ colorPrimary: val })}
               options={[
-                { value: '#3b82f6', label: '蓝色' },
-                { value: '#8b5cf6', label: '紫色' },
-                { value: '#22c55e', label: '绿色' },
-                { value: '#f59e0b', label: '橙色' },
-                { value: '#ef4444', label: '红色' },
-                { value: '#06b6d4', label: '青色' },
+                { value: '#3b82f6', label: t('settings.appearance.color.blue') },
+                { value: '#8b5cf6', label: t('settings.appearance.color.purple') },
+                { value: '#22c55e', label: t('settings.appearance.color.green') },
+                { value: '#f59e0b', label: t('settings.appearance.color.orange') },
+                { value: '#ef4444', label: t('settings.appearance.color.red') },
+                { value: '#06b6d4', label: t('settings.appearance.color.cyan') },
               ]}
               style={{ width: 200 }}
             />
           </Form.Item>
-          <Form.Item label="紧凑模式">
+          <Form.Item label={t('settings.appearance.compactMode')}>
             <Switch
               checked={settings.appearance.compactMode}
               onChange={(val) => updateAppearanceSettings({ compactMode: val })}

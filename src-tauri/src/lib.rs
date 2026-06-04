@@ -25,6 +25,8 @@ pub fn run() {
                 .build()?;
 
             let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().unwrap())
+                .tooltip("MoJing 墨境")
                 .menu(&tray_menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
