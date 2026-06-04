@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Card,
   Tabs,
@@ -14,6 +14,8 @@ import {
   message,
   Typography,
   Divider,
+  Steps,
+  Alert,
 } from 'antd';
 import {
   PlusOutlined,
@@ -23,6 +25,10 @@ import {
   CloseCircleOutlined,
   LoadingOutlined,
   ThunderboltOutlined,
+  ApiOutlined as EndpointIcon,
+  SettingOutlined,
+  ThunderboltOutlined as TaskIcon,
+  LockOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
@@ -69,18 +75,53 @@ const LLM_TASK_MODELS = [
   { key: 'translation', labelKey: 'provider.task.translation' },
 ];
 
+type StepKey = 'endpoints' | 'models' | 'tasks';
+
 const ProviderSettings: React.FC = () => {
   const { t } = useTranslation();
-  const store = useProviderStore();
+  const [currentStep, setCurrentStep] = useState<StepKey>('endpoints');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addCategory, setAddCategory] = useState<'llm' | 'image' | 'video'>('llm');
   const [testingId, setTestingId] = useState<string | null>(null);
   const [form] = Form.useForm();
 
-  const healthStatus = store.healthStatus;
-  const endpoints = store.endpoints;
+  // Individual selectors to prevent unnecessary re-renders
+  const config = useProviderStore((s) => s.config);
+  const endpoints = useProviderStore((s) => s.endpoints);
+  const healthStatus = useProviderStore((s) => s.healthStatus);
+  const addEndpoint = useProviderStore((s) => s.addEndpoint);
+  const removeEndpoint = useProviderStore((s) => s.removeEndpoint);
+  const setLLMProvider = useProviderStore((s) => s.setLLMProvider);
+  const setImageProvider = useProviderStore((s) => s.setImageProvider);
+  const setVideoProvider = useProviderStore((s) => s.setVideoProvider);
+  const setLLMFallback = useProviderStore((s) => s.setLLMFallback);
+  const setImageFallback = useProviderStore((s) => s.setImageFallback);
+  const setVideoFallback = useProviderStore((s) => s.setVideoFallback);
+  const setLLMModel = useProviderStore((s) => s.setLLMModel);
+  const checkHealth = useProviderStore((s) => s.checkHealth);
 
-  const handleAddEndpoint = (category: 'llm' | 'image' | 'video') => {
+  const hasEndpoints = endpoints.length > 0;
+
+  const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video') => {
+    return endpoints.filter((e) => {
+      if (category === 'llm') return !['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'sora', 'runway', 'kling', 'vidu', 'pika'].includes(e.provider);
+      if (category === 'image') return ['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'custom'].includes(e.provider);
+      return ['sora', 'runway', 'kling', 'vidu', 'pika', 'custom'].includes(e.provider);
+    });
+  }, [endpoints]);
+
+  // Step availability
+  const stepStatus = useMemo(() => ({
+    endpoints: true,
+    models: hasEndpoints,
+    tasks: hasEndpoints,
+  }), [hasEndpoints]);
+
+  const canGoToStep = (step: StepKey) => stepStatus[step];
+
+  // --- Step 1: Endpoints ---
+
+  const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video') => {
     setAddCategory(category);
     const defaults: Record<string, string> = {
       llm: 'https://api.openai.com/v1',
@@ -93,24 +134,24 @@ const ProviderSettings: React.FC = () => {
       enabled: true,
     });
     setAddModalOpen(true);
-  };
+  }, [form]);
 
-  const handleSaveEndpoint = async () => {
+  const handleSaveEndpoint = useCallback(async () => {
     try {
       const values = await form.validateFields();
-      store.addEndpoint(values);
+      addEndpoint(values);
       setAddModalOpen(false);
       form.resetFields();
       message.success(t('common.saved'));
     } catch {
       // Validation failed
     }
-  };
+  }, [form, addEndpoint, t]);
 
-  const handleTestConnection = async (endpointId: string) => {
+  const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
     try {
-      const health = await store.checkHealth(endpointId);
+      const health = await checkHealth(endpointId);
       if (health.available) {
         message.success(t('message.connectionSuccess'));
       } else {
@@ -121,9 +162,9 @@ const ProviderSettings: React.FC = () => {
     } finally {
       setTestingId(null);
     }
-  };
+  }, [checkHealth, t]);
 
-  const endpointColumns = [
+  const endpointColumns = useMemo(() => [
     {
       title: t('provider.endpointName'),
       dataIndex: 'name',
@@ -134,7 +175,7 @@ const ProviderSettings: React.FC = () => {
       title: t('provider.provider.primary'),
       dataIndex: 'provider',
       key: 'provider',
-      width: 140,
+      width: 130,
       render: (provider: string) => <Tag>{t(`provider.provider.${provider}` as const)}</Tag>,
     },
     {
@@ -143,15 +184,13 @@ const ProviderSettings: React.FC = () => {
       key: 'baseUrl',
       ellipsis: true,
       render: (url: string) => (
-        <Typography.Text copyable={{ text: url }} style={{ fontSize: 12 }}>
-          {url}
-        </Typography.Text>
+        <Typography.Text copyable={{ text: url }} style={{ fontSize: 12 }}>{url}</Typography.Text>
       ),
     },
     {
       title: t('common.status' as const),
       key: 'status',
-      width: 100,
+      width: 90,
       render: (_: unknown, record: ApiEndpoint) => {
         const health = healthStatus[record.id];
         if (testingId === record.id) return <LoadingOutlined spin />;
@@ -170,34 +209,109 @@ const ProviderSettings: React.FC = () => {
           <Button size="small" onClick={() => handleTestConnection(record.id)} loading={testingId === record.id}>
             {t('provider.testConnection')}
           </Button>
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => store.removeEndpoint(record.id)} />
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeEndpoint(record.id)} />
         </Space>
       ),
     },
-  ];
+  ], [t, healthStatus, testingId, handleTestConnection, removeEndpoint]);
 
-  const renderProviderSelector = (
+  const renderStepEndpoints = () => (
+    <div>
+      {!hasEndpoints && (
+        <Alert
+          type="info"
+          showIcon
+          message={t('provider.noEndpoints')}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      <Tabs
+        items={[
+          {
+            key: 'llm',
+            label: t('provider.llm'),
+            children: (
+              <div>
+                <Table
+                  dataSource={getEndpointsByCategory('llm')}
+                  columns={endpointColumns}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  locale={{ emptyText: t('common.noData' as const) }}
+                  style={{ marginBottom: 12 }}
+                />
+                <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('llm')}>
+                  {t('provider.addEndpoint')} — {t('provider.llm')}
+                </Button>
+              </div>
+            ),
+          },
+          {
+            key: 'image',
+            label: t('provider.image'),
+            children: (
+              <div>
+                <Table
+                  dataSource={getEndpointsByCategory('image')}
+                  columns={endpointColumns}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  locale={{ emptyText: t('common.noData' as const) }}
+                  style={{ marginBottom: 12 }}
+                />
+                <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('image')}>
+                  {t('provider.addEndpoint')} — {t('provider.image')}
+                </Button>
+              </div>
+            ),
+          },
+          {
+            key: 'video',
+            label: t('provider.video'),
+            children: (
+              <div>
+                <Table
+                  dataSource={getEndpointsByCategory('video')}
+                  columns={endpointColumns}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  locale={{ emptyText: t('common.noData' as const) }}
+                  style={{ marginBottom: 12 }}
+                />
+                <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('video')}>
+                  {t('provider.addEndpoint')} — {t('provider.video')}
+                </Button>
+              </div>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+
+  // --- Step 2: Model selection ---
+
+  const renderModelSelector = (
     category: 'llm' | 'image' | 'video',
     options: { value: string; label: string }[],
   ) => {
-    const config = store.config[category];
-    const setProvider = category === 'llm' ? store.setLLMProvider : category === 'image' ? store.setImageProvider : store.setVideoProvider;
-    const setFallback = category === 'llm' ? store.setLLMFallback : category === 'image' ? store.setImageFallback : store.setVideoFallback;
-    const categoryEndpoints = endpoints.filter((e) => {
-      if (category === 'llm') return !['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'sora', 'runway', 'kling', 'vidu', 'pika'].includes(e.provider);
-      if (category === 'image') return ['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'custom'].includes(e.provider);
-      return ['sora', 'runway', 'kling', 'vidu', 'pika', 'custom'].includes(e.provider);
-    });
+    const catConfig = config[category];
+    const setProvider = category === 'llm' ? setLLMProvider : category === 'image' ? setImageProvider : setVideoProvider;
+    const setFallbackFn = category === 'llm' ? setLLMFallback : category === 'image' ? setImageFallback : setVideoFallback;
+    const categoryEndpoints = getEndpointsByCategory(category);
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 16 }}>
           <div style={{ flex: 1 }}>
             <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.primary')}</div>
             <Select
               style={{ width: '100%' }}
-              value={config.primary}
-              onChange={(v) => setProvider(v as never, undefined, config.endpointId)}
+              value={catConfig.primary}
+              onChange={(v) => setProvider(v as never, undefined, catConfig.endpointId)}
               options={options}
             />
           </div>
@@ -205,109 +319,179 @@ const ProviderSettings: React.FC = () => {
             <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.fallback')}</div>
             <Select
               style={{ width: '100%' }}
-              value={config.fallback}
-              onChange={(v) => setFallback(v as never, config.fallbackEndpointId)}
+              value={catConfig.fallback}
+              onChange={(v) => setFallbackFn(v as never, catConfig.fallbackEndpointId)}
               options={[{ value: '', label: '— None —' }, ...options]}
               allowClear
             />
           </div>
         </div>
 
-        {/* Endpoint selector */}
         {categoryEndpoints.length > 0 && (
           <div>
             <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.endpoint')}</div>
             <Select
               style={{ width: '100%' }}
-              value={config.endpointId}
-              onChange={(v) => setProvider(config.primary as never, undefined, v)}
+              value={catConfig.endpointId}
+              onChange={(v) => setProvider(catConfig.primary as never, undefined, v)}
               options={categoryEndpoints.map((e) => ({ value: e.id, label: `${e.name} (${e.baseUrl})` }))}
-              placeholder="Select endpoint"
+              placeholder={t('provider.endpoint')}
               allowClear
             />
           </div>
         )}
-
-        {/* Task-specific model overrides */}
-        {category === 'llm' && (
-          <>
-            <Divider style={{ margin: '4px 0' }}>{t('provider.taskModel')}</Divider>
-            {LLM_TASK_MODELS.map((task) => (
-              <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ width: 120, fontSize: 13 }}>{t(task.labelKey)}</span>
-                <Input
-                  style={{ flex: 1 }}
-                  value={(store.config.llm.models as Record<string, string>)[task.key] ?? ''}
-                  onChange={(e) => store.setLLMModel(task.key, e.target.value)}
-                  placeholder={store.config.llm.defaultModel}
-                  size="small"
-                />
-              </div>
-            ))}
-          </>
-        )}
-
-        <Button icon={<PlusOutlined />} onClick={() => handleAddEndpoint(category)}>
-          {t('provider.addEndpoint')}
-        </Button>
       </div>
     );
   };
 
-  return (
-    <div style={{ padding: '0 8px' }}>
+  const renderStepModels = () => {
+    if (!hasEndpoints) {
+      return (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<LockOutlined />}
+          message={t('provider.stepLocked')}
+          description={t('provider.noEndpoints')}
+        />
+      );
+    }
+
+    return (
       <Tabs
         items={[
           {
             key: 'llm',
-            label: (
-              <span><ThunderboltOutlined /> {t('provider.llm')}</span>
-            ),
-            children: (
-              <Card size="small" style={{ marginBottom: 16 }}>
-                {renderProviderSelector('llm', LLM_PROVIDER_OPTIONS)}
-              </Card>
-            ),
+            label: t('provider.llm'),
+            children: <Card size="small">{renderModelSelector('llm', LLM_PROVIDER_OPTIONS)}</Card>,
           },
           {
             key: 'image',
-            label: (
-              <span><ApiOutlined /> {t('provider.image')}</span>
-            ),
-            children: (
-              <Card size="small" style={{ marginBottom: 16 }}>
-                {renderProviderSelector('image', IMAGE_PROVIDER_OPTIONS)}
-              </Card>
-            ),
+            label: t('provider.image'),
+            children: <Card size="small">{renderModelSelector('image', IMAGE_PROVIDER_OPTIONS)}</Card>,
           },
           {
             key: 'video',
-            label: (
-              <span><ApiOutlined /> {t('provider.video')}</span>
-            ),
-            children: (
-              <Card size="small" style={{ marginBottom: 16 }}>
-                {renderProviderSelector('video', VIDEO_PROVIDER_OPTIONS)}
-              </Card>
-            ),
-          },
-          {
-            key: 'endpoints',
-            label: t('provider.endpoint'),
-            children: (
-              <Table
-                dataSource={endpoints}
-                columns={endpointColumns}
-                rowKey="id"
-                size="small"
-                pagination={false}
-                locale={{ emptyText: t('common.noData' as const) }}
-              />
-            ),
+            label: t('provider.video'),
+            children: <Card size="small">{renderModelSelector('video', VIDEO_PROVIDER_OPTIONS)}</Card>,
           },
         ]}
       />
+    );
+  };
 
+  // --- Step 3: Task models ---
+
+  const renderStepTasks = () => {
+    if (!hasEndpoints) {
+      return (
+        <Alert
+          type="warning"
+          showIcon
+          icon={<LockOutlined />}
+          message={t('provider.stepLocked')}
+          description={t('provider.noEndpoints')}
+        />
+      );
+    }
+
+    return (
+      <Card size="small">
+        <div style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+          {t('provider.step.tasks.desc')}
+        </div>
+        {LLM_TASK_MODELS.map((task) => (
+          <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ width: 120, fontSize: 13 }}>{t(task.labelKey)}</span>
+            <Input
+              style={{ flex: 1 }}
+              value={(config.llm.models as Record<string, string>)[task.key] ?? ''}
+              onChange={(e) => setLLMModel(task.key, e.target.value)}
+              placeholder={config.llm.defaultModel}
+              size="small"
+            />
+          </div>
+        ))}
+      </Card>
+    );
+  };
+
+  // --- Steps config ---
+
+  const stepsItems = [
+    {
+      key: 'endpoints',
+      title: t('provider.step.endpoints'),
+      description: t('provider.step.endpoints.desc'),
+      icon: <EndpointIcon />,
+    },
+    {
+      key: 'models',
+      title: t('provider.step.models'),
+      description: hasEndpoints ? t('provider.step.models.desc') : <LockOutlined style={{ fontSize: 12 }} />,
+      icon: <SettingOutlined />,
+    },
+    {
+      key: 'tasks',
+      title: t('provider.step.tasks'),
+      description: hasEndpoints ? t('provider.step.tasks.desc') : <LockOutlined style={{ fontSize: 12 }} />,
+      icon: <TaskIcon />,
+    },
+  ];
+
+  const stepIndex = ['endpoints', 'models', 'tasks'].indexOf(currentStep);
+
+  return (
+    <div style={{ padding: '0 8px' }}>
+      <Steps
+        current={stepIndex}
+        size="small"
+        style={{ marginBottom: 24 }}
+        items={stepsItems.map((item) => ({
+          title: item.title,
+          description: item.description,
+          icon: item.icon,
+          status: canGoToStep(item.key as StepKey)
+            ? undefined
+            : 'wait' as const,
+        }))}
+        onChange={(idx) => {
+          const step = (['endpoints', 'models', 'tasks'] as StepKey[])[idx];
+          if (canGoToStep(step)) setCurrentStep(step);
+        }}
+      />
+
+      {currentStep === 'endpoints' && renderStepEndpoints()}
+      {currentStep === 'models' && renderStepModels()}
+      {currentStep === 'tasks' && renderStepTasks()}
+
+      {/* Navigation buttons */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
+        <Button
+          disabled={currentStep === 'endpoints'}
+          onClick={() => {
+            const steps: StepKey[] = ['endpoints', 'models', 'tasks'];
+            const idx = steps.indexOf(currentStep);
+            if (idx > 0) setCurrentStep(steps[idx - 1]);
+          }}
+        >
+          {t('common.previous')}
+        </Button>
+        <Button
+          type="primary"
+          disabled={currentStep === 'tasks'}
+          onClick={() => {
+            const steps: StepKey[] = ['endpoints', 'models', 'tasks'];
+            const idx = steps.indexOf(currentStep);
+            const next = steps[idx + 1];
+            if (next && canGoToStep(next)) setCurrentStep(next);
+          }}
+        >
+          {t('common.next')}
+        </Button>
+      </div>
+
+      {/* Add Endpoint Modal */}
       <Modal
         title={t('provider.addEndpoint')}
         open={addModalOpen}
@@ -315,9 +499,10 @@ const ProviderSettings: React.FC = () => {
         onCancel={() => { setAddModalOpen(false); form.resetFields(); }}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
+        destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('provider.endpointName')} rules={[{ required: true }]}>
+          <Form.Item name="name" label={t('provider.endpointName')} rules={[{ required: true, message: t('common.required') }]}>
             <Input />
           </Form.Item>
           <Form.Item name="provider" label={t('provider.primary')} rules={[{ required: true }]}>
