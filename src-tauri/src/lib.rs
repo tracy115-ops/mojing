@@ -9,6 +9,13 @@ pub struct AppEvent {
     pub data: Option<serde_json::Value>,
 }
 
+#[tauri::command]
+fn get_close_action() -> String {
+    // Read close action from localStorage via the frontend settings
+    // Default to "exit" if not set
+    "exit".to_string()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -16,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
+        .invoke_handler(tauri::generate_handler![get_close_action])
         .setup(|app| {
             // System tray
             let show_item = MenuItemBuilder::with_id("show", "Show MoJing").build(app)?;
@@ -56,13 +64,13 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Handle window close — forward to frontend
+            // Handle window close — emit event to frontend, let it decide
             if let Some(window) = app.get_webview_window("main") {
-                let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = window_clone.hide();
+                        // Emit to frontend — frontend will call hide() or exit()
+                        let _ = window.emit("close-requested", ());
                     }
                 });
             }

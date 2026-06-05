@@ -12,6 +12,7 @@ const MainLayout = lazy(() => import('@/components/Layout/MainLayout'));
 const App: React.FC = () => {
   const currentTheme = useSettingsStore((s) => s.currentTheme);
   const language = useSettingsStore((s) => s.settings.general.language);
+  const closeAction = useSettingsStore((s) => s.settings.general.closeAction);
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
   const isDark = currentTheme !== 'light';
   const activeTheme = isDark ? darkTheme : lightTheme;
@@ -20,6 +21,31 @@ const App: React.FC = () => {
   useEffect(() => {
     void fetchSettings();
   }, [fetchSettings]);
+
+  // Handle window close request from Rust backend
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const mainWindow = getCurrentWindow();
+        unlisten = await listen('close-requested', async () => {
+          if (closeAction === 'tray') {
+            await mainWindow.hide();
+          } else {
+            const { exit } = await import('@tauri-apps/plugin-process');
+            await exit(0);
+          }
+        });
+      } catch {
+        // Not running in Tauri (dev browser), ignore
+      }
+    })();
+
+    return () => { unlisten?.(); };
+  }, [closeAction]);
 
   return (
     <>

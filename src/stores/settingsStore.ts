@@ -164,6 +164,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTheme: (theme) => {
         const resolvedTheme = resolveAppearanceTheme(theme);
+        document.documentElement.setAttribute('data-theme', resolvedTheme);
         set({
           currentTheme: resolvedTheme,
           settings: normalizeSettings({
