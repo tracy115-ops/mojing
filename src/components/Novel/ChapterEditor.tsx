@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Input, Button, Space, Tabs, message, Tooltip, Typography } from 'antd';
-import { ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined } from '@ant-design/icons';
+import { ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
@@ -8,6 +8,16 @@ import type { NovelChapter } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 
 const { Text } = Typography;
+
+const FONT_SIZE_KEY = 'mojing-editor-fontsize';
+const DEFAULT_FONT_SIZE = 15;
+const MIN_FONT_SIZE = 12;
+const MAX_FONT_SIZE = 28;
+
+function loadFontSize(): number {
+  try { return Number(localStorage.getItem(FONT_SIZE_KEY)) || DEFAULT_FONT_SIZE; } catch { return DEFAULT_FONT_SIZE; }
+}
+function saveFontSize(s: number) { try { localStorage.setItem(FONT_SIZE_KEY, String(s)); } catch {} }
 
 interface ChapterEditorProps {
   chapter: NovelChapter;
@@ -20,11 +30,20 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const { t } = useTranslation();
   const [generating, setGenerating] = useState<string | null>(null);
   const [streamContent, setStreamContent] = useState('');
+  const [fontSize, setFontSize] = useState(loadFontSize);
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
 
   const hasEndpoint = endpoints.length > 0;
+
+  const handleZoom = useCallback((delta: number) => {
+    setFontSize((prev) => {
+      const next = Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, prev + delta));
+      saveFontSize(next);
+      return next;
+    });
+  }, []);
 
   // Auto-save with debounce
   const debouncedSave = useCallback((field: 'outline' | 'content', value: string) => {
@@ -143,17 +162,31 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const wordCount = streamContent || chapter.content || '';
   const wc = wordCount.length;
 
+  const textareaStyle: React.CSSProperties = {
+    fontSize,
+    lineHeight: 1.8,
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Chapter title */}
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)' }}>
+      {/* Chapter title + zoom controls */}
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <Input
           value={chapter.title}
           onChange={(e) => { onUpdate({ title: e.target.value }); }}
           placeholder={t('novel.chapterTitle')}
           variant="borderless"
-          style={{ fontSize: 15, fontWeight: 600, padding: '4px 0' }}
+          style={{ flex: 1, fontSize: 15, fontWeight: 600, padding: '4px 0' }}
         />
+        <Space size={2}>
+          <Tooltip title={t('editor.zoomOut')}>
+            <Button size="small" icon={<ZoomOutOutlined />} onClick={() => handleZoom(-1)} disabled={fontSize <= MIN_FONT_SIZE} />
+          </Tooltip>
+          <Text style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: 'var(--text-tertiary)' }}>{fontSize}px</Text>
+          <Tooltip title={t('editor.zoomIn')}>
+            <Button size="small" icon={<ZoomInOutlined />} onClick={() => handleZoom(1)} disabled={fontSize >= MAX_FONT_SIZE} />
+          </Tooltip>
+        </Space>
       </div>
 
       {/* Tabs: outline / content */}
@@ -170,7 +203,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   value={chapter.outline}
                   onChange={(e) => debouncedSave('outline', e.target.value)}
                   placeholder={t("novel.outlinePlaceholder")}
-                  style={{ height: 'calc(100% - 40px)', resize: 'none' }}
+                  style={{ height: 'calc(100% - 40px)', resize: 'vertical', ...textareaStyle }}
                   disabled={generating === 'outline'}
                 />
                 <div style={{ marginTop: 8 }}>
@@ -197,7 +230,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   value={streamContent || chapter.content}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
                   placeholder={t("novel.contentPlaceholder")}
-                  style={{ flex: 1, resize: 'none', minHeight: 300 }}
+                  style={{ flex: 1, resize: 'vertical', minHeight: 300, ...textareaStyle }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>

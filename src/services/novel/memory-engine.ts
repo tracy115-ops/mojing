@@ -189,6 +189,17 @@ export class MemoryEngine {
     }
   }
 
+  // --- External data merging ---
+
+  mergeTriples(triples: RelationshipTriple[]): void {
+    const existing = new Set(this.factLock.relationshipGraph.map((t) => `${t.subject}|${t.predicate}|${t.object}`));
+    for (const triple of triples) {
+      if (!existing.has(`${triple.subject}|${triple.predicate}|${triple.object}`)) {
+        this.factLock.relationshipGraph.push(triple);
+      }
+    }
+  }
+
   // --- Serialize / Deserialize ---
 
   serialize(): { factLock: FactLock; beatLock: BeatLock; clueLock: ClueLock } {

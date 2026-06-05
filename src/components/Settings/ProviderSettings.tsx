@@ -67,6 +67,33 @@ const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
   { value: 'custom', label: 'Custom' },
 ];
 
+const COMMON_LLM_MODELS = [
+  // OpenAI
+  { value: 'gpt-4o', label: 'GPT-4o' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
+  { value: 'o1', label: 'o1' },
+  { value: 'o3-mini', label: 'o3 Mini' },
+  // Claude
+  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  // DeepSeek
+  { value: 'deepseek-chat', label: 'DeepSeek Chat' },
+  { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+  // Qwen
+  { value: 'qwen-max', label: 'Qwen Max' },
+  { value: 'qwen-plus', label: 'Qwen Plus' },
+  { value: 'qwen-turbo', label: 'Qwen Turbo' },
+  // Doubao
+  { value: 'doubao-1.5-pro', label: 'Doubao 1.5 Pro' },
+  { value: 'doubao-1.5-lite', label: 'Doubao 1.5 Lite' },
+  // GLM
+  { value: 'glm-4-plus', label: 'GLM-4 Plus' },
+  { value: 'glm-4-flash', label: 'GLM-4 Flash' },
+  { value: 'glm-4-air', label: 'GLM-4 Air' },
+];
+
 const LLM_TASK_MODELS = [
   { key: 'planning', labelKey: 'provider.task.planning' },
   { key: 'generation', labelKey: 'provider.task.generation' },
@@ -76,6 +103,30 @@ const LLM_TASK_MODELS = [
 ];
 
 type StepKey = 'endpoints' | 'models' | 'tasks';
+
+const PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  claude: 'https://api.anthropic.com',
+  deepseek: 'https://api.deepseek.com',
+  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  doubao: 'https://ark.cn-beijing.volces.com/api/v3',
+  glm: 'https://open.bigmodel.cn/api/paas/v4',
+  custom: 'https://api.example.com/v1',
+  dalle: 'https://api.openai.com/v1',
+  'stable-diffusion': 'http://127.0.0.1:7860',
+  flux: 'http://127.0.0.1:7860',
+  comfyui: 'http://127.0.0.1:8188',
+  'kling-image': 'https://api.klingai.com',
+  sora: 'https://api.openai.com/v1',
+  runway: 'https://api.runwayml.com',
+  kling: 'https://api.klingai.com',
+  vidu: 'https://api.vidu.studio',
+  pika: 'https://api.pika.art',
+};
+
+function getProviderDefaultUrl(provider: string): string {
+  return PROVIDER_DEFAULT_URLS[provider] ?? 'https://api.example.com/v1';
+}
 
 const ProviderSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -123,14 +174,11 @@ const ProviderSettings: React.FC = () => {
 
   const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video') => {
     setAddCategory(category);
-    const defaults: Record<string, string> = {
-      llm: 'https://api.openai.com/v1',
-      image: 'https://api.openai.com/v1',
-      video: 'https://api.klingai.com',
-    };
+    const defaultProvider = category === 'llm' ? 'openai' : category === 'image' ? 'dalle' : 'kling';
+    const defaultUrl = getProviderDefaultUrl(defaultProvider);
     form.setFieldsValue({
-      provider: category === 'llm' ? 'openai' : category === 'image' ? 'dalle' : 'kling',
-      baseUrl: defaults[category],
+      provider: defaultProvider,
+      baseUrl: defaultUrl,
       enabled: true,
     });
     setAddModalOpen(true);
@@ -400,18 +448,35 @@ const ProviderSettings: React.FC = () => {
         <div style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
           {t('provider.step.tasks.desc')}
         </div>
-        {LLM_TASK_MODELS.map((task) => (
-          <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ width: 120, fontSize: 13 }}>{t(task.labelKey)}</span>
-            <Input
-              style={{ flex: 1 }}
-              value={(config.llm.models as Record<string, string>)[task.key] ?? ''}
-              onChange={(e) => setLLMModel(task.key, e.target.value)}
-              placeholder={config.llm.defaultModel}
-              size="small"
-            />
-          </div>
-        ))}
+        {LLM_TASK_MODELS.map((task) => {
+          const currentValue = (config.llm.models as Record<string, string>)[task.key] ?? '';
+          return (
+            <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ width: 120, fontSize: 13, flexShrink: 0 }}>{t(task.labelKey)}</span>
+              <Select
+                style={{ flex: 1 }}
+                value={currentValue || undefined}
+                onChange={(v) => setLLMModel(task.key, v)}
+                placeholder={config.llm.defaultModel}
+                size="small"
+                showSearch
+                allowClear
+                options={COMMON_LLM_MODELS}
+                popupMatchSelectWidth={false}
+              />
+              {currentValue && currentValue !== config.llm.defaultModel && (
+                <Button
+                  size="small"
+                  type="link"
+                  onClick={() => setLLMModel(task.key, '')}
+                  style={{ flexShrink: 0, padding: '0 4px' }}
+                >
+                  {t('common.reset')}
+                </Button>
+              )}
+            </div>
+          );
+        })}
       </Card>
     );
   };
@@ -512,6 +577,9 @@ const ProviderSettings: React.FC = () => {
                 : addCategory === 'image' ? IMAGE_PROVIDER_OPTIONS
                 : VIDEO_PROVIDER_OPTIONS) as { value: string; label: string }[]
               }
+              onChange={(value) => {
+                form.setFieldsValue({ baseUrl: getProviderDefaultUrl(value) });
+              }}
             />
           </Form.Item>
           <Form.Item name="baseUrl" label={t('provider.endpointUrl')} rules={[{ required: true }]}>

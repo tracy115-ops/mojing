@@ -353,6 +353,26 @@ const zhCN: Record<string, string> = {
   'novel.engine.circuitBreaker.closed': '正常',
   'novel.engine.circuitBreaker.halfOpen': '试探中',
 
+  // ── Autopilot Controls ────────────────────
+  'autopilot.start': '开始生成',
+  'autopilot.pause': '暂停',
+  'autopilot.resume': '继续',
+  'autopilot.stop': '停止',
+  'autopilot.noEndpoint': '请先在"模型配置"中添加 API 接口',
+  'autopilot.desc': 'AI 将基于"{title}"（{genre}）自动规划并生成约 {chapters} 章内容',
+  'autopilot.generating': '正在生成第{chapter}章...',
+
+  // ── Narrative Panel ───────────────────────
+  'narrative.title': '叙事面板',
+  'narrative.noData': '自动驾驶生成后，将自动展示人物关系和时间线图谱',
+  'narrative.relationshipGraph': '关系图谱',
+  'narrative.timeline': '时间线',
+  'narrative.toggleHint': '查看人物关系图谱和时间线',
+  'timeline.event': '事件',
+  'timeline.beat': '节拍',
+  'timeline.planted': '伏笔埋设',
+  'timeline.resolved': '伏笔闭合',
+
   // ── Pipeline ──────────────────────────────
   'pipeline.title': '流水线',
   'pipeline.status.queued': '排队中',
@@ -373,6 +393,11 @@ const zhCN: Record<string, string> = {
   'about.version': '版本 {version}',
   'about.description': 'AI 创意工作站 — 小说、漫画、视频一体化创作平台',
   'about.checkUpdates': '检测更新',
+
+  // ── Editor ────────────────────────────────
+  'editor.zoomIn': '放大',
+  'editor.zoomOut': '缩小',
+  'editor.fontSize': '字号',
 };
 
 export default zhCN;

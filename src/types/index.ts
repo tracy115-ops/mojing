@@ -128,6 +128,14 @@ export interface NovelMetadata {
   chapters: NovelChapter[];
   style: string;
   language: string;
+  narrativeData?: NarrativeSnapshot;
+}
+
+export interface NarrativeSnapshot {
+  triples: import('./narrative').RelationshipTriple[];
+  anchors: import('./narrative').TimelineAnchor[];
+  beats: import('./narrative').CompletedBeat[];
+  foreshadowing: import('./narrative').Foreshadowing[];
 }
 
 export type ChapterStatus = 'planned' | 'drafting' | 'revising' | 'complete';

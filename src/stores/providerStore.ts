@@ -231,20 +231,78 @@ export const useProviderStore = create<ProviderState>()(
           return health;
         }
 
+        const baseUrl = endpoint.baseUrl.replace(/\/+$/, '');
+
+        // Compute /models and /chat/completions URLs
+        const modelsUrl = (() => {
+          if (/\/v\d+$/.test(baseUrl)) return `${baseUrl}/models`;
+          return `${baseUrl}/models`;
+        })();
+        const chatUrl = (() => {
+          if (/\/v\d+$/.test(baseUrl)) return `${baseUrl}/chat/completions`;
+          return `${baseUrl}/chat/completions`;
+        })();
+
         try {
           const startTime = Date.now();
-          const response = await fetch(`${endpoint.baseUrl}/models`, {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${endpoint.apiKey}`,
-              ...endpoint.customHeaders,
-            },
-            signal: AbortSignal.timeout(10000),
-          });
+
+          // First try GET /models (most OpenAI-compatible APIs support this)
+          let ok = false;
+          let errorMsg = '';
+
+          try {
+            const response = await fetch(modelsUrl, {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${endpoint.apiKey}`,
+                ...endpoint.customHeaders,
+              },
+              signal: AbortSignal.timeout(8000),
+            });
+            if (response.ok) {
+              ok = true;
+            } else {
+              errorMsg = `GET /models → HTTP ${response.status}`;
+            }
+          } catch {
+            errorMsg = 'GET /models failed';
+          }
+
+          // Fallback: try a minimal chat completion request
+          if (!ok) {
+            try {
+              const response = await fetch(chatUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${endpoint.apiKey}`,
+                  ...endpoint.customHeaders,
+                },
+                body: JSON.stringify({
+                  model: 'test',
+                  messages: [{ role: 'user', content: 'hi' }],
+                  max_tokens: 1,
+                }),
+                signal: AbortSignal.timeout(10000),
+              });
+              // Even if model not found (404/422), a valid response means the API is reachable
+              ok = response.status !== 0;
+              if (!ok) {
+                errorMsg = `POST /chat/completions → HTTP ${response.status}`;
+              }
+              // If we get 401/403, the API is reachable but auth failed
+              if (response.status === 401 || response.status === 403) {
+                ok = true; // API is reachable, just auth issue
+              }
+            } catch (err) {
+              errorMsg = err instanceof Error ? err.message : 'Connection failed';
+            }
+          }
+
           health.latencyMs = Date.now() - startTime;
-          health.available = response.ok;
-          if (!response.ok) {
-            health.error = `HTTP ${response.status}`;
+          health.available = ok;
+          if (!ok) {
+            health.error = errorMsg;
           }
         } catch (err) {
           health.error = err instanceof Error ? err.message : 'Connection failed';
@@ -257,13 +315,29 @@ export const useProviderStore = create<ProviderState>()(
       getActiveEndpoint: (category) => {
         const { config, endpoints } = get();
         const endpointId = config[category].endpointId;
-        return endpointId ? endpoints.find((ep) => ep.id === endpointId) : undefined;
+        if (endpointId) {
+          const found = endpoints.find((ep) => ep.id === endpointId);
+          if (found) return found;
+        }
+        // Fallback: if no specific endpoint bound, use the first LLM-compatible endpoint
+        if (endpoints.length === 0) return undefined;
+        // For LLM, prefer endpoints with LLM providers
+        const llmProviders = ['openai', 'claude', 'deepseek', 'qwen', 'doubao', 'glm', 'custom'];
+        if (category === 'llm') {
+          return endpoints.find((ep) => llmProviders.includes(ep.provider)) ?? endpoints[0];
+        }
+        // For image/video, just return first endpoint
+        return endpoints[0];
       },
 
       getFallbackEndpoint: (category) => {
         const { config, endpoints } = get();
         const fallbackId = config[category].fallbackEndpointId;
-        return fallbackId ? endpoints.find((ep) => ep.id === fallbackId) : undefined;
+        if (fallbackId) {
+          const found = endpoints.find((ep) => ep.id === fallbackId);
+          if (found) return found;
+        }
+        return undefined;
       },
 
       reset: () => {

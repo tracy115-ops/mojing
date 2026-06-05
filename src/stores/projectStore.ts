@@ -8,6 +8,7 @@ import type {
   NovelChapter,
   ComicMetadata,
   VideoMetadata,
+  NarrativeSnapshot,
 } from '@/types';
 
 const generateId = () => crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -37,6 +38,7 @@ interface ProjectState {
   addChapter: (projectId: string) => void;
   deleteChapter: (projectId: string, chapterId: string) => void;
   updateChapter: (projectId: string, chapterId: string, updates: Partial<NovelChapter>) => void;
+  updateNarrativeData: (projectId: string, data: NarrativeSnapshot) => void;
 
   // Comic-specific
   addComicCharacter: (projectId: string, character: Omit<import('@/types').ComicCharacter, 'id'>) => void;
@@ -166,6 +168,20 @@ export const useProjectStore = create<ProjectState>()(
                   c.id === chapterId ? { ...c, ...updates, wordCount } : c,
                 ),
               },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      updateNarrativeData: (projectId, data) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            return {
+              ...p,
+              metadata: { ...meta, narrativeData: data },
               updatedAt: new Date().toISOString(),
             };
           }),

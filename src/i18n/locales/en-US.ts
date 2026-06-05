@@ -355,6 +355,26 @@ const enUS: typeof zhCN = {
   'novel.engine.circuitBreaker.closed': 'Normal',
   'novel.engine.circuitBreaker.halfOpen': 'Probing',
 
+  // ── Autopilot Controls ────────────────────
+  'autopilot.start': 'Start',
+  'autopilot.pause': 'Pause',
+  'autopilot.resume': 'Resume',
+  'autopilot.stop': 'Stop',
+  'autopilot.noEndpoint': 'Please add an API endpoint in Provider Settings first',
+  'autopilot.desc': 'AI will auto-plan and generate ~{chapters} chapters for "{title}" ({genre})',
+  'autopilot.generating': 'Generating Chapter {chapter}...',
+
+  // ── Narrative Panel ───────────────────────
+  'narrative.title': 'Narrative',
+  'narrative.noData': 'Relationship graph and timeline will appear after autopilot generates chapters',
+  'narrative.relationshipGraph': 'Relationships',
+  'narrative.timeline': 'Timeline',
+  'narrative.toggleHint': 'View character relationships and timeline',
+  'timeline.event': 'Event',
+  'timeline.beat': 'Beat',
+  'timeline.planted': 'Planted',
+  'timeline.resolved': 'Resolved',
+
   // ── Pipeline ──────────────────────────────
   'pipeline.title': 'Pipeline',
   'pipeline.status.queued': 'Queued',
@@ -375,6 +395,11 @@ const enUS: typeof zhCN = {
   'about.version': 'Version {version}',
   'about.description': 'AI WorkStation — Integrated creation platform for novels, comics, and videos',
   'about.checkUpdates': 'Check for Updates',
+
+  // ── Editor ────────────────────────────────
+  'editor.zoomIn': 'Zoom In',
+  'editor.zoomOut': 'Zoom Out',
+  'editor.fontSize': 'Font Size',
 };
 
 export default enUS;

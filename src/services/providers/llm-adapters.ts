@@ -16,8 +16,17 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     super(endpoint);
   }
 
+  private getChatUrl(): string {
+    const base = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // If the URL already ends with /v1 or similar versioned path, use it directly
+    if (/\/v\d+$/.test(base)) {
+      return `${base}/chat/completions`;
+    }
+    // Default: append directly (DeepSeek uses https://api.deepseek.com/chat/completions)
+    return `${base}/chat/completions`;
+  }
+
   async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
-    const model = request.model || this.endpoint.baseUrl.includes('deepseek') ? 'deepseek-chat' : 'gpt-4o';
     const startTime = Date.now();
 
     const body: Record<string, unknown> = {
@@ -37,7 +46,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       body.stop = request.stopSequences;
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/chat/completions`, {
+    const response = await fetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
@@ -54,7 +63,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     return {
       content: choice?.message?.content ?? '',
-      model: data.model ?? model,
+      model: data.model ?? request.model ?? 'gpt-4o',
       provider: this.endpoint.provider as LLMGenerateResponse['provider'],
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
@@ -77,7 +86,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       stream: true,
     };
 
-    const response = await fetch(`${this.endpoint.baseUrl}/chat/completions`, {
+    const response = await fetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
@@ -161,7 +170,10 @@ export class ClaudeProvider extends BaseLLMProvider {
       body.stop_sequences = request.stopSequences;
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/messages`, {
+    const base = this.endpoint.baseUrl.replace(/\/+$/, '');
+    const messagesUrl = /\/v\d+$/.test(base) ? `${base}/messages` : `${base}/v1/messages`;
+
+    const response = await fetch(messagesUrl, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
@@ -199,7 +211,10 @@ export class ClaudeProvider extends BaseLLMProvider {
       stream: true,
     };
 
-    const response = await fetch(`${this.endpoint.baseUrl}/messages`, {
+    const base = this.endpoint.baseUrl.replace(/\/+$/, '');
+    const messagesUrl = /\/v\d+$/.test(base) ? `${base}/messages` : `${base}/v1/messages`;
+
+    const response = await fetch(messagesUrl, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),

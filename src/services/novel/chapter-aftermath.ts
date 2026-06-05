@@ -28,18 +28,24 @@ export class ChapterAftermathPipeline {
       taskType: 'extraction',
       systemPrompt: `你是一个叙事分析引擎。从章节正文中一次性提取以下所有维度。输出严格JSON。
 
-提取维度：
-1. summary: 章节摘要（≤200字）
-2. keyEvents: 关键事件列表（3-8条）
-3. characterStates: 角色当前状态（情感、位置、知识变化）
-4. triples: 人物/地点/事件之间的三元组关系
-5. foreshadowing: 伏笔动态（新埋/已闭合/检测到即将闭合）
-6. narrativeDebts: 叙事债务（承诺但未兑现的情节）
-7. tensionScore: 紧张度评分（0-10）
-8. styleScore: 文风一致性（0-1）
+提取维度与格式要求：
+1. "summary": 章节摘要（≤200字，字符串）
+2. "keyEvents": 关键事件列表（3-8条，字符串数组）
+3. "characterStates": 角色当前状态数组，每个元素含 "name", "physicalState", "emotionalState", "location"
+4. "triples": 人物关系三元组数组，每个元素必须含：
+   - "subject": 角色名（如"李明"）
+   - "predicate": 关系类型（如"师徒"、"敌对"、"恋人"、"朋友"、"盟友"、"上下级"）
+   - "object": 对方角色名
+   - "sinceChapter": 确立章节号（整数）
+5. "foreshadowing": 伏笔动态，含三个子数组 "planted", "resolved", "detected"，每个元素含 "description", "plantedInChapter", "urgency"(low/medium/high/critical)
+6. "narrativeDebts": 叙事债务数组，每个含 "description", "plantedInChapter", "priority"(0-10)
+7. "tensionScore": 紧张度（0-10，数字）
+8. "styleScore": 文风一致性（0-1，数字）
 
 当前活跃伏笔（用于检测闭合）：
-${activeForeshadowing || '无'}`,
+${activeForeshadowing || '无'}
+
+重要：triples必须包含本章中出现的所有人物关系，即使是已有的关系也要列出。`,
       userPrompt: `小说ID: ${novelId}\n章节号: ${chapterNumber}\n\n${chapterContent}`,
       responseFormat: 'json',
       temperature: 0.1,
@@ -104,11 +110,11 @@ function normalizeCharacterState(raw: Record<string, unknown>): CharacterState {
 
 function normalizeTriple(raw: Record<string, unknown>): RelationshipTriple {
   return {
-    subject: String(raw.subject ?? ''),
-    predicate: String(raw.predicate ?? ''),
-    object: String(raw.object ?? ''),
-    sinceChapter: Number(raw.sinceChapter ?? 0),
-    source: (raw.source === 'bible' ? 'bible' : 'extracted') as RelationshipTriple['source'],
+    subject: String(raw.subject ?? raw.from ?? raw.source ?? raw.character ?? ''),
+    predicate: String(raw.predicate ?? raw.relation ?? raw.relationship ?? raw.type ?? ''),
+    object: String(raw.object ?? raw.to ?? raw.target ?? ''),
+    sinceChapter: Number(raw.sinceChapter ?? raw.chapter ?? 0),
+    source: 'extracted' as const,
   };
 }
 

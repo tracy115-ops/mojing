@@ -20,24 +20,23 @@ import { useProviderStore } from '@/stores/providerStore';
 
 function createLLMProvider(
   providerId: LLMProviderId,
-  endpoint: Parameters<BaseLLMProvider['generate']>[0] extends never ? never : { endpoint: import('@/types/providers').ApiEndpoint },
+  endpoint: import('@/types/providers').ApiEndpoint,
 ): BaseLLMProvider {
-  const ep = endpoint as unknown as import('@/types/providers').ApiEndpoint;
   switch (providerId) {
     case 'claude':
-      return new ClaudeProvider(ep);
+      return new ClaudeProvider(endpoint);
     case 'openai':
-      return new OpenAICompatibleProvider(ep, 'openai');
+      return new OpenAICompatibleProvider(endpoint, 'openai');
     case 'deepseek':
-      return new OpenAICompatibleProvider(ep, 'deepseek');
+      return new OpenAICompatibleProvider(endpoint, 'deepseek');
     case 'qwen':
-      return new OpenAICompatibleProvider(ep, 'qwen');
+      return new OpenAICompatibleProvider(endpoint, 'qwen');
     case 'doubao':
-      return new OpenAICompatibleProvider(ep, 'doubao');
+      return new OpenAICompatibleProvider(endpoint, 'doubao');
     case 'glm':
-      return new OpenAICompatibleProvider(ep, 'glm');
+      return new OpenAICompatibleProvider(endpoint, 'glm');
     default:
-      return new OpenAICompatibleProvider(ep, 'custom');
+      return new OpenAICompatibleProvider(endpoint, 'custom');
   }
 }
 
@@ -60,7 +59,7 @@ class ProviderRouter {
     const requestWithModel = { ...request, model: request.model || effectiveModel };
 
     try {
-      const provider = createLLMProvider(config.primary, { endpoint } as never);
+      const provider = createLLMProvider(config.primary, endpoint);
       return await provider.generate(requestWithModel);
     } catch (primaryError) {
       if (!config.fallback) throw primaryError;
@@ -70,7 +69,7 @@ class ProviderRouter {
       if (!fallbackEndpoint) throw primaryError;
 
       try {
-        const fallbackProvider = createLLMProvider(config.fallback, { endpoint: fallbackEndpoint } as never);
+        const fallbackProvider = createLLMProvider(config.fallback, fallbackEndpoint);
         return await fallbackProvider.generate(requestWithModel);
       } catch {
         throw primaryError; // Throw original error
@@ -90,7 +89,7 @@ class ProviderRouter {
     const effectiveModel = (config.models as Record<string, string>)[request.taskType] ?? config.defaultModel;
     const requestWithModel = { ...request, model: request.model || effectiveModel };
 
-    const provider = createLLMProvider(config.primary, { endpoint } as never);
+    const provider = createLLMProvider(config.primary, endpoint);
     yield* provider.stream(requestWithModel);
   }
 
