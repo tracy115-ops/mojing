@@ -27,6 +27,34 @@ export class ForeshadowingTracker {
     return item;
   }
 
+  resolveByDescription(description: string, resolvedInChapter: number): Foreshadowing | undefined {
+    const desc = description.trim().toLowerCase();
+    // Try exact match first
+    let item = this.items.find((f) => f.status === 'planted' && f.description.trim().toLowerCase() === desc);
+    // Fallback: partial match (one contains the other)
+    if (!item) {
+      item = this.items.find((f) =>
+        f.status === 'planted' &&
+        (f.description.trim().toLowerCase().includes(desc) || desc.includes(f.description.trim().toLowerCase())),
+      );
+    }
+    // Fallback: keyword overlap (>60% of words match)
+    if (!item && desc.length > 4) {
+      const descWords = desc.split(/\s+/);
+      item = this.items.find((f) => {
+        if (f.status !== 'planted') return false;
+        const fWords = f.description.trim().toLowerCase().split(/\s+/);
+        const overlap = descWords.filter((w) => fWords.some((fw) => fw.includes(w) || w.includes(fw)));
+        return overlap.length / Math.max(descWords.length, 1) > 0.6;
+      });
+    }
+    if (item) {
+      item.status = 'resolved';
+      item.resolvedInChapter = resolvedInChapter;
+    }
+    return item;
+  }
+
   abandon(foreshadowingId: string): void {
     const item = this.items.find((f) => f.id === foreshadowingId);
     if (item) item.status = 'abandoned';

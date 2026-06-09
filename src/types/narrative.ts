@@ -27,6 +27,25 @@ export interface BibleCharacter {
   lastUpdateChapter: number;
   importance: 'protagonist' | 'major' | 'supporting' | 'minor';
   status: 'active' | 'deceased' | 'missing' | 'retired';
+  // 4D Psyche model (PlotPilot CharacterPsychePanel)
+  psyche?: CharacterPsyche;
+  // Voice anchor (for dialogue generation)
+  voiceAnchor?: CharacterVoiceAnchor;
+}
+
+export interface CharacterPsyche {
+  coreBelief: string;
+  taboo: string;
+  voiceTag: string;
+  wound: string;
+  mask?: string;
+}
+
+export interface CharacterVoiceAnchor {
+  verbalTic: string;
+  mentalState: string;
+  idleBehavior: string;
+  speechStyle: string;
 }
 
 export interface CharacterRelationship {
@@ -273,4 +292,86 @@ export interface VoiceDriftReport {
   similarity: number;          // 0-1, 1 = identical to reference
   driftDetected: boolean;
   suggestedFix?: string;
+}
+
+// --- Beat System (PlotPilot ChapterConductor) ---
+
+export type BeatFocus =
+  | 'action'
+  | 'dialogue'
+  | 'sensory'
+  | 'emotion'
+  | 'suspense'
+  | 'hook'
+  | 'character_intro'
+  | 'narration';
+
+export interface Beat {
+  index: number;
+  description: string;
+  targetWords: number;
+  focus: BeatFocus;
+  expansionHints?: string[];
+  sceneGoal?: string;
+  transitionFromPrev?: string;
+}
+
+export type ConductorPhase = 'unfurl' | 'converge' | 'land';
+
+export interface ConductorSignal {
+  phase: ConductorPhase;
+  budgetUsedRatio: number;
+  remainingBudget: number;
+  beatsRemaining: number;
+  isFinalBeat: boolean;
+  beatInstruction: string;
+  hardCap: number;
+}
+
+// --- Storyline Management ---
+
+export type StorylineType = 'main' | 'sub' | 'hidden';
+export type StorylineStatus = 'active' | 'paused' | 'completed';
+
+export interface Storyline {
+  id: string;
+  novelId: string;
+  name: string;
+  type: StorylineType;
+  status: StorylineStatus;
+  description: string;
+  chapterRange: [number, number];
+  milestones: StorylineMilestone[];
+  color: string;
+}
+
+export interface StorylineMilestone {
+  chapter: number;
+  label: string;
+  completed: boolean;
+}
+
+// --- Worldbuilding (5 Dimensions) ---
+
+export interface Worldbuilding {
+  novelId: string;
+  dimensions: {
+    coreRules: WorldbuildingDimension;
+    geography: WorldbuildingDimension;
+    society: WorldbuildingDimension;
+    culture: WorldbuildingDimension;
+    dailyLife: WorldbuildingDimension;
+  };
+}
+
+export interface WorldbuildingDimension {
+  title: string;
+  fields: Record<string, string>;
+}
+
+// --- Chapter Cast ---
+
+export interface ChapterCast {
+  chapterIndex: number;
+  lockedCharacters: string[];
 }

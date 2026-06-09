@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e94560"/>
+      <stop offset="100%" stop-color="#c23152"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f5e6ca"/>
+      <stop offset="100%" stop-color="#e8d5b0"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Subtle grid pattern -->
+  <g opacity="0.04">
+    <line x1="128" y1="0" x2="128" y2="512" stroke="#fff" stroke-width="1"/>
+    <line x1="256" y1="0" x2="256" y2="512" stroke="#fff" stroke-width="1"/>
+    <line x1="384" y1="0" x2="384" y2="512" stroke="#fff" stroke-width="1"/>
+    <line x1="0" y1="128" x2="512" y2="128" stroke="#fff" stroke-width="1"/>
+    <line x1="0" y1="256" x2="512" y2="256" stroke="#fff" stroke-width="1"/>
+    <line x1="0" y1="384" x2="512" y2="384" stroke="#fff" stroke-width="1"/>
+  </g>
+  <!-- Moon circle -->
+  <circle cx="256" cy="200" r="120" fill="url(#moon)" opacity="0.95"/>
+  <!-- Moon shadow (crescent effect) -->
+  <circle cx="300" cy="180" r="100" fill="url(#bg)" opacity="0.85"/>
+  <!-- Ink brush stroke 墨 -->
+  <g transform="translate(256, 340)">
+    <!-- Brush body -->
+    <ellipse cx="0" cy="-20" rx="18" ry="60" fill="url(#ink)" opacity="0.9" transform="rotate(-15)"/>
+    <!-- Ink drip -->
+    <circle cx="8" cy="50" r="8" fill="#e94560" opacity="0.7"/>
+    <circle cx="-5" cy="62" r="5" fill="#c23152" opacity="0.5"/>
+    <!-- Brush tip highlight -->
+    <ellipse cx="-2" cy="-70" rx="4" ry="12" fill="#fff" opacity="0.3" transform="rotate(-15)"/>
+  </g>
+  <!-- Floating ink particles -->
+  <circle cx="160" cy="300" r="3" fill="#e94560" opacity="0.4"/>
+  <circle cx="350" cy="280" r="2" fill="#e94560" opacity="0.3"/>
+  <circle cx="380" cy="320" r="4" fill="#c23152" opacity="0.2"/>
+  <circle cx="140" cy="350" r="2" fill="#e94560" opacity="0.35"/>
+  <!-- Text -->
+  <text x="256" y="460" text-anchor="middle" font-family="'Georgia', serif" font-size="52" fill="#f5e6ca" letter-spacing="12" opacity="0.9">墨境</text>
+</svg>

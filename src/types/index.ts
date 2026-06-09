@@ -126,6 +126,7 @@ export interface NovelMetadata {
   targetWordCount: number;
   currentWordCount: number;
   chapters: NovelChapter[];
+  volumes: NovelVolume[];
   style: string;
   language: string;
   narrativeData?: NarrativeSnapshot;
@@ -140,6 +141,12 @@ export interface NarrativeSnapshot {
 
 export type ChapterStatus = 'planned' | 'drafting' | 'revising' | 'complete';
 
+export interface NovelVolume {
+  id: string;
+  title: string;
+  order: number;
+}
+
 export interface NovelChapter {
   id: string;
   title: string;
@@ -148,6 +155,7 @@ export interface NovelChapter {
   status: ChapterStatus;
   wordCount: number;
   order: number;
+  volumeId?: string;
 }
 
 // ============================================================================

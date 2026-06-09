@@ -1,6 +1,11 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Button, Space, Tabs, message, Tooltip, Typography } from 'antd';
-import { ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons';
+import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown } from 'antd';
+import {
+  ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined,
+  ZoomInOutlined, ZoomOutOutlined, LineChartOutlined, ExperimentOutlined,
+  ReloadOutlined, ExpandOutlined, FormatPainterOutlined,
+  FileSearchOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
@@ -31,6 +36,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [generating, setGenerating] = useState<string | null>(null);
   const [streamContent, setStreamContent] = useState('');
   const [fontSize, setFontSize] = useState(loadFontSize);
+  const [tensionScore, setTensionScore] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
@@ -159,6 +165,99 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     setGenerating(null);
   };
 
+  // --- AI Rewrite / Polish / Expand / Summarize ---
+
+  const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize') => {
+    if (!hasEndpoint) {
+      message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
+      return;
+    }
+
+    const content = streamContent || chapter.content;
+    if (!content || content.length < 20) {
+      message.warning(t('editor.noContent'));
+      return;
+    }
+
+    setGenerating(mode);
+    try {
+      const prompts: Record<string, { system: string; user: string }> = {
+        rewrite: {
+          system: '你是一位小说编辑。请重写以下段落，保持核心情节不变，但使用不同的表达方式，使文笔更加优美流畅。',
+          user: `请重写以下段落：\n\n${content.slice(0, 3000)}`,
+        },
+        polish: {
+          system: '你是一位资深文字编辑。请润色以下文本，修复语法问题，提升文笔质量，减少重复和冗余表达。只输出润色后的文本。',
+          user: `请润色以下文本：\n\n${content.slice(0, 4000)}`,
+        },
+        expand: {
+          system: '你是一位小说家。请在保持原有内容和风格的基础上，适当扩展以下段落的细节描写（如环境、心理、动作），增加约30%的篇幅。只输出扩展后的文本。',
+          user: `请扩展以下段落的细节描写：\n\n${content.slice(0, 3000)}`,
+        },
+        summarize: {
+          system: '你是一位小说编辑助手。请为以下章节内容生成摘要，包含：核心事件、角色行动、情感走向。100-200字。',
+          user: `请总结以下章节：\n\n${content.slice(0, 6000)}`,
+        },
+      };
+
+      const { system, user } = prompts[mode];
+      const request: LLMGenerateRequest = {
+        taskType: 'generation',
+        systemPrompt: system,
+        userPrompt: user,
+        temperature: mode === 'rewrite' ? 0.8 : 0.3,
+        maxTokens: mode === 'expand' ? 6000 : mode === 'summarize' ? 500 : 4096,
+      };
+
+      const response = await providerRouter.generate(request);
+
+      if (mode === 'summarize') {
+        // Update outline with summary
+        onUpdate({ outline: response.content });
+        message.success(t('editor.summaryDone'));
+      } else {
+        // Replace content with rewritten/polished/expanded version
+        onUpdate({ content: response.content, wordCount: response.content.length });
+        message.success(t('editor.rewriteDone'));
+      }
+    } catch (err) {
+      message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+  // --- Tension Scoring (local heuristic) ---
+
+  const handleTensionScore = () => {
+    const content = streamContent || chapter.content;
+    if (!content || content.length < 100) return;
+
+    // Simple heuristic scoring based on content patterns
+    let score = 5;
+    const text = content;
+
+    // Conflict indicators
+    if (text.match(/冲突|对抗|争执|战斗|打斗|厮杀/g)) score += 1;
+    if (text.match(/危险|威胁|紧急|崩溃|绝望/g)) score += 0.5;
+    if (text.match(/惊讶|震惊|不可思议|难以置信/g)) score += 0.5;
+
+    // Dialogue density (more dialogue = more tension)
+    const dialogMatches = text.match(/[""][^""]*[""]|「[^」]*」/g);
+    if (dialogMatches && dialogMatches.length > 5) score += 0.5;
+
+    // Short sentences (pacing indicator)
+    const shortSentences = text.split(/[。！？\n]/).filter((s) => s.length > 0 && s.length < 10);
+    if (shortSentences.length > text.split(/[。！？\n]/).length * 0.3) score += 0.5;
+
+    // Suspense keywords
+    if (text.match(/秘密|隐藏|真相|谜团|不知|困惑/g)) score += 0.5;
+
+    score = Math.min(10, Math.max(0, Math.round(score * 10) / 10));
+    setTensionScore(score);
+    message.info(`${t('tension.score')}: ${score}/10`);
+  };
+
   const wordCount = streamContent || chapter.content || '';
   const wc = wordCount.length;
 
@@ -166,6 +265,33 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     fontSize,
     lineHeight: 1.8,
   };
+
+  const aiToolItems = [
+    {
+      key: 'polish',
+      icon: <FormatPainterOutlined />,
+      label: t('editor.aiPolish'),
+      onClick: () => handleAITool('polish'),
+    },
+    {
+      key: 'rewrite',
+      icon: <ReloadOutlined />,
+      label: t('editor.aiRewrite'),
+      onClick: () => handleAITool('rewrite'),
+    },
+    {
+      key: 'expand',
+      icon: <ExpandOutlined />,
+      label: t('editor.aiExpand'),
+      onClick: () => handleAITool('expand'),
+    },
+    {
+      key: 'summarize',
+      icon: <FileSearchOutlined />,
+      label: t('editor.aiSummarize'),
+      onClick: () => handleAITool('summarize'),
+    },
+  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -233,22 +359,46 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   style={{ flex: 1, resize: 'vertical', minHeight: 300, ...textareaStyle }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
+                  <Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
+                    {tensionScore !== null && (
+                      <Tooltip title={t('tension.score')}>
+                        <Text style={{ fontSize: 12, color: tensionScore >= 7 ? '#22c55e' : tensionScore >= 4 ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>
+                          <LineChartOutlined /> {tensionScore}/10
+                        </Text>
+                      </Tooltip>
+                    )}
+                  </Space>
                   <Space>
                     {generating === 'content' ? (
                       <Button size="small" danger onClick={handleStopGeneration}>
                         {t('novel.stopGeneration')}
                       </Button>
                     ) : (
-                      <Button
-                        icon={<ThunderboltOutlined />}
-                        onClick={handleGenerateContent}
-                        loading={generating === 'content'}
-                        size="small"
-                        type="primary"
-                      >
-                        {t('novel.generate')}
-                      </Button>
+                      <>
+                        <Dropdown menu={{ items: aiToolItems }} trigger={['click']}>
+                          <Button size="small" icon={<ExperimentOutlined />} loading={generating !== null}>
+                            {t('editor.aiTools')}
+                          </Button>
+                        </Dropdown>
+                        <Tooltip title={t('editor.tensionScore')}>
+                          <Button
+                            size="small"
+                            icon={<LineChartOutlined />}
+                            onClick={handleTensionScore}
+                            disabled={!chapter.content}
+                          />
+                        </Tooltip>
+                        <Button
+                          icon={<ThunderboltOutlined />}
+                          onClick={handleGenerateContent}
+                          loading={generating === 'content'}
+                          size="small"
+                          type="primary"
+                        >
+                          {t('novel.generate')}
+                        </Button>
+                      </>
                     )}
                     <Tooltip title={t('common.save')}>
                       <Button

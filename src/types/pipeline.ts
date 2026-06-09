@@ -129,6 +129,7 @@ export interface AutopilotState {
   lastRunAt?: string;
   lastError?: string;
   progress: number;           // 0-1
+  currentChapterContent?: string;
 }
 
 // --- Circuit Breaker ---

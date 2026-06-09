@@ -1,8 +1,8 @@
 import type { PriorityTier, ContextSlot, StoryPhase, StoryPhaseState, StoryPhaseRules } from '@/types/narrative';
 
-// --- Context Budget Allocator ---
+// --- Context Budget Allocator (V2 "Subtraction Reform") ---
 // PlotPilot's onion model: T0 (critical) → T1 (compressible) → T2 (dynamic) → T3 (sacrificial)
-// When token budget is tight, squeeze from T3 → T2 → T1, T0 is always protected.
+// V2: Start with everything, then subtract from T3 → T2 → T1 until budget fits. T0 always protected.
 
 const TOKEN_BUDGET = 32000; // Default context window for generation
 
@@ -51,7 +51,7 @@ export class ContextBudgetAllocator {
     this.slots.set(slot.name, slot);
   }
 
-  // --- Pre-built T0 slots (from PlotPilot's ContextAssembler) ---
+  // --- T0: Critical (always protected) ---
 
   registerStoryAnchor(content: string): void {
     this.registerSlot({
@@ -85,7 +85,7 @@ export class ContextBudgetAllocator {
       estimatedTokens: this.estimateTokens(content),
       maxTokens: 800,
       minTokens: 100,
-      priority: 130, // Highest priority — absolute facts
+      priority: 130,
     });
   }
 
@@ -122,6 +122,48 @@ export class ContextBudgetAllocator {
       maxTokens: 400,
       minTokens: 50,
       priority: 110,
+    });
+  }
+
+  // --- T0: New fine-grained slots (V2) ---
+
+  registerLifecycleDirective(phase: StoryPhase, chapterIndex: number, totalChapters: number): void {
+    const rules = PHASE_RULES[phase];
+    const progress = totalChapters > 0 ? chapterIndex / totalChapters : 0;
+    const phaseLabels: Record<StoryPhase, string> = {
+      opening: '开局期', development: '发展期', convergence: '收敛期', finale: '终局期',
+    };
+
+    const content = [
+      `【故事阶段: ${phaseLabels[phase]} (${(progress * 100).toFixed(0)}%)】`,
+      phase === 'convergence' || phase === 'finale'
+        ? `禁止开新坑。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。收敛等级: ${(rules.convergenceLevel * 100).toFixed(0)}%。`
+        : `允许铺陈新支线和新角色。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。`,
+      rules.dailyLifeAllowed ? '允许日常描写。' : '禁止日常描写，保持叙事推进。',
+    ].join('\n');
+
+    this.registerSlot({
+      name: 'LIFECYCLE_DIRECTIVE',
+      tier: 'T0',
+      content,
+      estimatedTokens: this.estimateTokens(content),
+      maxTokens: 600,
+      minTokens: 50,
+      priority: 135, // Higher than fact lock
+    });
+  }
+
+  registerEditorBrief(style: string, genre: string): void {
+    const content = `【编辑简报】风格: ${style} | 类型: ${genre} | 要求: 文笔流畅、对话自然、情节紧凑、每段推进。`;
+
+    this.registerSlot({
+      name: 'EDITOR_BRIEF',
+      tier: 'T0',
+      content,
+      estimatedTokens: this.estimateTokens(content),
+      maxTokens: 800,
+      minTokens: 50,
+      priority: 100,
     });
   }
 
@@ -179,50 +221,101 @@ export class ContextBudgetAllocator {
     });
   }
 
-  // --- Allocate ---
+  // --- Character Scheduling (V2) ---
 
+  /**
+   * Schedule character anchors based on relevance.
+   * Priority: outline mention > recent appearance > importance > activity score.
+   */
+  scheduleCharacterAnchors(
+    characters: { name: string; description: string; importance: string }[],
+    outlineCharacterNames: string[],
+    recentChapterCharacterNames: string[][],
+    maxSlots = 7,
+  ): void {
+    if (characters.length === 0) return;
+
+    const scored = characters.map((ch) => {
+      let score = 0;
+      // Outline mention = highest
+      if (outlineCharacterNames.some((n) => ch.name.includes(n) || n.includes(ch.name))) score += 100;
+      // Recent appearance
+      const recentFlat = recentChapterCharacterNames.flat();
+      const recentCount = recentFlat.filter((n) => ch.name.includes(n) || n.includes(ch.name)).length;
+      score += Math.min(recentCount * 20, 60);
+      // Importance
+      if (ch.importance === 'protagonist') score += 50;
+      else if (ch.importance === 'major') score += 30;
+      else if (ch.importance === 'supporting') score += 10;
+      return { ...ch, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const selected = scored.slice(0, maxSlots);
+
+    const content = selected
+      .map((ch) => `- ${ch.name}: ${ch.description.slice(0, 80)}`)
+      .join('\n');
+
+    this.registerCharacterAnchors(content);
+  }
+
+  // --- Allocate (V2 Subtraction Reform) ---
+
+  /**
+   * Subtraction-based allocation: start with all slots, then remove lowest-priority
+   * from T3 → T2 → T1 until budget fits. T0 is always protected.
+   */
   allocate(): { prompt: string; usedTokens: number; compressionApplied: boolean } {
-    const tiers: PriorityTier[] = ['T0', 'T1', 'T2', 'T3'];
-    let remainingBudget = this.totalBudget;
-    let compressionApplied = false;
+    const allSlots = Array.from(this.slots.values());
 
-    // Sort slots: by tier (T0 first), then by priority (higher first)
-    const sortedSlots = Array.from(this.slots.values()).sort((a, b) => {
-      const tierOrder = { T0: 0, T1: 1, T2: 2, T3: 3 };
+    // Step 1: Separate T0 (always included) from T1-T3
+    const t0Slots = allSlots.filter((s) => s.tier === 'T0');
+    const compressibleSlots = allSlots.filter((s) => s.tier !== 'T0');
+
+    // T0 slots: truncate to maxTokens but always included
+    const t0Allocated = t0Slots
+      .sort((a, b) => b.priority - a.priority)
+      .map((slot) => ({
+        ...slot,
+        content: this.truncateContent(slot.content, slot.maxTokens ?? Infinity),
+      }));
+
+    const t0Tokens = t0Allocated.reduce((s, slot) => s + this.estimateTokens(slot.content), 0);
+    let remainingBudget = this.totalBudget - t0Tokens;
+
+    // Step 2: Sort compressible slots by priority (descending)
+    const sorted = compressibleSlots.sort((a, b) => {
+      const tierOrder: Record<PriorityTier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
       const tierDiff = tierOrder[a.tier] - tierOrder[b.tier];
-      if (tierDiff !== 0) return tierDiff;
+      if (tierDiff !== 0) return tierDiff; // T1 before T2 before T3
       return b.priority - a.priority;
     });
 
-    const allocated: ContextSlot[] = [];
+    const allocated: ContextSlot[] = [...t0Allocated];
+    let compressionApplied = false;
 
-    for (const slot of sortedSlots) {
-      if (slot.tier === 'T0') {
-        // T0 is mandatory — truncate to maxTokens if needed
-        const truncated = this.truncateContent(slot.content, slot.maxTokens ?? Infinity);
-        allocated.push({ ...slot, content: truncated });
-        remainingBudget -= this.estimateTokens(truncated);
+    for (const slot of sorted) {
+      if (remainingBudget <= 0) {
+        compressionApplied = true;
+        continue;
+      }
+
+      const slotTokens = this.estimateTokens(slot.content);
+
+      if (slotTokens <= remainingBudget) {
+        // Fits entirely
+        allocated.push(slot);
+        remainingBudget -= slotTokens;
+      } else if (remainingBudget >= (slot.minTokens ?? 0)) {
+        // Partially fits — truncate
+        const truncated = this.truncateContent(slot.content, remainingBudget);
+        allocated.push({ ...slot, content: truncated, estimatedTokens: remainingBudget });
+        remainingBudget = 0;
+        compressionApplied = true;
       } else {
-        // T1-T3: fit into remaining budget
-        const available = Math.max(0, remainingBudget);
-        if (available <= 0) {
-          // No budget left — drop this slot entirely
-          compressionApplied = true;
-          continue;
-        }
-
-        if (slot.estimatedTokens <= available) {
-          allocated.push(slot);
-          remainingBudget -= slot.estimatedTokens;
-        } else if (available >= slot.minTokens) {
-          // Compress to fit
-          const truncated = this.truncateContent(slot.content, available);
-          allocated.push({ ...slot, content: truncated, estimatedTokens: available });
-          remainingBudget = 0;
-          compressionApplied = true;
-        } else {
-          compressionApplied = true;
-        }
+        // Doesn't fit at all
+        compressionApplied = true;
       }
     }
 
@@ -276,7 +369,6 @@ export class ContextBudgetAllocator {
   // --- Helpers ---
 
   private estimateTokens(text: string): number {
-    // Rough estimate: ~1.5 tokens per Chinese character, ~0.75 tokens per English word
     const chineseChars = (text.match(/[一-鿿]/g) || []).length;
     const otherChars = text.length - chineseChars;
     return Math.ceil(chineseChars * 1.5 + otherChars * 0.3);
@@ -286,7 +378,6 @@ export class ContextBudgetAllocator {
     const currentTokens = this.estimateTokens(content);
     if (currentTokens <= maxTokens) return content;
 
-    // Rough truncation by character ratio
     const ratio = maxTokens / currentTokens;
     const targetLength = Math.floor(content.length * ratio);
     return content.slice(0, targetLength) + '...[截断]';

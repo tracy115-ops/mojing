@@ -6,6 +6,7 @@ import type {
   ProjectStatus,
   NovelMetadata,
   NovelChapter,
+  NovelVolume,
   ComicMetadata,
   VideoMetadata,
   NarrativeSnapshot,
@@ -16,7 +17,7 @@ const generateId = () => crypto.randomUUID?.() ?? `${Date.now()}_${Math.random()
 function createDefaultMetadata(type: CreativeProjectType): NovelMetadata | ComicMetadata | VideoMetadata {
   switch (type) {
     case 'novel':
-      return { genre: 'fantasy', targetWordCount: 100000, currentWordCount: 0, chapters: [], style: 'literary', language: 'zh-CN' };
+      return { genre: 'fantasy', targetWordCount: 100000, currentWordCount: 0, chapters: [], volumes: [], style: 'literary', language: 'zh-CN' };
     case 'comic':
       return { style: 'manga', panelLayout: 'grid', pageCount: 0, characters: [] };
     case 'video':
@@ -35,10 +36,14 @@ interface ProjectState {
   toggleFavorite: (id: string) => void;
 
   // Novel-specific
-  addChapter: (projectId: string) => void;
+  addChapter: (projectId: string, volumeId?: string) => void;
   deleteChapter: (projectId: string, chapterId: string) => void;
   updateChapter: (projectId: string, chapterId: string, updates: Partial<NovelChapter>) => void;
   updateNarrativeData: (projectId: string, data: NarrativeSnapshot) => void;
+  addVolume: (projectId: string, title?: string) => void;
+  updateVolume: (projectId: string, volumeId: string, updates: Partial<NovelVolume>) => void;
+  deleteVolume: (projectId: string, volumeId: string) => void;
+  moveChapterToVolume: (projectId: string, chapterId: string, volumeId: string | undefined) => void;
 
   // Comic-specific
   addComicCharacter: (projectId: string, character: Omit<import('@/types').ComicCharacter, 'id'>) => void;
@@ -106,7 +111,7 @@ export const useProjectStore = create<ProjectState>()(
 
       // --- Novel ---
 
-      addChapter: (projectId) => {
+      addChapter: (projectId, volumeId) => {
         set((s) => ({
           projects: s.projects.map((p) => {
             if (p.id !== projectId || p.type !== 'novel') return p;
@@ -119,6 +124,7 @@ export const useProjectStore = create<ProjectState>()(
               status: 'planned',
               wordCount: 0,
               order: meta.chapters.length,
+              volumeId,
             };
             return {
               ...p,
@@ -182,6 +188,82 @@ export const useProjectStore = create<ProjectState>()(
             return {
               ...p,
               metadata: { ...meta, narrativeData: data },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      addVolume: (projectId, title) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            const volume: NovelVolume = {
+              id: generateId(),
+              title: title || `卷 ${meta.volumes.length + 1}`,
+              order: meta.volumes.length,
+            };
+            return {
+              ...p,
+              metadata: { ...meta, volumes: [...meta.volumes, volume] },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      updateVolume: (projectId, volumeId, updates) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            return {
+              ...p,
+              metadata: {
+                ...meta,
+                volumes: meta.volumes.map((v) =>
+                  v.id === volumeId ? { ...v, ...updates } : v,
+                ),
+              },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      deleteVolume: (projectId, volumeId) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            // Move all chapters in this volume to unassigned
+            const chapters = meta.chapters.map((c) =>
+              c.volumeId === volumeId ? { ...c, volumeId: undefined } : c,
+            );
+            const remaining = meta.volumes.filter((v) => v.id !== volumeId);
+            return {
+              ...p,
+              metadata: { ...meta, volumes: remaining, chapters },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      moveChapterToVolume: (projectId, chapterId, volumeId) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            return {
+              ...p,
+              metadata: {
+                ...meta,
+                chapters: meta.chapters.map((c) =>
+                  c.id === chapterId ? { ...c, volumeId } : c,
+                ),
+              },
               updatedAt: new Date().toISOString(),
             };
           }),
