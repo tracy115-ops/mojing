@@ -218,19 +218,23 @@
   50% { opacity: 0.3; }
 }
 
-/* Narrative Workbench Tabs — scrollable content */
+/* Narrative Workbench Tabs — height chain so charts inside get a definite size */
+.narrative-workbench-tabs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .narrative-workbench-tabs .ant-tabs-content-holder {
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow-y: auto;
-  overflow-x: auto;
+  overflow: hidden;
 }
 .narrative-workbench-tabs .ant-tabs-content {
   height: 100%;
 }
 .narrative-workbench-tabs .ant-tabs-tabpane {
-  min-height: 100%;
-  overflow-y: auto;
-  padding-bottom: 24px;
+  height: 100%;
+  overflow: auto;
 }

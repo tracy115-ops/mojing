@@ -262,11 +262,12 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{
         padding: '4px 12px', fontWeight: 600, fontSize: 13,
         borderBottom: '1px solid var(--border-secondary)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        flexShrink: 0,
       }}>
         <span><ApartmentOutlined style={{ marginRight: 6 }} />{t('knowledgeGraph.title')}</span>
         <Space size={4}>

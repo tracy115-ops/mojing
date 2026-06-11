@@ -255,11 +255,12 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
   }, [echartRef]);
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{
         padding: '4px 12px', fontWeight: 600, fontSize: 13,
         borderBottom: '1px solid var(--border-secondary)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        flexShrink: 0,
       }}>
         <span><TeamOutlined style={{ marginRight: 6 }} />{t('relationGraph.title')}</span>
         <Space size={4}>
@@ -269,7 +270,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
         </Space>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {!option ? (
           <div style={{ padding: 40 }}>
             <Empty description={characters.length === 0 ? t('relationGraph.empty') : t('relationGraph.noData')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
