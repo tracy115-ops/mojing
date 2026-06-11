@@ -209,6 +209,20 @@ export class ContextBudgetAllocator {
     });
   }
 
+  // --- T0: Voice style constraints ---
+
+  registerVoiceConstraints(text: string): void {
+    this.registerSlot({
+      name: 'VOICE_CONSTRAINTS',
+      tier: 'T0',
+      content: text,
+      estimatedTokens: this.estimateTokens(text),
+      maxTokens: 400,
+      minTokens: 0,
+      priority: 104,
+    });
+  }
+
   // --- T0: New fine-grained slots (V2) ---
 
   registerLifecycleDirective(phase: StoryPhase, chapterIndex: number, totalChapters: number): void {

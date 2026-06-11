@@ -356,7 +356,7 @@ export class AutopilotEngine {
     content = await this.doQualityGateRewrite(chapterIndex, content, chapterId);
 
     // Post-chapter aftermath
-    await this.doAftermath(chapterIndex, content);
+    await this.doAftermath(chapterIndex, content, chapterId);
   }
 
   // --- Stage implementations ---
@@ -915,6 +915,22 @@ export class AutopilotEngine {
       this.budget.registerScarsAndMotivations(`【角色驱动力】\n${activeMotivations}`);
     }
 
+    // T0: Voice style constraints — enforce consistent writing style
+    const voiceFp = this.voiceFingerprint.getFingerprint();
+    if (voiceFp) {
+      const styleConstraint = this.voiceFingerprint.buildStyleConstraint(voiceFp);
+      if (styleConstraint.directives.length > 0) {
+        const voiceLines = [
+          '【文风约束 — 必须遵守】',
+          ...styleConstraint.directives.map((d) => `✦ ${d}`),
+        ];
+        if (styleConstraint.bannedPatterns.length > 0) {
+          voiceLines.push(`禁止使用: ${styleConstraint.bannedPatterns.join('、')}`);
+        }
+        this.budget.registerVoiceConstraints(voiceLines.join('\n'));
+      }
+    }
+
     // T1: Prop context injection
     const propContext = this.propManager.buildContextForChapter(chapterIndex);
     if (propContext.factLock) {
@@ -963,6 +979,45 @@ export class AutopilotEngine {
       });
       this.qualityGate.clearDirectives();
     }
+  }
+
+  private async applyVoiceCorrection(content: string, chapterIndex: number, chapterId: string): Promise<string | null> {
+    try {
+      const fp = this.voiceFingerprint.getFingerprint();
+      if (!fp) return null;
+      const constraint = this.voiceFingerprint.buildStyleConstraint(fp);
+      if (constraint.directives.length === 0) return null;
+
+      const rewritePrompt = [
+        `请将以下文本重写，严格遵循原始文风。`,
+        `文风要求：${constraint.directives.join('；')}`,
+        constraint.bannedPatterns.length > 0 ? `绝对禁止：${constraint.bannedPatterns.join('、')}` : '',
+        `参考指标 — 平均句长:${fp.features.avgSentenceLength}字 对话占比:${(fp.features.dialogueRatio * 100).toFixed(0)}% 情感基调:${fp.features.emotionalTone}`,
+        `只输出重写后的文本，不要任何解释。保持剧情和角色完全不变，只调整文风。`,
+      ].filter(Boolean).join('\n');
+
+      const request: LLMGenerateRequest = {
+        taskType: 'rewrite',
+        systemPrompt: rewritePrompt,
+        userPrompt: content,
+        temperature: 0.5,
+        maxTokens: content.length + 500,
+      };
+
+      const response = await providerRouter.generate(request);
+      const corrected = response.content.trim();
+      if (corrected.length > content.length * 0.7) {
+        this.config.onUpdateChapter(chapterId, {
+          content: corrected,
+          wordCount: corrected.length,
+          status: 'drafting',
+        });
+        return corrected;
+      }
+    } catch (err) {
+      console.warn('AutopilotEngine: voice correction failed', err);
+    }
+    return null;
   }
 
   private estimateTokens(text: string): number {
@@ -1095,7 +1150,7 @@ export class AutopilotEngine {
     return currentContent;
   }
 
-  private async doAftermath(chapterIndex: number, content: string): Promise<void> {
+  private async doAftermath(chapterIndex: number, content: string, chapterId: string): Promise<void> {
     const chapterNumber = chapterIndex + 1;
 
     // 1. Memory update (three locks)
@@ -1261,11 +1316,25 @@ export class AutopilotEngine {
     try {
       const driftReport = await this.voiceFingerprint.detectDrift(content, chapterNumber);
       this.voiceFingerprint.saveDriftReport(driftReport);
-      if (driftReport.driftDetected) {
+      if (driftReport.driftDetected && driftReport.similarity < 0.5) {
+        // Severe drift — trigger voice-corrected rewrite
+        this.emit('error', {
+          error: `文风严重漂移(相似度${(driftReport.similarity * 100).toFixed(0)}%)，正在修正...`,
+          voiceDrift: driftReport,
+        });
+        const corrected = await this.applyVoiceCorrection(content, chapterIndex, chapterId);
+        if (corrected) {
+          content = corrected;
+        }
+      } else if (driftReport.driftDetected) {
         this.emit('error', {
           error: `文风漂移警告(相似度${(driftReport.similarity * 100).toFixed(0)}%): ${driftReport.suggestedFix ?? '建议检查文风一致性'}`,
           voiceDrift: driftReport,
         });
+      } else {
+        // Update fingerprint baseline with current chapter's style
+        const fp = await this.voiceFingerprint.computeFingerprint(content, chapterNumber);
+        this.repo.saveVoiceFingerprint(fp);
       }
     } catch (err) {
       console.warn('AutopilotEngine: voice drift detection failed', err);
