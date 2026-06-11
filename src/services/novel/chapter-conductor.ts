@@ -6,6 +6,7 @@ import type { Beat, BeatFocus, ConductorPhase, ConductorSignal, StoryPhaseState 
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { ContextBudgetAllocator } from './context-budget';
+import { parseLLMJson } from './llm-json';
 
 // --- Constants ---
 
@@ -70,18 +71,21 @@ export async function magnifyOutlineToBeats(
 
   try {
     const response = await providerRouter.generate(request);
-    const raw = JSON.parse(response.content);
-    if (!Array.isArray(raw)) throw new Error('Expected array');
+    const raw = parseLLMJson<unknown[]>(response.content);
+    if (!raw || !Array.isArray(raw)) throw new Error('Expected array');
 
-    let beats: Beat[] = raw.slice(0, MAX_BEATS).map((b: Record<string, unknown>, i: number) => ({
-      index: i,
-      description: String(b.description ?? ''),
-      targetWords: Math.max(MIN_BEAT_WORDS, Number(b.targetWords ?? 500)),
-      focus: validateFocus(b.focus),
-      sceneGoal: String(b.sceneGoal ?? ''),
-      expansionHints: Array.isArray(b.expansionHints) ? b.expansionHints.map(String) : undefined,
-      transitionFromPrev: i > 0 ? String(b.transitionFromPrev ?? '') : undefined,
-    }));
+    let beats: Beat[] = raw.slice(0, MAX_BEATS).map((item: unknown, i: number) => {
+      const b = item as Record<string, unknown>;
+      return {
+        index: i,
+        description: String(b.description ?? ''),
+        targetWords: Math.max(MIN_BEAT_WORDS, Number(b.targetWords ?? 500)),
+        focus: validateFocus(b.focus),
+        sceneGoal: String(b.sceneGoal ?? ''),
+        expansionHints: Array.isArray(b.expansionHints) ? b.expansionHints.map(String) : undefined,
+        transitionFromPrev: i > 0 ? String(b.transitionFromPrev ?? '') : undefined,
+      };
+    });
 
     // Cap & merge
     beats = capAndMergeBeats(beats, targetWords);

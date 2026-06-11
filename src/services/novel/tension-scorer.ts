@@ -12,6 +12,7 @@ import type {
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from './narrative-repository';
+import { parseLLMJson } from './llm-json';
 
 /**
  * Tension scoring weights (PlotPilot's formula):
@@ -68,7 +69,8 @@ export class TensionScoringService {
 
     try {
       const response = await providerRouter.generate(request);
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<{ plot?: number; emotional?: number; pacing?: number }>(response.content);
+      if (!data) throw new Error('tension parse failed');
 
       const dimensions: TensionDimensions = {
         plot: clamp01(data.plot),
@@ -182,11 +184,13 @@ export class TensionScoringService {
 
     try {
       const response = await providerRouter.generate(request);
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<{ similarity?: number; driftDetected?: boolean; suggestedFix?: string }>(response.content);
+      if (!data) throw new Error('tension voice parse failed');
+      const sim = data.similarity ?? 0.5;
       return {
         chapter: chapterNumber,
-        similarity: clamp(data.similarity, 0, 1),
-        driftDetected: data.driftDetected ?? data.similarity < 0.6,
+        similarity: clamp(sim, 0, 1),
+        driftDetected: data.driftDetected ?? sim < 0.6,
         suggestedFix: data.suggestedFix,
       };
     } catch {

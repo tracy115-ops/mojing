@@ -7,6 +7,7 @@ import type {
 } from '@/types/narrative';
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
+import { parseLLMJson } from './llm-json';
 
 // --- Chapter Aftermath Pipeline ---
 // PlotPilot's key insight: ONE LLM call extracts ALL dimensions after a chapter is generated.
@@ -70,7 +71,8 @@ ${chapterContent}
 
     try {
       const response = await providerRouter.generate(request);
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<Record<string, any>>(response.content);
+      if (!data) throw new Error('JSON parse returned null');
 
       return {
         novelId,

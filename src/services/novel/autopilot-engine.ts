@@ -19,6 +19,7 @@ import { GovernanceEngine } from './governance-engine';
 import { NarrativeRepository } from './narrative-repository';
 import { PropManager } from './prop-manager';
 import { EvolutionEngine } from './evolution-engine';
+import { parseLLMJson } from './llm-json';
 import { VoiceFingerprintService } from './voice-fingerprint';
 import { AntiAIAuditor } from './cliche-scanner';
 import { ChapterContinuityLedger } from './chapter-continuity-ledger';
@@ -418,7 +419,8 @@ export class AutopilotEngine {
 
     const response = await providerRouter.generate(request);
     try {
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<{ direction?: string; conflictCore?: string; endingHook?: string; title?: string }>(response.content);
+      if (!data) return { title: `第${chapterIndex + 1}章`, direction: '' };
       // Build richer direction that includes conflict and hook
       const parts: string[] = [];
       if (data.direction) parts.push(data.direction);
@@ -485,7 +487,8 @@ export class AutopilotEngine {
 
     const response = await providerRouter.generate(request);
     try {
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<Record<string, any>>(response.content);
+      if (!data) throw new Error('global plan parse failed');
       const plan: GlobalPlan = {
         mainPlot: data.mainPlot || '',
         coreConflict: data.coreConflict || '',
@@ -1042,7 +1045,8 @@ export class AutopilotEngine {
 
     try {
       const response = await providerRouter.generate(request);
-      const review = JSON.parse(response.content);
+      const review = parseLLMJson<{ pass?: boolean; overall?: number }>(response.content);
+      if (!review) throw new Error('review parse failed');
       const passed = review.pass !== false && (review.overall ?? 0) >= 6;
 
       this.config.onUpdateChapter(chapterId, {

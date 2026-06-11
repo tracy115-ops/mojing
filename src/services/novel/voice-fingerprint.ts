@@ -7,6 +7,7 @@ import type { VoiceFingerprint, VoiceDriftReport } from '@/types/narrative';
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from './narrative-repository';
+import { parseLLMJson } from './llm-json';
 
 export interface VoiceAnalysisResult {
   fingerprint: VoiceFingerprint;
@@ -136,7 +137,8 @@ export class VoiceFingerprintService {
       };
 
       const response = await providerRouter.generate(request);
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<{ similarity: number; driftDetected?: boolean; suggestedFix?: string }>(response.content);
+      if (!data) throw new Error('voice drift parse failed');
       return {
         chapter: chapterNumber,
         similarity: clamp(data.similarity, 0, 1),

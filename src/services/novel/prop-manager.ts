@@ -12,6 +12,7 @@
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from './narrative-repository';
+import { parseLLMJson } from './llm-json';
 
 // --- Types ---
 
@@ -256,12 +257,13 @@ ${propsSummary}
 
     try {
       const response = await providerRouter.generate(request);
-      const items = JSON.parse(response.content);
-      if (!Array.isArray(items)) return [];
+      const items = parseLLMJson<unknown[]>(response.content);
+      if (!items || !Array.isArray(items)) return [];
 
       const events: PropEvent[] = [];
 
-      for (const item of items) {
+      for (const rawItem of items) {
+        const item = rawItem as Record<string, any>;
         // If new prop, create it first
         if (item.isNewProp || !item.propId) {
           const newProp = this.createProp({

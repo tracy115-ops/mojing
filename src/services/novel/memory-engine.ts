@@ -11,6 +11,7 @@ import type {
 } from '@/types/narrative';
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
+import { parseLLMJson } from './llm-json';
 
 // --- Memory Engine ---
 // Inspired by PlotPilot's three-lock system:
@@ -145,43 +146,50 @@ export class MemoryEngine {
 
     try {
       const response = await providerRouter.generate(request);
-      const data = JSON.parse(response.content);
+      const data = parseLLMJson<Record<string, any>>(response.content);
+      if (!data) return;
 
-      // Merge extracted beats
-      if (data.completed_beats) {
+      // Merge extracted beats (validate each entry)
+      if (Array.isArray(data.completed_beats)) {
         for (const beat of data.completed_beats) {
+          if (typeof beat.beatId !== 'string' || typeof beat.summary !== 'string') continue;
           if (!this.beatLock.completedBeats.some((b) => b.beatId === beat.beatId)) {
             this.beatLock.completedBeats.push({
               beatId: beat.beatId,
               summary: beat.summary,
               chapter: chapterNumber,
-              charactersInvolved: beat.charactersInvolved ?? [],
+              charactersInvolved: Array.isArray(beat.charactersInvolved) ? beat.charactersInvolved : [],
             });
           }
         }
       }
 
-      // Merge extracted clues
-      if (data.revealed_clues) {
+      // Merge extracted clues (validate each entry)
+      if (Array.isArray(data.revealed_clues)) {
+        const validCategories = new Set(['truth', 'relationship', 'identity', 'ability', 'other']);
         for (const clue of data.revealed_clues) {
+          if (typeof clue.clueId !== 'string' || typeof clue.content !== 'string') continue;
           if (!this.clueLock.revealedClues.some((c) => c.clueId === clue.clueId)) {
+            const category = typeof clue.category === 'string' && validCategories.has(clue.category)
+              ? clue.category : 'other';
             this.clueLock.revealedClues.push({
               clueId: clue.clueId,
               content: clue.content,
               revealedAtChapter: chapterNumber,
-              category: clue.category ?? 'other',
-              isValid: clue.isValid ?? true,
+              category,
+              isValid: clue.isValid !== false,
             });
           }
         }
       }
 
       // Update timeline anchor
-      if (data.timeline_anchor) {
+      if (data.timeline_anchor && typeof data.timeline_anchor === 'object') {
+        const anchor = data.timeline_anchor as Record<string, unknown>;
         this.factLock.timelineAnchors.push({
           chapter: chapterNumber,
-          inStoryTime: data.timeline_anchor.inStoryTime ?? '',
-          events: data.timeline_anchor.events ?? [],
+          inStoryTime: typeof anchor.inStoryTime === 'string' ? anchor.inStoryTime : '',
+          events: Array.isArray(anchor.events) ? anchor.events : [],
         });
       }
     } catch (err) {
