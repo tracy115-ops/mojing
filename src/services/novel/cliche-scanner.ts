@@ -184,9 +184,15 @@ export class AntiAIAuditor {
     }
 
     // Normalize to 0-100 score (100 = no AI patterns detected)
+    // Gentler scoring: tolerate a few clichés, only penalize dense AI patterns
     const contentLength = Math.max(1, content.length);
-    const densityPenalty = rawScore / (contentLength / 1000); // per 1000 chars
-    const score = Math.max(0, Math.round(100 - densityPenalty * 5));
+    const perThousand = rawScore / (contentLength / 1000);
+    // Soft penalty curve: 0-2 per thousand barely penalized, heavy penalty above 6
+    const score = Math.max(0, Math.round(
+      perThousand <= 2 ? 100 - perThousand * 3  // 0→100, 2→94
+      : perThousand <= 5 ? 94 - (perThousand - 2) * 6  // 2→94, 5→76
+      : 76 - (perThousand - 5) * 10  // 5→76, drops faster
+    ));
 
     // Determine severity
     let severity: AuditSeverity;
