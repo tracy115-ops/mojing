@@ -1274,6 +1274,8 @@ export class AutopilotEngine {
         foreshadowing: this.foreshadowing.serialize(),
         debts: this.repo.loadNarrativeDebts(),
         newForeshadowing: aftermathResult?.foreshadowings.planted.length ?? 0,
+        newCharacters: aftermathResult?.characterStates.length ?? 0,
+        newSubplots: aftermathResult?.narrativeDebts.filter((d) => d.type === 'storyline').length ?? 0,
       });
 
       if (governanceReport.suggestions.length > 0 && governanceReport.governanceScore < 70) {
@@ -1376,7 +1378,9 @@ export class AutopilotEngine {
     // 12. Conflict detection
     try {
       const bible = this.repo.loadBible();
-      const conflicts = this.conflictDetector.detectConflicts(content, bible);
+      const conflicts = this.conflictDetector.detectConflicts(content, bible, {
+        factLock: this.memory.serialize().factLock,
+      });
       if (conflicts.length > 0) {
         this.emit('error', {
           error: `检测到 ${conflicts.length} 个冲突`,

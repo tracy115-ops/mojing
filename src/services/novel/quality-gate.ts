@@ -264,7 +264,7 @@ export class QualityGateService {
 
   // --- Dimension checks ---
 
-  private checkGovernance(chapterNumber: number, _content: string): QualityDimensionReport {
+  private checkGovernance(chapterNumber: number, content: string): QualityDimensionReport {
     const issues: QualityIssue[] = [];
     let score = 100;
     let directive: string | undefined;
@@ -279,7 +279,7 @@ export class QualityGateService {
         chapterNumber,
         totalChapters,
         storyPhase: phaseState.currentPhase,
-        chapterContent: '',
+        chapterContent: content,
         foreshadowing,
         debts,
       });
@@ -434,7 +434,9 @@ export class QualityGateService {
     try {
       const violations: ContinuityViolation[] = this.evolution.getViolations(chapterNumber);
       const bible = this.repo.loadBible();
-      const conflicts: ConflictReport[] = this.conflictDetector.detectConflicts(content, bible);
+      const conflicts: ConflictReport[] = this.conflictDetector.detectConflicts(content, bible, {
+        factLock: this.memory.serialize().factLock,
+      });
 
       const allIssues = [
         ...violations.map((v) => ({ severity: v.severity as 'warning' | 'error' | 'critical', desc: v.description })),
