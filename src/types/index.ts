@@ -29,7 +29,7 @@ export interface GeneralSettings {
 }
 
 export interface AppearanceSettings {
-  theme: 'dark' | 'light' | 'system';
+  theme: 'dark' | 'light' | 'anchor' | 'system';
   colorPrimary: string;
   compactMode: boolean;
   sidebarWidth: number;
@@ -130,6 +130,7 @@ export interface NovelMetadata {
   style: string;
   language: string;
   narrativeData?: NarrativeSnapshot;
+  storyNodes?: import('./narrative').StoryNode[];
 }
 
 export interface NarrativeSnapshot {
@@ -141,10 +142,14 @@ export interface NarrativeSnapshot {
 
 export type ChapterStatus = 'planned' | 'drafting' | 'revising' | 'complete';
 
+export type VolumeLevel = 'part' | 'act' | 'volume';
+
 export interface NovelVolume {
   id: string;
   title: string;
   order: number;
+  level?: VolumeLevel;
+  parentId?: string;
 }
 
 export interface NovelChapter {

@@ -326,10 +326,10 @@ function getSensoryHint(beatIndex: number): string {
 const macroPlanning: PromptTemplate = {
   id: 'macro-planning',
   name: '宏观规划',
-  version: 2,
+  version: 3,
   variables: ['title', 'genre', 'style', 'prevChapters', 'phaseDirective', 'foreshadowingContext', 'chapterNumber'],
   buildSystem(vars) {
-    return `你是一个资深小说策划师。你的任务是为下一章制定宏观方向。
+    return `你是一个资深小说策划师，擅长构思让人放不下的故事。你的任务是为下一章制定宏观方向。
 
 小说：${vars.title}
 类型：${vars.genre}
@@ -339,10 +339,19 @@ ${vars.phaseDirective ?? ''}
 
 ${vars.foreshadowingContext ?? ''}
 
+规划原则：
+- 每章必须有至少一个核心冲突或转折
+- 章节结尾必须留有悬念或情感钩子
+- 不能连续两章没有实质性推进
+- 角色行动必须有动机，不能为了推进剧情而OOC
+- 伏笔和债务需要逐步解决
+
 请输出JSON格式：
 {
-  "title": "章节标题",
-  "direction": "本章发展方向和核心冲突（100-200字）",
+  "title": "章节标题（有吸引力，不用"第X章"格式）",
+  "direction": "本章发展方向和核心冲突（150-250字，具体说明冲突双方、核心事件、情绪走向、结尾钩子）",
+  "conflictCore": "一句话概括本章核心冲突",
+  "endingHook": "结尾钩子描述",
   "target_word_count": 3000
 }`;
   },
@@ -362,12 +371,18 @@ ${vars.foreshadowingContext ?? ''}
 const actBeatPlanning: PromptTemplate = {
   id: 'act-beat-planning',
   name: '幕级大纲',
-  version: 2,
+  version: 3,
   variables: ['title', 'genre', 'style', 'prevSummary', 'macroDirection', 'chapterNumber', 'chapterTitle', 'factLock', 'beatLock', 'clueLock'],
   buildSystem(vars) {
     return `你是一个专业的小说大纲规划师。根据宏观方向，生成详细的章节大纲。
 
-大纲应包含：场景设定、主要事件节拍（3-5个）、人物行动、情绪走向、关键对话要点、伏笔设计。
+大纲要求：
+- 3-5个叙事节拍（beat），每个有明确目的
+- 节拍之间有因果关系，不是松散拼接
+- 情绪弧线有起伏（不能一直平或一直高）
+- 必须包含至少一个对话密集的节拍
+- 必须包含至少一个冲突/对抗节拍
+- 最后一个节拍制造悬念或给出情感落点
 
 小说：${vars.title}
 类型：${vars.genre}
@@ -379,7 +394,7 @@ ${vars.clueLock ?? ''}`;
   },
   buildUser(vars) {
     const prev = vars.prevSummary ? `上一章结尾：\n${vars.prevSummary}\n\n` : '';
-    return `${prev}宏观方向：${vars.macroDirection}\n\n请为第${vars.chapterNumber}章 "${vars.chapterTitle}" 生成详细大纲。`;
+    return `${prev}宏观方向：${vars.macroDirection}\n\n请为第${vars.chapterNumber}章 "${vars.chapterTitle}" 生成详细大纲（含场景设定、主要事件节拍、人物行动、情绪走向、关键对话要点、伏笔设计）。`;
   },
 };
 
@@ -424,13 +439,67 @@ const beatMagnify: PromptTemplate = {
 };
 
 // ============================================================
-// Template 4: Beat Generation (CORE — single beat, with scene protocol)
+// Template 4: Beat Generation (CORE — single beat, PlotPilot storyteller approach)
 // ============================================================
+
+const NARRATIVE_ECONOMY_LAW = `
+【叙事经济法】
+每一句话必须至少完成以下两项，否则删除：
+A. 推进情节（事件、决定、发现）
+B. 揭示角色（性格、内心、变化）
+C. 制造张力（冲突、悬念、紧迫）
+D. 建构世界（氛围、规则、感官）`;
+
+const REPLACEMENT_STRATEGIES = `
+【替换策略 R1-R8】
+R1. 情绪标签 → 身体反应（"他很愤怒" → "他攥紧拳头，指甲掐进掌心"）
+R2. 微表情 → 完整姿态（"嘴角勾起" → "她退后一步，双臂抱胸"）
+R3. 比喻堆砌 → 感官细节（"仿佛...般" → 具体的温度/声音/气味/质感）
+R4. 内心独白 → 对话潜台词（让角色说的话和想的不一样）
+R5. 环境介绍 → 角色感知（通过角色五感展示环境）
+R6. 信息灌输 → 行动中揭示（在冲突中自然交代背景）
+R7. 抽象形容 → 具体动作（"很快" → "眨眼间已经..."）
+R8. 旁白总结 → 悬念余韵（结尾用画面/动作/未完成的话收束）`;
+
+const NARRATIVE_IRON_RULES = `
+【叙事铁律（22条）】
+1. 章节开头禁止重述背景，直接进入场景
+2. 对话必须有潜台词，角色说的和想的不同
+3. 禁止使用情绪副词（"愤怒地""悲伤地"）
+4. 环境描写必须是角色的心理滤镜，不是百科介绍
+5. 短句是刀，不是主食——高密度短句只用于冲突高潮
+6. 冲突必须硬碰硬，不能靠巧合化解
+7. 每个场景需要"双轨"——表面事件 + 暗流涌动
+8. 连续两段纯环境描写必须删减或穿插角色行动
+9. 角色不能知道读者知道但角色不知道的信息
+10. 时间跳转必须有锚点（"三天后" → 具体的过渡句）
+11. 角色出场必须有辨识度（动作/口头禅/独特细节）
+12. 高潮场景禁止压缩——冲突、对抗、代价必须充分展开
+13. 禁止用旁白解释角色应该自己领悟的事
+14. 每个段落至少包含：具体动作、有信息量的对话、发现/决定、可见的空间位移——四选一
+15. 对话中禁止说教式独白超过3句
+16. 不要平均分配笔墨——冲突场景多写，过渡一笔带过
+17. 角色不是纸板人——即使配角也要有一个小动作或习惯
+18. 结尾不要总结——用画面、动作或未说完的话收束
+19. 如果上一章结尾角色处于某种状态，本章开头必须接住那个状态
+20. 不能用"一种难以言喻的"——要么找到准确的词，要么用行为表达
+21. 禁止连续三段相同句式结构
+22. 每300字必须有一个信息增量（新事实/新线索/新决定/新冲突）`;
+
+const PRE_OUTPUT_SELF_CHECK = `
+【输出前自检（6项）】
+输出前逐条检查，不符合则修改：
+1. 是否有连续2+段只有环境/氛围而无人行动或对话？→ 删除或插入角色互动
+2. 是否有"他感到/她感到/一种说不出的"？→ 替换为身体反应
+3. 是否有角色重复读者已知的信息？→ 删除
+4. 是否有删掉后对故事毫无影响的段落？→ 删除
+5. 开头是否在介绍背景而非直接进入动作？→ 删除前言
+6. 结尾是否有哲学式总结句？→ 改为画面/动作/未完成的句子`;
 
 const beatGeneration: PromptTemplate = {
   id: 'beat-generation',
   name: '单Beat生成',
-  version: 2,
+  version: 3,
   variables: ['title', 'genre', 'style', 'phaseDirective', 'context', 'outline', 'beatDescription', 'beatFocus', 'targetWords', 'conductorSignal', 'beatIndex', 'totalBeats', 'sensoryHint'],
   buildSystem(vars) {
     const isFirst = vars.beatIndex === '0';
@@ -441,19 +510,27 @@ const beatGeneration: PromptTemplate = {
     const sceneProtocol = buildSceneProtocol(sceneType);
 
     const beatSpecific = [
-      isFirst ? '\n【开篇指令】这是章节开头。必须在前50字内建立场景感，前100字内出现角色或事件。' : '',
-      isLast ? '\n【结尾指令】这是章节最后一段。必须收束当前情绪，要么制造悬念，要么给出情感落点。禁止开放式结尾后继续展开。' : '',
+      isFirst ? '\n【开篇指令】这是章节开头。必须在前50字内建立场景感，前100字内出现角色或事件。禁止介绍背景。' : '',
+      isLast ? '\n【结尾指令】这是章节最后一段。必须收束当前情绪，要么制造悬念，要么给出情感落点。禁止开放式结尾后继续展开。禁止总结。' : '',
     ].join('');
 
-    return `你是一个优秀的小说作家。根据节拍指令和上下文写出精彩的正文段落。
+    return `你是一个坐在老街冷茶馆里的说书人，不是AI助手。你的任务是讲一个让人放不下的故事。
+
+${NARRATIVE_ECONOMY_LAW}
 
 ${sceneProtocol}
 
-${NARRATIVE_RULES}
+${REPLACEMENT_STRATEGIES}
+
+${NARRATIVE_IRON_RULES}
+
+${PRE_OUTPUT_SELF_CHECK}
 
 小说：${vars.title}
 类型：${vars.genre}
 风格：${vars.style}
+
+素材来源权重：Bible/大纲/类型公约是第一合同，其余均为参考。
 
 ${vars.phaseDirective ?? ''}
 
@@ -467,56 +544,81 @@ ${vars.context ?? ''}
 
 ${vars.conductorSignal ?? ''}${beatSpecific}
 
-要求：
-- 字数 ${vars.targetWords} 字左右
-- 每段必须有动作/对话/发现/推进
-- 表面叙事 + 潜台词双层结构
-- 单句段落不超过15%
-- 结尾用"讲吧。"(Tell the story.)`;
+━━ 写的时候记住 ━━━━━━━━━━━━━━━━━━
+• 每段至少包含：具体动作、有信息量的对话、发现/决定、可见的空间位移——四选一
+• 不要平均分配笔墨——冲突场景多写，过渡一笔带过
+• 角色不是纸板人——即使配角也要有一个小动作
+• 结尾不要收干净——留一根刺
+• 每个场景需要"双轨"——表面事件 + 暗流涌动
+• 如果上一段角色处于某种状态，下一段必须接住
+• 情感通过动作和感官细节传达
+• 相关句子必须合并，单句段落不超过15%
+• 字数 ${vars.targetWords} 字左右`;
   },
   buildUser(vars) {
-    return `章节大纲：${vars.outline}\n\n当前beat：${vars.beatDescription}\n\n写吧。`;
+    return `「这一段你要讲的故事」\n${vars.beatDescription}\n\n章节大纲：${vars.outline}\n\n讲吧。`;
   },
 };
 
 // ============================================================
-// Template 5: Chapter Review
+// Template 5: Chapter Review (6-dimension weighted, PlotPilot-style)
 // ============================================================
 
 const chapterReview: PromptTemplate = {
   id: 'chapter-review',
   name: '章末审校',
-  version: 2,
+  version: 3,
   variables: ['factLock', 'beatLock'],
   buildSystem(vars) {
     return `你是一个严格的小说审稿编辑。审查章节正文的质量。
 
-评分维度（每项0-10分）：
-1. 情节连贯性：是否与前文矛盾
-2. 人物一致性：对话和行动是否符合人设
-3. 文笔质量：描写是否生动流畅，是否有AI套路痕迹
-4. 节奏感：叙事节奏是否合理，长短句是否交替
-5. 读者吸引力：是否引人入胜
-6. 信息密度：是否每段都在推进，有无空洞描写
-7. 感官丰富度：是否有五感描写，还是只有视觉
+【评分维度与权重】（每项0-10分）
+1. language_style（语言风格）权重0.25 — 文笔是否生动流畅、是否有AI套路痕迹、句式是否多样
+2. character_consistency（角色一致性）权重0.25 — 对话和行动是否符合人设、角色声音是否有区分度
+3. plot_density（情节密度）权重0.20 — 是否每段都在推进、有无空洞描写、信息增量是否充足
+4. naming（命名准确）权重0.05 — 角色名字、地点名是否前后一致
+5. viewpoint（视角一致）权重0.10 — 第三人称有限视角是否保持、有无越界
+6. rhythm（节奏韵律）权重0.15 — 长短句交替、对话与描写穿插、场景节奏是否合理
+
+综合分 = 各维度加权求和
+及格线: 6.0/10
 
 ${vars.factLock ? `已知事实（不得矛盾）：\n${vars.factLock}` : ''}
 ${vars.beatLock ? `已完成情节（不得重复）：\n${vars.beatLock}` : ''}
 
-【AI套路检测】
-请额外检测以下AI常见模式并标记：
-- "不由得""心中一动""缓缓开口" 等模板化表达
+【AI套路专项检测】
+扫描以下模式并统计出现次数：
+- "不由得""心中一动""缓缓开口""一种难以言喻" 等模板化表达
+- "嘴角勾起""眼中闪过""呼吸一滞" 等AI套路表情/反应
+- "空气凝固""时间仿佛静止" 等AI套路氛围
+- "仿佛...般""心湖涟漪" 等AI套路比喻
 - 连续三段相同句式结构
-- 过度使用"仿佛""似乎""宛如"等比喻词
 - 每段都以对话结尾的机械节奏
+
+【叙事自检（6项）】
+逐条检查：
+1. 是否有连续2+段只有环境/氛围而无人行动或对话？
+2. 是否有"他感到/她感到/一种说不出的"？
+3. 是否有角色重复读者已知的信息？
+4. 是否有删掉后对故事毫无影响的段落？
+5. 开头是否在介绍背景而非进入动作？
+6. 结尾是否有哲学式总结句？
 
 输出JSON：
 {
-  "scores": { "coherence": 8, "character": 7, "prose": 8, "pacing": 7, "engagement": 8, "density": 7, "sensory": 6 },
-  "overall": 7.3,
+  "scores": {
+    "language_style": 8,
+    "character_consistency": 7,
+    "plot_density": 8,
+    "naming": 10,
+    "viewpoint": 9,
+    "rhythm": 7
+  },
+  "weighted_overall": 7.8,
   "issues": ["问题描述1", "问题描述2"],
   "suggestions": ["改进建议1"],
   "aiPatterns": ["检测到的AI套路1"],
+  "selfCheckFailures": [2, 5],
   "pass": true
 }`;
   },
@@ -758,6 +860,127 @@ ${vars.locations}
 };
 
 // ============================================================
+// Template 11: Global Planning (Autopilot pre-generation)
+// ============================================================
+
+const globalPlanning: PromptTemplate = {
+  id: 'global-planning',
+  name: '全局规划',
+  version: 1,
+  variables: ['title', 'genre', 'style', 'targetWordCount', 'targetChapterCount', 'worldbuilding', 'characters', 'locations', 'plotOutlineStages'],
+  buildSystem(vars) {
+    return `你是一个资深小说总架构师。根据小说的全部设定，规划完整的卷章结构。
+
+小说：${vars.title}
+类型：${vars.genre}
+风格：${vars.style}
+目标字数：${vars.targetWordCount} 字
+总章节数：${vars.targetChapterCount} 章
+
+${vars.plotOutlineStages ? `已有剧情阶段参考：\n${vars.plotOutlineStages}\n` : ''}
+
+要求：
+1. 将全部 ${vars.targetChapterCount} 章分为 2-6 卷（根据总章节数决定）
+2. 每卷有独立主题和张力弧线
+3. 每章有明确的大纲（2-3句话，说明本章核心事件和推进方向）
+4. 张力曲线要起伏有致，不能一路平铺
+5. 每卷结尾要有钩子（悬念或转折）
+6. 伏笔要埋设和回收
+
+输出严格 JSON 格式：
+{
+  "mainPlot": "主线概述（100-150字）",
+  "coreConflict": "核心冲突（一句话）",
+  "themeMessage": "主题思想（一句话）",
+  "volumes": [
+    {
+      "title": "卷标题（如：风起云涌）",
+      "startChapter": 0,
+      "endChapter": 9,
+      "theme": "本卷主题和核心走向（50字以内）"
+    }
+  ],
+  "chapters": [
+    {
+      "order": 0,
+      "title": "章节标题",
+      "outline": "本章核心事件和推进方向的简述（30-60字）",
+      "volumeIndex": 0,
+      "keyEvents": ["关键事件1", "关键事件2"],
+      "tensionHint": 7
+    }
+  ],
+  "ending": "结局方向（30字以内）"
+}
+
+关键：
+- chapters 数组长度必须等于 ${vars.targetChapterCount}
+- startChapter 和 endChapter 是 0-based 索引
+- volumeIndex 对应 volumes 数组的索引
+- tensionHint 范围 1-10，代表本章张力目标
+- 卷与卷之间要有递进感`;
+  },
+  buildUser(vars) {
+    return `小说名称：${vars.title}
+类型：${vars.genre}
+风格：${vars.style}
+
+世界观设定：
+${vars.worldbuilding}
+
+主要角色：
+${vars.characters}
+
+重要地点：
+${vars.locations}
+
+请规划完整的卷章结构，共 ${vars.targetChapterCount} 章。`;
+  },
+};
+
+// ============================================================
+// Template 12: Targeted Chapter Rewrite (定向修写)
+// ============================================================
+
+const chapterRewrite: PromptTemplate = {
+  id: 'chapter-rewrite',
+  name: '定向修写',
+  version: 2,
+  variables: ['issues', 'directives', 'factLock', 'originalContent'],
+  buildSystem(vars) {
+    return `你是一个坐在老街冷茶馆里的说书人。你的任务是对章节进行**定向修写**——只修改有问题的部分，让故事更精彩。
+
+【修写原则】
+1. **最小干预**：只修改与问题直接相关的段落，不改动无问题的内容
+2. **风格一致**：修改部分必须与原文风格、语气、节奏保持一致
+3. **叙事连贯**：修改不能引入新的逻辑矛盾或人物行为不一致
+4. **保留精华**：好的对话、描写、情节设计必须保留
+5. **不删减推进**：不能因为修写而丢失情节推进
+
+【替换策略（修写时应用）】
+- 情绪标签 → 身体反应（"他很愤怒" → "他攥紧拳头"）
+- 微表情 → 完整姿态（"嘴角勾起" → "她退后一步，双臂抱胸"）
+- 比喻堆砌 → 感官细节
+- 环境介绍 → 角色感知
+- 旁白总结 → 画面/动作收束
+
+【检测到的问题】
+${vars.issues}
+
+${vars.directives ? `【必须遵守的纠正指令】\n${vars.directives}` : ''}
+
+${vars.factLock ? `【不可违反的已确立事实】\n${vars.factLock}` : ''}
+
+输出格式：直接输出修写后的完整章节正文，不要输出任何解释或标记。`;
+  },
+  buildUser(vars) {
+    return `请修写以下章节，只改有问题的部分：
+
+${vars.originalContent}`;
+  },
+};
+
+// ============================================================
 // Template Registry
 // ============================================================
 
@@ -772,6 +995,8 @@ const templates: Record<string, PromptTemplate> = {
   'character-generation': characterGeneration,
   'location-generation': locationGeneration,
   'plot-outline': plotOutline,
+  'global-planning': globalPlanning,
+  'chapter-rewrite': chapterRewrite,
 };
 
 /**

@@ -125,6 +125,48 @@ export class ContextBudgetAllocator {
     });
   }
 
+  // --- T0: Previously On (PlotPilot's top priority after anchor) ---
+
+  registerPreviouslyOn(summary: string): void {
+    this.registerSlot({
+      name: 'PREVIOUSLY_ON',
+      tier: 'T0',
+      content: `【上一章回顾】\n${summary}`,
+      estimatedTokens: this.estimateTokens(summary),
+      maxTokens: 500,
+      minTokens: 50,
+      priority: 107,
+    });
+  }
+
+  // --- T0: Narrative debts due within next few chapters ---
+
+  registerDebtDue(debtsText: string): void {
+    this.registerSlot({
+      name: 'DEBT_DUE',
+      tier: 'T0',
+      content: debtsText,
+      estimatedTokens: this.estimateTokens(debtsText),
+      maxTokens: 600,
+      minTokens: 0,
+      priority: 108,
+    });
+  }
+
+  // --- T0: Character scars and active motivations ---
+
+  registerScarsAndMotivations(text: string): void {
+    this.registerSlot({
+      name: 'SCARS_AND_MOTIVATIONS',
+      tier: 'T0',
+      content: text,
+      estimatedTokens: this.estimateTokens(text),
+      maxTokens: 500,
+      minTokens: 0,
+      priority: 118,
+    });
+  }
+
   // --- T0: New fine-grained slots (V2) ---
 
   registerLifecycleDirective(phase: StoryPhase, chapterIndex: number, totalChapters: number): void {

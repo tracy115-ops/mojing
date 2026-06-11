@@ -60,12 +60,20 @@ const WritingStream: React.FC<WritingStreamProps> = ({ novelId }) => {
     }
   }, [displayContent]);
 
-  // Auto-scroll
+  // Auto-scroll: follow content growth, but stop if user scrolled up
+  const userScrolledUpRef = useRef(false);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    userScrolledUpRef.current = !atBottom;
+  };
+
   useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [visibleChars]);
+    if (!containerRef.current || userScrolledUpRef.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [displayContent]);
 
   const wordCount = displayContent.length;
   const targetWords = autopilotState?.targetWordCount || 3000;
@@ -125,6 +133,7 @@ const WritingStream: React.FC<WritingStreamProps> = ({ novelId }) => {
       {/* Content area */}
       <div
         ref={containerRef}
+        onScroll={handleScroll}
         style={{
           flex: 1, overflow: 'auto', padding: '12px',
           fontSize: 13, lineHeight: 1.8,

@@ -16,6 +16,7 @@ import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';
 import type { TensionPoint, TensionDimensions } from '@/types/narrative';
+import { useChartTheme } from '@/hooks/useChartTheme';
 
 const { Text } = Typography;
 
@@ -82,6 +83,7 @@ function computeStats(points: TensionPoint[]): TensionStats {
 
 const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
   const { t } = useTranslation();
+  const chartTheme = useChartTheme();
 
   const [service] = useState(() => new TensionScoringService(novelId));
   const [repo] = useState(() => new NarrativeRepository(novelId));
@@ -198,21 +200,21 @@ const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
       legend: {
         data: [t('tension.chart.overall'), t('tension.chart.plot'), t('tension.chart.emotional'), t('tension.chart.action')],
         bottom: 0,
-        textStyle: { fontSize: 11, color: 'var(--text-secondary, #666)' },
+        textStyle: { fontSize: 11, color: chartTheme.textSecondary },
       },
       grid: { left: 40, right: 20, top: 15, bottom: 35 },
       xAxis: {
         type: 'category' as const,
         data: chapters_labels,
-        axisLabel: { fontSize: 10, color: 'var(--text-tertiary, #999)' },
-        axisLine: { lineStyle: { color: 'var(--border-secondary, #ddd)' } },
+        axisLabel: { fontSize: 10, color: chartTheme.textTertiary },
+        axisLine: { lineStyle: { color: chartTheme.border } },
       },
       yAxis: {
         type: 'value' as const,
         min: 0, max: 10,
         splitNumber: 5,
-        axisLabel: { fontSize: 10, color: 'var(--text-tertiary, #999)' },
-        splitLine: { lineStyle: { color: 'var(--border-secondary, #eee)' } },
+        axisLabel: { fontSize: 10, color: chartTheme.textTertiary },
+        splitLine: { lineStyle: { color: chartTheme.border } },
       },
       series: [
         {
@@ -266,7 +268,7 @@ const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
         },
       ],
     };
-  }, [points, t]);
+  }, [points, chartTheme, t]);
 
   // Empty state with chapter selector
   if (contentChapters.length === 0) {

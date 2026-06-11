@@ -21,32 +21,48 @@ export class ChapterAftermathPipeline {
   ): Promise<ChapterAftermathResult> {
     const activeForeshadowing = existingForeshadowing
       .filter((f) => f.status === 'planted')
-      .map((f) => `[Ch${f.plantedInChapter}] ${f.description}`)
+      .map((f) => `[Ch${f.plantedInChapter}] ${f.description}${f.suggestedResolveChapter ? `(建议第${f.suggestedResolveChapter}章闭合)` : ''}`)
       .join('\n');
 
     const request: LLMGenerateRequest = {
       taskType: 'extraction',
-      systemPrompt: `你是一个叙事分析引擎。从章节正文中一次性提取以下所有维度。输出严格JSON。
+      systemPrompt: `你是一个叙事分析引擎。从章节正文中一次性提取以下所有维度。输出严格JSON对象。
 
 提取维度与格式要求：
-1. "summary": 章节摘要（≤200字，字符串）
+1. "summary": 章节摘要（200-500字，字符串）
 2. "keyEvents": 关键事件列表（3-8条，字符串数组）
 3. "characterStates": 角色当前状态数组，每个元素含 "name", "physicalState", "emotionalState", "location"
-4. "triples": 人物关系三元组数组，每个元素必须含：
-   - "subject": 角色名（如"李明"）
-   - "predicate": 关系类型（如"师徒"、"敌对"、"恋人"、"朋友"、"盟友"、"上下级"）
+4. "triples": 人物关系三元组数组（最多8条），每个元素含：
+   - "subject": 角色名
+   - "predicate": 关系类型（师徒/敌对/恋人/朋友/盟友/上下级/亲子等）
    - "object": 对方角色名
    - "sinceChapter": 确立章节号（整数）
-5. "foreshadowing": 伏笔动态，含三个子数组 "planted", "resolved", "detected"，每个元素含 "description", "plantedInChapter", "urgency"(low/medium/high/critical)
-6. "narrativeDebts": 叙事债务数组，每个含 "description", "plantedInChapter", "priority"(0-10)
-7. "tensionScore": 紧张度（0-10，数字）
-8. "styleScore": 文风一致性（0-1，数字）
+5. "foreshadowing": 伏笔动态，含三个子数组：
+   - "planted": 本章新埋设的伏笔（最多2条），每个含 "description", "plantedInChapter", "urgency", "suggestedResolveChapter"
+   - "resolved": 本章闭合的伏笔（最多5条），必须匹配已有的活跃伏笔描述，每个含 "description", "resolvedInChapter"
+   - "detected": 检测到的隐性伏笔（最多3条）
+6. "consumedForeshadows": 本章消费/推进的伏笔（模糊匹配），每个含 "description", "progressDescription"
+7. "narrativeDebts": 叙事债务数组（最多3条），每个含 "description", "plantedInChapter", "priority", "suggestedResolveBy", "type"(foreshadowing/causal_chain/storyline/character_arc/other)
+8. "causalEdges": 因果链数组（最多3条），每个含 "sourceEvent", "causalType"(causes/motivates/triggers/prevents/resolves), "targetEvent", "strength"(0-1)
+9. "characterMutations": 角色变化数组（最多3条），每个含 "characterName", "type"(scar/motivation/emotional_arc), "description", "intensity"(1-10)
+10. "storylineProgress": 故事线推进数组（最多5条），每个含 "storylineDescription", "arcLabel"(≤16字), "progressType"(advanced/stalled/introduced/concluded)
+11. "dialogues": 关键对话数组（最多10条），每个含 "speaker", "content", "context"
+12. "timelineEvents": 时间线事件数组（最多5条），每个含 "event", "timeMarker"
+13. "tensionScore": 紧张度（0-10，数字）
+14. "styleScore": 文风一致性（0-1，数字）
 
-当前活跃伏笔（用于检测闭合）：
+当前活跃伏笔（必须逐一检查是否在本章被消费/闭合/推进）：
 ${activeForeshadowing || '无'}
 
-重要：triples必须包含本章中出现的所有人物关系，即使是已有的关系也要列出。`,
-      userPrompt: `小说ID: ${novelId}\n章节号: ${chapterNumber}\n\n${chapterContent}`,
+重要规则：
+- consumedForeshadows 必须与上面列出的活跃伏笔进行模糊匹配
+- triples必须包含本章中出现的所有人物关系
+- planted伏笔最多2条，太多会超出预算
+- narrativeDebts的suggestedResolveBy必须是合理的未来章节号`,
+      userPrompt: `请同步以下章节正文（第${chapterNumber}章）：
+${chapterContent}
+
+再次强调：只输出合法JSON对象。`,
       responseFormat: 'json',
       temperature: 0.1,
       maxTokens: 4096,

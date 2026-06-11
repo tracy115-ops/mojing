@@ -13,6 +13,7 @@ import {
   BulbOutlined, BookOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import { panelHeader } from './PanelStyles';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type {
   BibleCharacter,
@@ -408,17 +409,19 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
               size="small"
               pagination={false}
               columns={[
-                { title: t('bible.locationName'), dataIndex: 'name', key: 'name', width: 120 },
-                { title: t('bible.locationDescription'), dataIndex: 'description', key: 'description', ellipsis: true },
+                { title: t('bible.locationName'), dataIndex: 'name', key: 'name', width: 100, ellipsis: true },
+                { title: t('bible.locationDescription'), dataIndex: 'description', key: 'description', ellipsis: true, width: 'auto' },
                 {
                   title: t('bible.locationSignificance'), dataIndex: 'significance', key: 'significance',
-                  render: (v: string) => v ? <Tag style={{ fontSize: 10 }}>{v}</Tag> : '-',
-                  width: 100,
+                  render: (v: string) => v ? (
+                    <Tag style={{ fontSize: 10, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' }}>{v}</Tag>
+                  ) : '-',
+                  width: 100, ellipsis: true,
                 },
                 {
-                  title: '', key: 'actions', width: 80, align: 'center',
+                  title: '', key: 'actions', width: 60, align: 'center',
                   render: (_, record) => (
-                    <Space size={4}>
+                    <Space size={2}>
                       <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openLocModal(record)} />
                       <Popconfirm title={t('common.confirm')} onConfirm={() => deleteLocation(record.id)}>
                         <Button type="text" size="small" danger icon={<DeleteOutlined />} />
@@ -493,7 +496,7 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '4px 12px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={panelHeader()}>
         <span><BookOutlined style={{ marginRight: 6 }} />{t('bible.title')}</span>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
       </div>

@@ -14,6 +14,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { PropManager, type Prop, type PropCategory, type PropEvent, type LifecycleState } from '@/services/novel/prop-manager';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { panelHeader, statsRow, statItem } from './PanelStyles';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -124,11 +125,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{
-        padding: '4px 12px', fontWeight: 600, fontSize: 13,
-        borderBottom: '1px solid var(--border-secondary)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      }}>
+      <div style={panelHeader()}>
         <span><ToolOutlined style={{ marginRight: 6 }} />{t('props.title')}</span>
         <Space>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
@@ -137,14 +134,14 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
           <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
         </Space>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* Stats */}
-      <div style={{ display: 'flex', gap: 4 }}>
-        <Tag color="green">{t('props.active', { count: props.filter((p) => p.lifecycleState === 'active').length })}</Tag>
-        <Tag color="blue">{t('props.introduced', { count: props.filter((p) => p.lifecycleState === 'introduced').length })}</Tag>
-        <Tag>{t('props.dormant', { count: props.filter((p) => p.lifecycleState === 'dormant').length })}</Tag>
-        <Tag color="red">{t('props.damaged', { count: props.filter((p) => p.lifecycleState === 'damaged').length })}</Tag>
+      <div style={statsRow}>
+        <span style={statItem('#22c55e')}>● {props.filter((p) => p.lifecycleState === 'active').length} active</span>
+        <span style={statItem('#3b82f6')}>● {props.filter((p) => p.lifecycleState === 'introduced').length} introduced</span>
+        <span style={statItem('#9ca3af')}>● {props.filter((p) => p.lifecycleState === 'dormant').length} dormant</span>
+        <span style={statItem('#ef4444')}>● {props.filter((p) => p.lifecycleState === 'damaged').length} damaged</span>
       </div>
 
       {/* Props table */}

@@ -106,6 +106,7 @@ export interface DAGNodeResult {
 
 export type NovelStage =
   | 'idle'
+  | 'global_planning'     // 全局规划（卷+章结构）
   | 'macro_planning'      // 宏观规划
   | 'act_beat_planning'   // 幕级节拍
   | 'chapter_generation'  // 章节生成

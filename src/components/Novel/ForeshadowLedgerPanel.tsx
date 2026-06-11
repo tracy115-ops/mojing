@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { panelHeader, statsRow, statItem, statusChip, accentBar, urgencyColor } from './PanelStyles';
 import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
 
 const { TextArea } = Input;
@@ -52,15 +53,20 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
     return items.filter((f) => f.status === filter);
   }, [items, filter]);
 
-  const stats = useMemo(() => ({
-    total: items.length,
-    planted: items.filter((f) => f.status === 'planted').length,
-    resolved: items.filter((f) => f.status === 'resolved').length,
-    abandoned: items.filter((f) => f.status === 'abandoned').length,
-    overdue: items.filter((f) =>
-      f.status === 'planted' && f.suggestedResolveChapter !== undefined && f.suggestedResolveChapter <= 0,
-    ).length,
-  }), [items]);
+  const stats = useMemo(() => {
+    // Estimate current chapter from foreshadowing data
+    const allChapters = items.map((f) => Math.max(f.plantedInChapter, f.resolvedInChapter ?? 0));
+    const currentChapter = allChapters.length > 0 ? Math.max(...allChapters) : 0;
+    return {
+      total: items.length,
+      planted: items.filter((f) => f.status === 'planted').length,
+      resolved: items.filter((f) => f.status === 'resolved').length,
+      abandoned: items.filter((f) => f.status === 'abandoned').length,
+      overdue: items.filter((f) =>
+        f.status === 'planted' && f.suggestedResolveChapter !== undefined && f.suggestedResolveChapter <= currentChapter,
+      ).length,
+    };
+  }, [items]);
 
   const openModal = (item?: Foreshadowing) => {
     if (item) {
@@ -136,11 +142,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{
-        padding: '4px 12px', fontWeight: 600, fontSize: 13,
-        borderBottom: '1px solid var(--border-secondary)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      }}>
+      <div style={panelHeader()}>
         <span><AimOutlined style={{ marginRight: 6 }} />{t('foreshadow.title')}</span>
         <Space>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
@@ -152,11 +154,11 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* Stats row */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Tag color="blue">{t('foreshadow.status.planted')} {stats.planted}</Tag>
-        <Tag color="green">{t('foreshadow.status.resolved')} {stats.resolved}</Tag>
-        <Tag color="default">{t('foreshadow.status.abandoned')} {stats.abandoned}</Tag>
-        <Tag color="red" style={{ marginLeft: 'auto' }}>{t('foreshadow.total', { count: stats.total })}</Tag>
+      <div style={statsRow}>
+        <span style={statItem('#3b82f6')}>● {stats.planted} {t('foreshadow.status.planted')}</span>
+        <span style={statItem('#22c55e')}>● {stats.resolved} {t('foreshadow.status.resolved')}</span>
+        <span style={statItem('#9ca3af')}>● {stats.abandoned} {t('foreshadow.status.abandoned')}</span>
+        <span style={{ ...statItem(), marginLeft: 'auto', fontWeight: 600 }}>{t('foreshadow.total', { count: stats.total })}</span>
       </div>
 
       {/* Filter strip */}

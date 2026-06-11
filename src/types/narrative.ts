@@ -182,7 +182,7 @@ export interface CharacterState {
 export interface NarrativeDebt {
   id: string;
   novelId: string;
-  type: 'unresolved_plot' | 'promised_return' | 'mysterious_identity' | 'power_upgrade_pending' | 'other';
+  type: 'unresolved_plot' | 'promised_return' | 'mysterious_identity' | 'power_upgrade_pending' | 'foreshadowing' | 'causal_chain' | 'storyline' | 'character_arc' | 'other';
   description: string;
   plantedInChapter: number;
   suggestedResolveBy: number;
@@ -374,4 +374,57 @@ export interface WorldbuildingDimension {
 export interface ChapterCast {
   chapterIndex: number;
   lockedCharacters: string[];
+}
+
+// --- Global Plan (autopilot pre-generation structure) ---
+
+export interface GlobalPlanVolume {
+  title: string;
+  startChapter: number;
+  endChapter: number;
+  theme: string;
+}
+
+export interface GlobalPlanChapter {
+  order: number;
+  title: string;
+  outline: string;
+  volumeIndex: number;
+  keyEvents: string[];
+  tensionHint: number;
+}
+
+export interface GlobalPlan {
+  mainPlot: string;
+  coreConflict: string;
+  themeMessage: string;
+  volumes: GlobalPlanVolume[];
+  chapters: GlobalPlanChapter[];
+  ending: string;
+}
+
+// --- Unified Story Node (PlotPilot-inspired) ---
+
+export type StoryNodeType = 'part' | 'volume' | 'act' | 'chapter';
+
+export type NodePlanningStatus = 'draft' | 'ai_generated' | 'user_edited' | 'confirmed';
+
+export interface StoryNode {
+  id: string;
+  novelId: string;
+  nodeType: StoryNodeType;
+  parentId: string | null;
+  order: number;
+  title: string;
+  description?: string;
+  themes?: string[];
+  content?: string;
+  outline?: string;
+  wordCount?: number;
+  status?: import('@/types').ChapterStatus;
+  keyEvents?: string[];
+  tensionHint?: number;
+  planningStatus?: NodePlanningStatus;
+  createdAt: string;
+  updatedAt: string;
 }

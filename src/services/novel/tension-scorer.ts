@@ -95,8 +95,9 @@ export class TensionScoringService {
 
       return point;
     } catch (err) {
-      console.warn('TensionScoringService: scoring failed, using fallback', err);
-      const fallback: TensionPoint = {
+      console.warn('TensionScoringService: scoring failed, skipping', err);
+      // Don't persist fallback — return a transient point without saving
+      return {
         chapter: chapterNumber,
         score: prevTensionScore,
         dimensions: {
@@ -107,8 +108,6 @@ export class TensionScoringService {
           action: prevTensionScore,
         },
       };
-      this.repo.addTensionPoint(fallback);
-      return fallback;
     }
   }
 

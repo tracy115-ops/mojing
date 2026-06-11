@@ -111,10 +111,11 @@ const WorldlineDAG: React.FC<WorldlineDAGProps> = ({ novelId }) => {
     const edges = mainNodes.slice(1).map((node, i) => {
       const prev = mainNodes[i];
       const x1 = offsetX + prev.chapter * chapterStep;
-      const y1 = 30 + node.lane * laneHeight;
+      const y1 = 30 + prev.lane * laneHeight;
       const x2 = offsetX + node.chapter * chapterStep;
+      const y2 = 30 + node.lane * laneHeight;
       return (
-        <line key={`edge-${i}`} x1={x1} y1={y1} x2={x2} y2={y1}
+        <line key={`edge-${i}`} x1={x1} y1={y1} x2={x2} y2={y2}
           stroke="var(--border-secondary, #ccc)" strokeWidth={2} />
       );
     });

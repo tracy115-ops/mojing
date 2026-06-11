@@ -37,6 +37,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [streamContent, setStreamContent] = useState('');
   const [fontSize, setFontSize] = useState(loadFontSize);
   const [tensionScore, setTensionScore] = useState<number | null>(null);
+  const [showOutlineRef, setShowOutlineRef] = useState(true);
+  const [editingRef, setEditingRef] = useState(false);
+  const [refText, setRefText] = useState(chapter.outline ?? '');
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
@@ -62,6 +65,12 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   useEffect(() => {
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, []);
+
+  // Sync outline ref text when chapter changes
+  useEffect(() => {
+    setRefText(chapter.outline ?? '');
+    setEditingRef(false);
+  }, [chapter.id, chapter.outline]);
 
   const handleGenerateOutline = async () => {
     if (!hasEndpoint) {
@@ -352,6 +361,49 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
             label: <span><FileTextOutlined /> {t('novel.draft')}</span>,
             children: (
               <div style={{ padding: '0 12px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                {/* Outline reference banner — collapsible */}
+                {chapter.outline && (
+                  <div style={{
+                    marginBottom: 6, borderRadius: 6,
+                    border: '1px solid var(--border-secondary)',
+                    background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
+                    overflow: 'hidden',
+                  }}>
+                    <div
+                      onClick={() => setShowOutlineRef(!showOutlineRef)}
+                      style={{
+                        padding: '4px 10px', display: 'flex', alignItems: 'center',
+                        justifyContent: 'space-between', cursor: 'pointer',
+                        fontSize: 11, color: 'var(--text-secondary)',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <span><AlignLeftOutlined style={{ marginRight: 4 }} />{t('novel.outlineRef')}</span>
+                      <span style={{ fontSize: 9 }}>{showOutlineRef ? '▲' : '▼'}</span>
+                    </div>
+                    {showOutlineRef && (
+                      <div
+                        onDoubleClick={() => { setEditingRef(true); setRefText(chapter.outline ?? ''); }}
+                        style={{ padding: '0 10px 6px', fontSize: 11, lineHeight: 1.7, color: 'var(--text-secondary)', maxHeight: 120, overflowY: 'auto' }}
+                        title={t('novel.outlineRef.hint')}
+                      >
+                        {editingRef ? (
+                          <Input.TextArea
+                            value={refText}
+                            onChange={(e) => setRefText(e.target.value)}
+                            onBlur={() => { onUpdate({ outline: refText }); setEditingRef(false); }}
+                            onPressEnter={(e) => { if (!e.shiftKey) { onUpdate({ outline: refText }); setEditingRef(false); } }}
+                            autoSize={{ minRows: 2, maxRows: 6 }}
+                            style={{ fontSize: 11 }}
+                            autoFocus
+                          />
+                        ) : (
+                          <div style={{ whiteSpace: 'pre-wrap' }}>{chapter.outline}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <Input.TextArea
                   value={streamContent || chapter.content}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}

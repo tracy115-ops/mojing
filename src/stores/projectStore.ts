@@ -11,6 +11,8 @@ import type {
   VideoMetadata,
   NarrativeSnapshot,
 } from '@/types';
+import type { StoryNode } from '@/types/narrative';
+import { StoryTreeService, type CreateNodeParams } from '@/services/novel/story-tree';
 
 const generateId = () => crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -31,6 +33,7 @@ interface ProjectState {
 
   createProject: (type: CreativeProjectType, title: string, description: string, metadata?: Partial<NovelMetadata & ComicMetadata & VideoMetadata>) => CreativeProject;
   updateProject: (id: string, updates: Partial<Pick<CreativeProject, 'title' | 'description' | 'status' | 'tags' | 'coverImage'>>) => void;
+  updateProjectMetadata: (id: string, metadataUpdates: Record<string, unknown>) => void;
   deleteProject: (id: string) => void;
   setActiveProject: (id: string | null) => void;
   toggleFavorite: (id: string) => void;
@@ -40,10 +43,18 @@ interface ProjectState {
   deleteChapter: (projectId: string, chapterId: string) => void;
   updateChapter: (projectId: string, chapterId: string, updates: Partial<NovelChapter>) => void;
   updateNarrativeData: (projectId: string, data: NarrativeSnapshot) => void;
-  addVolume: (projectId: string, title?: string) => void;
+  addVolume: (projectId: string, title?: string, level?: import('@/types').VolumeLevel, parentId?: string) => void;
   updateVolume: (projectId: string, volumeId: string, updates: Partial<NovelVolume>) => void;
   deleteVolume: (projectId: string, volumeId: string) => void;
   moveChapterToVolume: (projectId: string, chapterId: string, volumeId: string | undefined) => void;
+
+  // StoryNode (unified tree model)
+  getStoryNodes: (projectId: string) => StoryNode[];
+  setStoryNodes: (projectId: string, nodes: StoryNode[]) => void;
+  createStoryNode: (projectId: string, params: CreateNodeParams) => void;
+  updateStoryNode: (projectId: string, nodeId: string, updates: Partial<StoryNode>) => void;
+  deleteStoryNode: (projectId: string, nodeId: string) => void;
+  reorderStoryNodes: (projectId: string, parentId: string | null, orderedIds: string[]) => void;
 
   // Comic-specific
   addComicCharacter: (projectId: string, character: Omit<import('@/types').ComicCharacter, 'id'>) => void;
@@ -88,6 +99,16 @@ export const useProjectStore = create<ProjectState>()(
         set((s) => ({
           projects: s.projects.map((p) =>
             p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p,
+          ),
+        }));
+      },
+
+      updateProjectMetadata: (id, metadataUpdates) => {
+        set((s) => ({
+          projects: s.projects.map((p) =>
+            p.id === id
+              ? { ...p, metadata: { ...p.metadata, ...metadataUpdates }, updatedAt: new Date().toISOString() }
+              : p,
           ),
         }));
       },
@@ -194,15 +215,23 @@ export const useProjectStore = create<ProjectState>()(
         }));
       },
 
-      addVolume: (projectId, title) => {
+      addVolume: (projectId, title, level, parentId) => {
         set((s) => ({
           projects: s.projects.map((p) => {
             if (p.id !== projectId || p.type !== 'novel') return p;
             const meta = p.metadata as NovelMetadata;
+            const volLevel = level ?? 'volume';
+            const defaultTitles: Record<string, string> = {
+              part: `部 ${meta.volumes.filter((v) => v.level === 'part').length + 1}`,
+              act: `幕 ${meta.volumes.filter((v) => v.level === 'act').length + 1}`,
+              volume: `卷 ${meta.volumes.filter((v) => (v.level ?? 'volume') === 'volume').length + 1}`,
+            };
             const volume: NovelVolume = {
               id: generateId(),
-              title: title || `卷 ${meta.volumes.length + 1}`,
+              title: title || defaultTitles[volLevel],
               order: meta.volumes.length,
+              level: volLevel,
+              parentId,
             };
             return {
               ...p,
@@ -268,6 +297,113 @@ export const useProjectStore = create<ProjectState>()(
             };
           }),
         }));
+      },
+
+      // --- StoryNode (unified tree) ---
+
+      getStoryNodes: (projectId) => {
+        const proj = get().projects.find((p) => p.id === projectId);
+        if (!proj || proj.type !== 'novel') return [];
+        const meta = proj.metadata as NovelMetadata;
+
+        // Already migrated
+        if (meta.storyNodes && meta.storyNodes.length > 0) return meta.storyNodes;
+
+        const volumes = meta.volumes ?? [];
+        const chapters = meta.chapters ?? [];
+
+        // No legacy data to migrate
+        if (volumes.length === 0 && chapters.length === 0) return meta.storyNodes ?? [];
+
+        // Migrate legacy volumes + chapters → StoryNodes
+        const nodes = StoryTreeService.migrateFromLegacy(volumes, chapters, projectId);
+
+        // Also keep chapters in sync for backward-compatible readers (Export, Reader)
+        const syncedChapters = nodes
+          .filter((n) => n.nodeType === 'chapter')
+          .sort((a, b) => a.order - b.order)
+          .map((n, i) => ({
+            id: n.id,
+            title: n.title,
+            outline: n.outline ?? '',
+            content: n.content ?? '',
+            status: n.status ?? 'planned',
+            wordCount: n.wordCount ?? 0,
+            order: i,
+          }));
+
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const m = p.metadata as NovelMetadata;
+            return {
+              ...p,
+              metadata: {
+                ...m,
+                storyNodes: nodes,
+                chapters: syncedChapters,
+                volumes: [],
+                currentWordCount: syncedChapters.reduce((s, c) => s + c.wordCount, 0),
+              },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+
+        return nodes;
+      },
+
+      setStoryNodes: (projectId, nodes) => {
+        set((s) => ({
+          projects: s.projects.map((p) => {
+            if (p.id !== projectId || p.type !== 'novel') return p;
+            const meta = p.metadata as NovelMetadata;
+            const chapterNodes = nodes
+              .filter((n) => n.nodeType === 'chapter')
+              .sort((a, b) => a.order - b.order);
+            const currentWordCount = chapterNodes.reduce((sum, n) => sum + (n.wordCount ?? 0), 0);
+            // Sync chapters for backward compat (Export, Reader, ChapterEditor)
+            const chapters: NovelChapter[] = chapterNodes.map((n, i) => ({
+              id: n.id,
+              title: n.title,
+              outline: n.outline ?? '',
+              content: n.content ?? '',
+              status: n.status ?? 'planned',
+              wordCount: n.wordCount ?? 0,
+              order: i,
+              volumeId: n.parentId ?? undefined,
+            }));
+            return {
+              ...p,
+              metadata: { ...meta, storyNodes: nodes, chapters, currentWordCount },
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+      },
+
+      createStoryNode: (projectId, params) => {
+        const current = get().getStoryNodes(projectId);
+        const nodes = StoryTreeService.createNode(current, params);
+        get().setStoryNodes(projectId, nodes);
+      },
+
+      updateStoryNode: (projectId, nodeId, updates) => {
+        const current = get().getStoryNodes(projectId);
+        const nodes = StoryTreeService.updateNode(current, nodeId, updates);
+        get().setStoryNodes(projectId, nodes);
+      },
+
+      deleteStoryNode: (projectId, nodeId) => {
+        const current = get().getStoryNodes(projectId);
+        const nodes = StoryTreeService.deleteNode(current, nodeId);
+        get().setStoryNodes(projectId, nodes);
+      },
+
+      reorderStoryNodes: (projectId, parentId, orderedIds) => {
+        const current = get().getStoryNodes(projectId);
+        const nodes = StoryTreeService.reorderNodes(current, parentId, orderedIds);
+        get().setStoryNodes(projectId, nodes);
       },
 
       // --- Comic ---

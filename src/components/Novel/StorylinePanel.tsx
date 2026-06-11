@@ -154,7 +154,7 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {lines.map((line) => {
             const progress = line.chapterRange[1] > line.chapterRange[0]
-              ? Math.round(((totalChapters - line.chapterRange[0]) / (line.chapterRange[1] - line.chapterRange[0])) * 100)
+              ? Math.min(100, Math.round(((totalChapters - line.chapterRange[0]) / (line.chapterRange[1] - line.chapterRange[0])) * 100))
               : 0;
             return (
               <Card

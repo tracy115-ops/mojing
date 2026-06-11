@@ -3,7 +3,7 @@
 // Tabs organized into 5 categories for better discoverability
 // ============================================================================
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Tabs, Typography, Space, Button, Select, Tooltip } from 'antd';
 import {
   DashboardOutlined, BookOutlined, LineChartOutlined,
@@ -17,6 +17,7 @@ import {
   ExpandOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import { useAutopilotStore } from '@/stores/autopilotStore';
 import NarrativeDashboard from './NarrativeDashboard';
 import StoryBiblePanel from './StoryBiblePanel';
 import TensionChartPanel from './TensionChartPanel';
@@ -42,6 +43,7 @@ import CharacterRelationGraph from './CharacterRelationGraph';
 import KnowledgeGraphView from './KnowledgeGraphView';
 import ReaderSimulationPanel from './ReaderSimulationPanel';
 import ChapterReviewPanel from './ChapterReviewPanel';
+import AutopilotPipelineView from './AutopilotPipelineView';
 
 const { Text } = Typography;
 
@@ -68,6 +70,15 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
   const { t } = useTranslation();
   const [category, setCategory] = useState<Category>('overview');
   const [subTab, setSubTab] = useState<string>('');
+
+  // Auto-switch to Pipeline tab when autopilot starts running
+  const autopilotState = useAutopilotStore((s) => s.states[novelId]);
+  useEffect(() => {
+    if (autopilotState?.status === 'running') {
+      setCategory('tools');
+      setSubTab('autopilotPipeline');
+    }
+  }, [autopilotState?.status]);
 
   const sharedProps = { novelId, totalChapters, currentChapter };
 
@@ -106,6 +117,7 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
       { key: 'chronicles', label: t('workbench.tab.chronicles'), icon: <HistoryOutlined />, content: <HolographicChronicles novelId={novelId} /> },
       { key: 'worldline', label: t('workbench.tab.worldline'), icon: <ApartmentOutlined />, content: <WorldlineDAG novelId={novelId} /> },
       { key: 'pipeline', label: t('workbench.tab.pipeline'), icon: <EyeOutlined />, content: <AuditPipeline novelId={novelId} /> },
+      { key: 'autopilotPipeline', label: t('workbench.tab.autopilotPipeline'), icon: <RocketOutlined />, content: <AutopilotPipelineView novelId={novelId} /> },
       { key: 'prompts', label: t('workbench.tab.prompts'), icon: <BulbOutlined />, content: <PromptPlaza novelId={novelId} /> },
     ],
   }), [novelId, totalChapters, currentChapter, t]);
@@ -132,11 +144,12 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
   ];
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       {/* Category bar */}
       <div style={{
         display: 'flex', gap: 2, padding: '6px 8px 0',
         borderBottom: '1px solid var(--border-secondary)',
+        overflowX: 'auto', flexShrink: 0,
       }}>
         {categories.map((cat) => {
           const meta = CATEGORY_META[cat.key];
@@ -168,11 +181,12 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
 
       {/* Sub-tab content */}
       <Tabs
+        className="narrative-workbench-tabs"
         activeKey={activeKey}
         onChange={(k) => setSubTab(k)}
         items={tabItems}
         size="small"
-        style={{ height: '100%', display: 'flex', flexDirection: 'column', flex: 1 }}
+        style={{ height: '100%', display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}
         tabBarStyle={{ padding: '0 8px', marginBottom: 0, flexShrink: 0 }}
         tabBarGutter={12}
       />

@@ -32,7 +32,7 @@ const VoiceDriftIndicator: React.FC<VoiceDriftIndicatorProps> = ({ novelId }) =>
 
   const service = useMemo(() => new VoiceFingerprintService(novelId), [novelId]);
 
-  const fingerprint = useMemo(() => service['repo'].loadVoiceFingerprint(), [service, tick]);
+  const fingerprint = useMemo(() => service.getFingerprint(), [service, tick]);
   const driftHistory = useMemo(() => service.loadDriftHistory(), [service, tick]);
 
   const latestDrift = driftHistory.length > 0 ? driftHistory[driftHistory.length - 1] : null;

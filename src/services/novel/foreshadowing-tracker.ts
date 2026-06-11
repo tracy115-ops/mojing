@@ -1,9 +1,16 @@
 import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
 import type { StoryPhaseState } from '@/types/narrative';
 
-// --- Foreshadowing Tracker ---
-// PlotPilot's foreshadowing lifecycle: PLANTED → RESOLVED (or ABANDONED)
-// Convergence hourglass forces unresolved foreshadowings to surface
+// --- Foreshadowing Tracker (V9 Reform) ---
+// PlotPilot V9: "gentle reminder" not "force closure"
+// Budget: MAX_NEW_PER_CHAPTER = 2, MAX_TOTAL_PENDING = 15
+// Auto-abandon foreshadows older than 30 chapters (run every 10 chapters)
+// Inject top-3 due as [MUST_RESOLVE] blocks into context
+
+const MAX_NEW_PER_CHAPTER = 2;
+const MAX_TOTAL_PENDING = 15;
+const AUTO_ABANDON_AGE = 30;
+const AUTO_ABANDON_CHECK_INTERVAL = 10;
 
 export class ForeshadowingTracker {
   private items: Foreshadowing[] = [];
@@ -16,6 +23,32 @@ export class ForeshadowingTracker {
     };
     this.items.push(foreshadowing);
     return foreshadowing;
+  }
+
+  /**
+   * Plant new foreshadowings with budget enforcement.
+   * Returns actually planted items (may be fewer than input if budget exceeded).
+   */
+  plantWithBudget(
+    items: Array<Omit<Foreshadowing, 'id' | 'status'>>,
+    currentChapter: number,
+  ): { planted: Foreshadowing[]; rejected: number } {
+    // First, run auto-abandon check
+    this.autoAbandonOld(currentChapter);
+
+    const currentPending = this.getPlanted().length;
+    const slotsAvailable = Math.max(0, MAX_TOTAL_PENDING - currentPending);
+    const toPlant = items.slice(0, Math.min(MAX_NEW_PER_CHAPTER, slotsAvailable));
+
+    const planted: Foreshadowing[] = [];
+    for (const item of toPlant) {
+      planted.push(this.plant(item));
+    }
+
+    return {
+      planted,
+      rejected: items.length - toPlant.length,
+    };
   }
 
   resolve(foreshadowingId: string, resolvedInChapter: number): Foreshadowing | undefined {
@@ -60,6 +93,27 @@ export class ForeshadowingTracker {
     if (item) item.status = 'abandoned';
   }
 
+  /**
+   * V9 Reform: auto-abandon foreshadows older than AUTO_ABANDON_AGE chapters.
+   * Rationale: "In Dream of the Red Chamber, dozens of foreshadows are never resolved — that's not 'unpaid debt', that's 'literature'."
+   * Runs every AUTO_ABANDON_CHECK_INTERVAL chapters.
+   */
+  autoAbandonOld(currentChapter: number): number {
+    if (currentChapter % AUTO_ABANDON_CHECK_INTERVAL !== 0) return 0;
+
+    let abandoned = 0;
+    for (const f of this.items) {
+      if (f.status !== 'planted') continue;
+      const age = currentChapter - f.plantedInChapter;
+      if (age > AUTO_ABANDON_AGE) {
+        f.status = 'abandoned';
+        f.narrativeWeight = 1; // Downgrade importance
+        abandoned++;
+      }
+    }
+    return abandoned;
+  }
+
   getPlanted(): Foreshadowing[] {
     return this.items.filter((f) => f.status === 'planted');
   }
@@ -82,6 +136,28 @@ export class ForeshadowingTracker {
     );
   }
 
+  /**
+   * Get the top N foreshadowings that are due within the next few chapters.
+   * These are injected as [MUST_RESOLVE] blocks into the generation context.
+   */
+  getTopDue(currentChapter: number, lookAhead = 2, limit = 3): Foreshadowing[] {
+    const planted = this.getPlanted();
+    const due = planted.filter((f) => {
+      if (!f.suggestedResolveChapter) return false;
+      const remaining = f.suggestedResolveChapter - currentChapter;
+      return remaining <= lookAhead;
+    });
+
+    return due
+      .sort((a, b) => {
+        const urgencyWeight = { critical: 4, high: 3, medium: 2, low: 1 };
+        const diff = (urgencyWeight[b.urgency] ?? 0) - (urgencyWeight[a.urgency] ?? 0);
+        if (diff !== 0) return diff;
+        return (a.suggestedResolveChapter ?? 999) - (b.suggestedResolveChapter ?? 999);
+      })
+      .slice(0, limit);
+  }
+
   // Build urgency-ordered text for context injection
   buildForeshadowingContext(currentChapter: number, phaseState: StoryPhaseState): string {
     const planted = this.getPlanted();
@@ -89,17 +165,20 @@ export class ForeshadowingTracker {
 
     const lines: string[] = ['【伏笔台账】'];
 
+    // Inject top-3 due foreshadows as [MUST_RESOLVE] blocks
+    const topDue = this.getTopDue(currentChapter, 2, 3);
+    if (topDue.length > 0) {
+      lines.push('\n[MUST_RESOLVE] 以下伏笔必须在近期闭合，本章优先处理：');
+      for (const f of topDue) {
+        lines.push(`  ❗ [Ch${f.plantedInChapter}] ${f.description}（建议第${f.suggestedResolveChapter}章闭合）`);
+      }
+    }
+
     // Sort by urgency and phase pressure
     const sorted = [...planted].sort((a, b) => {
-      // In convergence/finale: higher urgency first
-      const urgencyWeight = phaseState.currentPhase === 'convergence' || phaseState.currentPhase === 'finale'
-        ? { critical: 4, high: 3, medium: 2, low: 1 }
-        : { critical: 4, high: 3, medium: 2, low: 1 };
-
+      const urgencyWeight = { critical: 4, high: 3, medium: 2, low: 1 };
       const diff = (urgencyWeight[b.urgency] ?? 0) - (urgencyWeight[a.urgency] ?? 0);
       if (diff !== 0) return diff;
-
-      // Then by narrative weight
       return b.narrativeWeight - a.narrativeWeight;
     });
 
@@ -108,6 +187,11 @@ export class ForeshadowingTracker {
       const marker = overdue ? '⚠️到期' : '📌';
       const resolveHint = f.suggestedResolveChapter ? `（建议第${f.suggestedResolveChapter}章闭合）` : '';
       lines.push(`  ${marker} [Ch${f.plantedInChapter}] ${f.description} ${resolveHint}`);
+    }
+
+    // Budget warning
+    if (planted.length > MAX_TOTAL_PENDING * 0.8) {
+      lines.push(`\n⚠️ 伏笔预算: ${planted.length}/${MAX_TOTAL_PENDING}，接近上限，禁止埋设新伏笔`);
     }
 
     // Phase-specific pressure directive
@@ -119,6 +203,17 @@ export class ForeshadowingTracker {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Get budget status for context injection.
+   */
+  getBudgetStatus(): { pending: number; maxPending: number; newPerChapter: number } {
+    return {
+      pending: this.getPlanted().length,
+      maxPending: MAX_TOTAL_PENDING,
+      newPerChapter: MAX_NEW_PER_CHAPTER,
+    };
   }
 
   // Serialize

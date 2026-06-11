@@ -51,6 +51,7 @@ export type LLMTaskType =
   | 'planning'       // 宏观规划 / 大纲
   | 'generation'     // 正文生成
   | 'review'         // 审校质检
+  | 'rewrite'        // 定向修写（质量门纠正）
   | 'extraction'     // 结构化提取（摘要/三元组/伏笔）
   | 'analysis'       // 叙事分析（紧张度评分/风格检测）
   | 'translation'    // 跨模块翻译（小说→漫画脚本）

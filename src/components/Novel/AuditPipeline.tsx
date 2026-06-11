@@ -68,13 +68,13 @@ const AuditPipeline: React.FC<AuditPipelineProps> = ({ novelId }) => {
     });
 
     // Step 2: Voice check
-    if (voice) {
+    if (voice && voice.features) {
       result.push({
         key: 'voiceCheck',
         label: t('pipelineAudit.step.voiceCheck'),
         icon: <SoundOutlined />,
         state: 'done',
-        detail: `${t('pipelineAudit.voiceBaseline')} ${voice.features.emotionalTone}`,
+        detail: `${t('pipelineAudit.voiceBaseline')} ${voice.features.emotionalTone ?? '-'}`,
       });
     } else {
       result.push({

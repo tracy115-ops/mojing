@@ -1,16 +1,21 @@
 // ============================================================================
-// Knowledge Graph View — Interactive SVG graph with pan/zoom/drag
+// Knowledge Graph View — ECharts force-directed graph with inference
+// PlotPilot-inspired: entity-type coloring, contradiction warnings, search
 // ============================================================================
 
-import React, { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message } from 'antd';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip, Alert } from 'antd';
 import {
   ApartmentOutlined, PlusOutlined, DeleteOutlined, SearchOutlined,
   ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
+  WarningOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
+import ReactECharts from 'echarts-for-react';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { KnowledgeGraphEngine } from '@/services/novel/knowledge-graph';
 import type { RelationshipTriple } from '@/types/narrative';
+import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
 
 const { Text } = Typography;
 
@@ -18,76 +23,57 @@ interface KnowledgeGraphViewProps {
   novelId: string;
 }
 
-interface KGNode {
-  id: string;
-  x: number;
-  y: number;
-  type: 'subject' | 'object';
+const ENTITY_COLORS: Record<string, string> = {
+  character: '#6366f1',
+  location: '#22c55e',
+  concept: '#f59e0b',
+  event: '#ef4444',
+  unknown: '#9ca3af',
+};
+
+const PREDICATE_COLOR: Record<string, string> = {
+  '恋人': '#ec4899', '夫妻': '#ec4899', '朋友': '#22c55e', '盟友': '#22c55e', '伙伴': '#22c55e',
+  '敌对': '#ef4444', '仇人': '#ef4444', '死敌': '#ef4444', '对手': '#f97316',
+  '师傅': '#8b5cf6', '师父': '#8b5cf6', '徒弟': '#8b5cf6', '弟子': '#8b5cf6',
+  '父亲': '#06b6d4', '母亲': '#06b6d4', '兄弟': '#06b6d4', '姐妹': '#06b6d4',
+  '位于': '#22c55e', '属于': '#3b82f6', '拥有': '#f59e0b',
+};
+
+function getEdgeColor(predicate: string): string {
+  for (const [key, color] of Object.entries(PREDICATE_COLOR)) {
+    if (predicate.includes(key)) return color;
+  }
+  return '#6b7280';
 }
 
-// Simple force-directed layout
-function forceLayout(nodes: KGNode[], edges: { source: string; target: string }[], iterations: number = 80): void {
-  if (nodes.length < 2) return;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const k = 0.8;
-    const repulsion = 3000;
-    const cooling = 1 - iter / iterations;
-
-    // Repulsion between all node pairs
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const dx = nodes[i].x - nodes[j].x;
-        const dy = nodes[i].y - nodes[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = (repulsion / (dist * dist)) * cooling;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        nodes[i].x += fx;
-        nodes[i].y += fy;
-        nodes[j].x -= fx;
-        nodes[j].y -= fy;
-      }
-    }
-
-    // Attraction along edges
-    for (const edge of edges) {
-      const src = nodes.find((n) => n.id === edge.source);
-      const tgt = nodes.find((n) => n.id === edge.target);
-      if (!src || !tgt) continue;
-      const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const force = (dist - 120) * k * cooling * 0.05;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      src.x += fx;
-      src.y += fy;
-      tgt.x -= fx;
-      tgt.y -= fy;
-    }
-
-    // Keep nodes in bounds
-    for (const n of nodes) {
-      n.x = Math.max(40, Math.min(800, n.x));
-      n.y = Math.max(40, Math.min(600, n.y));
-    }
-  }
+function detectEntityType(name: string, charNames: Set<string>, locNames: Set<string>): string {
+  if (charNames.has(name)) return 'character';
+  if (locNames.has(name)) return 'location';
+  return 'unknown';
 }
 
 const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   const { t } = useTranslation();
-  const [repo] = useState(() => new NarrativeRepository(novelId));
+  const chartTheme = useChartTheme();
+  const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
+  const kgEngine = useMemo(() => new KnowledgeGraphEngine(novelId), [novelId]);
+
   const [triples, setTriples] = useState<RelationshipTriple[]>(() => repo.loadTriples());
   const [searchQuery, setSearchQuery] = useState('');
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [contradictions, setContradictions] = useState(() => kgEngine.detectContradictions());
+  const [echartRef, setEchartRef] = useState<ReactECharts | null>(null);
   const [form] = Form.useForm();
 
-  // Canvas transform state
-  const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: 840, h: 640 });
-  const svgRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<{ type: 'pan' | 'node'; startX: number; startY: number; nodeIdx?: number; origX?: number; origY?: number } | null>(null);
-  const [nodePositions, setNodePositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  // Character/location name sets for entity typing
+  const { charNames, locNames } = useMemo(() => {
+    const bible = repo.loadBible();
+    return {
+      charNames: new Set(bible.characters.map((c) => c.name)),
+      locNames: new Set(bible.locations.map((l) => l.name)),
+    };
+  }, [repo]);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return triples;
@@ -96,152 +82,161 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       (tr) =>
         tr.subject.toLowerCase().includes(q) ||
         tr.predicate.toLowerCase().includes(q) ||
-        tr.object.toLowerCase().includes(q)
+        tr.object.toLowerCase().includes(q),
     );
   }, [triples, searchQuery]);
 
-  const entitySet = useMemo(() => {
-    const set = new Map<string, 'subject' | 'object'>();
+  const selectedTriples = useMemo(() => {
+    if (!selectedNode) return [];
+    return triples.filter((tr) => tr.subject === selectedNode || tr.object === selectedNode);
+  }, [selectedNode, triples]);
+
+  const option = useMemo(() => {
+    if (filtered.length === 0) return null;
+
+    const entitySet = new Map<string, string>();
     for (const tr of filtered) {
-      if (!set.has(tr.subject)) set.set(tr.subject, 'subject');
-      if (!set.has(tr.object)) set.set(tr.object, 'object');
+      if (!entitySet.has(tr.subject)) entitySet.set(tr.subject, detectEntityType(tr.subject, charNames, locNames));
+      if (!entitySet.has(tr.object)) entitySet.set(tr.object, detectEntityType(tr.object, charNames, locNames));
     }
-    return set;
-  }, [filtered]);
 
-  // Build nodes with force layout
-  const { nodes, edges } = useMemo(() => {
-    const entities = Array.from(entitySet.keys());
-    const graphNodes: KGNode[] = entities.map((id, i) => ({
-      id,
-      type: entitySet.get(id)!,
-      x: 420 + (Math.random() - 0.5) * 300,
-      y: 300 + (Math.random() - 0.5) * 200,
-    }));
-
-    const graphEdges = filtered.map((tr) => ({
-      source: tr.subject,
-      target: tr.object,
-      predicate: tr.predicate,
-      sourceType: tr.source,
-    }));
-
-    forceLayout(graphNodes, graphEdges, 80);
-    return { nodes: graphNodes, edges: graphEdges };
-  }, [entitySet, filtered]);
-
-  // Sync node positions for drag
-  useEffect(() => {
-    setNodePositions(new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }])));
-  }, [nodes]);
-
-  const nodeMap = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-
-  const getPos = useCallback((id: string) => {
-    return nodePositions.get(id) ?? nodeMap.get(id) ?? { x: 0, y: 0 };
-  }, [nodePositions, nodeMap]);
-
-  // SVG coordinate conversion
-  const svgPoint = useCallback((clientX: number, clientY: number) => {
-    const svg = svgRef.current;
-    if (!svg) return { x: 0, y: 0 };
-    const rect = svg.getBoundingClientRect();
-    return {
-      x: viewBox.x + ((clientX - rect.left) / rect.width) * viewBox.w,
-      y: viewBox.y + ((clientY - rect.top) / rect.height) * viewBox.h,
-    };
-  }, [viewBox]);
-
-  // Mouse handlers for pan and node drag
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target as SVGElement;
-    const nodeGroup = target.closest('[data-node-id]');
-    if (nodeGroup) {
-      const nodeId = nodeGroup.getAttribute('data-node-id')!;
-      const pos = getPos(nodeId);
-      dragRef.current = { type: 'node', startX: e.clientX, startY: e.clientY, nodeIdx: undefined, origX: pos.x, origY: pos.y };
-      // Store nodeId for later
-      (dragRef.current as any).nodeId = nodeId;
-    } else {
-      dragRef.current = { type: 'pan', startX: e.clientX, startY: e.clientY };
+    const connectionCount = new Map<string, number>();
+    for (const tr of filtered) {
+      connectionCount.set(tr.subject, (connectionCount.get(tr.subject) ?? 0) + 1);
+      connectionCount.set(tr.object, (connectionCount.get(tr.object) ?? 0) + 1);
     }
-    e.preventDefault();
-  }, [getPos]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragRef.current) return;
-    const d = dragRef.current;
-    if (d.type === 'pan') {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const scaleX = viewBox.w / rect.width;
-      const scaleY = viewBox.h / rect.height;
-      setViewBox((prev) => ({
-        ...prev,
-        x: prev.x - (e.clientX - d.startX) * scaleX,
-        y: prev.y - (e.clientY - d.startY) * scaleY,
-      }));
-      d.startX = e.clientX;
-      d.startY = e.clientY;
-    } else if (d.type === 'node') {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
-      const scaleX = viewBox.w / rect.width;
-      const scaleY = viewBox.h / rect.height;
-      const dx = (e.clientX - d.startX) * scaleX;
-      const dy = (e.clientY - d.startY) * scaleY;
-      const nodeId = (d as any).nodeId;
-      setNodePositions((prev) => {
-        const next = new Map(prev);
-        next.set(nodeId, { x: (d.origX ?? 0) + dx, y: (d.origY ?? 0) + dy });
-        return next;
-      });
-    }
-  }, [viewBox]);
-
-  const handleMouseUp = useCallback(() => {
-    dragRef.current = null;
-  }, []);
-
-  // Zoom
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.1 : 0.9;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const mx = viewBox.x + ((e.clientX - rect.left) / rect.width) * viewBox.w;
-    const my = viewBox.y + ((e.clientY - rect.top) / rect.height) * viewBox.h;
-    setViewBox((prev) => {
-      const nw = prev.w * factor;
-      const nh = prev.h * factor;
+    const nodes = Array.from(entitySet.entries()).map(([id, type]) => {
+      const conns = connectionCount.get(id) ?? 1;
+      const size = Math.max(20, Math.min(50, 15 + conns * 6));
       return {
-        x: prev.x + (mx - prev.x) * (1 - factor),
-        y: prev.y + (my - prev.y) * (1 - factor),
-        w: nw,
-        h: nh,
+        id,
+        name: id,
+        symbolSize: size,
+        itemStyle: {
+          color: ENTITY_COLORS[type],
+          borderColor: selectedNode === id ? '#3b82f6' : '#fff',
+          borderWidth: selectedNode === id ? 3 : 2,
+          shadowBlur: selectedNode === id ? 12 : 6,
+          shadowColor: ENTITY_COLORS[type] + '40',
+        },
+        label: {
+          show: true,
+          fontSize: conns > 3 ? 13 : 11,
+          fontWeight: conns > 3 ? 'bold' : 'normal',
+          color: chartTheme.textPrimary,
+        },
+        category: type,
       };
     });
-  }, [viewBox]);
 
-  const zoomIn = () => setViewBox((prev) => ({ x: prev.x + prev.w * 0.05, y: prev.y + prev.h * 0.05, w: prev.w * 0.9, h: prev.h * 0.9 }));
-  const zoomOut = () => setViewBox((prev) => ({ x: prev.x - prev.w * 0.05, y: prev.y - prev.h * 0.05, w: prev.w * 1.1, h: prev.h * 1.1 }));
-  const resetView = () => setViewBox({ x: 0, y: 0, w: 840, h: 640 });
+    const links = filtered.map((tr) => ({
+      source: tr.subject,
+      target: tr.object,
+      value: tr.predicate,
+      lineStyle: {
+        color: getEdgeColor(tr.predicate),
+        width: 1.2,
+        curveness: 0.1,
+        opacity: 0.65,
+        type: tr.source === 'extracted' ? 'dashed' as const : 'solid' as const,
+      },
+      label: {
+        show: true,
+        formatter: tr.predicate.length > 6 ? tr.predicate.slice(0, 6) + '…' : tr.predicate,
+        fontSize: 9,
+        color: chartTheme.textSecondary,
+        backgroundColor: chartTheme.bgPrimary + 'dd',
+        padding: [1, 3],
+        borderRadius: 2,
+      },
+    }));
 
-  // Auto-fit viewBox to content
-  useEffect(() => {
-    if (nodes.length > 0) {
-      const xs = nodes.map((n) => n.x);
-      const ys = nodes.map((n) => n.y);
-      const minX = Math.min(...xs) - 60;
-      const minY = Math.min(...ys) - 60;
-      const maxX = Math.max(...xs) + 60;
-      const maxY = Math.max(...ys) + 60;
-      setViewBox({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
+    const categories = [
+      { name: t('knowledgeGraph.entityType.character'), itemStyle: { color: ENTITY_COLORS.character } },
+      { name: t('knowledgeGraph.entityType.location'), itemStyle: { color: ENTITY_COLORS.location } },
+      { name: t('knowledgeGraph.entityType.other'), itemStyle: { color: ENTITY_COLORS.unknown } },
+    ];
+
+    return {
+      tooltip: {
+        trigger: 'item',
+        ...chartTooltipStyle(chartTheme),
+        formatter: (params: any) => {
+          if (params.dataType === 'node') {
+            const type = entitySet.get(params.name) || 'unknown';
+            const conns = connectionCount.get(params.name) ?? 0;
+            return `<b>${params.name}</b><br/>` +
+              `<span style="color:${ENTITY_COLORS[type]}">${t('knowledgeGraph.entityType.' + type)}</span>` +
+              `<br/><span style="color:#888">${conns} ${t('knowledgeGraph.connections')}</span>`;
+          }
+          if (params.dataType === 'edge') {
+            const src = params.data.source;
+            const tr = filtered.find((t) => t.subject === src && t.predicate === params.data.value);
+            const srcLabel = tr?.source === 'extracted'
+              ? `<span style="color:#8b5cf6">(${t('knowledgeGraph.inferred')})</span>` : '';
+            return `${params.data.source} → <b>${params.data.value}</b> → ${params.data.target}<br/>${srcLabel}`;
+          }
+          return '';
+        },
+      },
+      legend: {
+        data: categories.map((c) => c.name),
+        bottom: 0,
+        left: 'center',
+        ...chartLegendStyle(chartTheme),
+      },
+      series: [{
+        type: 'graph',
+        layout: 'force',
+        animation: true,
+        animationDuration: 600,
+        animationEasingUpdate: 'quinticInOut',
+        data: nodes,
+        links,
+        categories,
+        roam: true,
+        draggable: true,
+        force: {
+          repulsion: 350,
+          gravity: 0.06,
+          edgeLength: [60, 180],
+          layoutAnimation: true,
+        },
+        emphasis: {
+          focus: 'adjacency',
+          lineStyle: { width: 2.5 },
+        },
+        blur: {
+          itemStyle: { opacity: 0.15 },
+          lineStyle: { opacity: 0.05 },
+        },
+      }],
+    };
+  }, [filtered, charNames, locNames, selectedNode, chartTheme, t]);
+
+  const handleChartClick = useCallback((params: any) => {
+    if (params.dataType === 'node') {
+      setSelectedNode((prev) => prev === params.name ? null : params.name);
     }
-  }, [nodes]);
+  }, []);
+
+  const handleRunInference = useCallback(() => {
+    const result = kgEngine.runInference();
+    const updated = repo.loadTriples();
+    setTriples(updated);
+    setContradictions(kgEngine.detectContradictions());
+    if (result.newTriples.length > 0) {
+      message.success(t('knowledgeGraph.inferenceResult', { count: result.newTriples.length }));
+    } else {
+      message.info(t('knowledgeGraph.noNewInference'));
+    }
+  }, [kgEngine, repo, t]);
+
+  const handleResetZoom = useCallback(() => {
+    const chart = echartRef?.getEchartsInstance();
+    if (chart) chart.dispatchAction({ type: 'restore' });
+  }, [echartRef]);
 
   const handleAdd = async () => {
     const values = await form.validateFields();
@@ -276,12 +271,27 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         <span><ApartmentOutlined style={{ marginRight: 6 }} />{t('knowledgeGraph.title')}</span>
         <Space size={4}>
           <Badge count={triples.length} style={{ backgroundColor: '#3b82f6' }} />
-          <Badge count={entitySet.size} style={{ backgroundColor: '#22c55e' }} />
+          <Tooltip title={t('knowledgeGraph.runInference')}>
+            <Button size="small" icon={<ThunderboltOutlined />} onClick={handleRunInference} />
+          </Tooltip>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setAddModalOpen(true)}>
             {t('common.add')}
           </Button>
         </Space>
       </div>
+
+      {/* Contradiction warnings */}
+      {contradictions.length > 0 && (
+        <Alert
+          type="warning"
+          icon={<WarningOutlined />}
+          showIcon
+          message={`${contradictions.length} ${t('knowledgeGraph.contradictions')}`}
+          description={contradictions[0].description}
+          closable
+          style={{ margin: '4px 12px', fontSize: 11 }}
+        />
+      )}
 
       {/* Search */}
       <div style={{ padding: '6px 12px 0', display: 'flex', gap: 6 }}>
@@ -295,119 +305,68 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           style={{ flex: 1 }}
         />
         <Space size={2}>
-          <Button size="small" icon={<ZoomInOutlined />} onClick={zoomIn} />
-          <Button size="small" icon={<ZoomOutOutlined />} onClick={zoomOut} />
-          <Button size="small" icon={<FullscreenOutlined />} onClick={resetView} />
+          <Button size="small" icon={<FullscreenOutlined />} onClick={handleResetZoom} />
         </Space>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-        {nodes.length === 0 ? (
+      <div style={{ flex: 1, overflow: 'hidden', minHeight: 200 }}>
+        {!option ? (
           <div style={{ padding: 40 }}>
             <Empty description={t('knowledgeGraph.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           </div>
         ) : (
-          <>
-            {/* Interactive SVG Graph */}
-            <svg
-              ref={svgRef}
-              width="100%"
-              height="100%"
-              viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-              style={{ cursor: dragRef.current?.type === 'node' ? 'grabbing' : 'grab', background: 'var(--bg-secondary, rgba(0,0,0,0.02))' }}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              onWheel={handleWheel}
-            >
-              {/* Edges */}
-              {edges.map((edge, i) => {
-                const srcPos = getPos(edge.source);
-                const tgtPos = getPos(edge.target);
-                return (
-                  <g key={`edge-${i}`}>
-                    <line
-                      x1={srcPos.x} y1={srcPos.y} x2={tgtPos.x} y2={tgtPos.y}
-                      stroke="var(--border-secondary, #999)" strokeWidth={1}
-                    />
-                    <text
-                      x={(srcPos.x + tgtPos.x) / 2}
-                      y={(srcPos.y + tgtPos.y) / 2 - 5}
-                      textAnchor="middle"
-                      style={{ fontSize: 9, fill: 'var(--text-secondary, #888)', pointerEvents: 'none' }}
-                    >
-                      {edge.predicate.length > 10 ? edge.predicate.slice(0, 10) + '…' : edge.predicate}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* Nodes */}
-              {nodes.map((node) => {
-                const pos = getPos(node.id);
-                const color = node.type === 'subject' ? '#6366f1' : '#ec4899';
-                const label = node.id.length > 8 ? node.id.slice(0, 8) + '…' : node.id;
-                // Scale node size with viewBox
-                const nodeR = Math.max(6, Math.min(14, viewBox.w * 0.012));
-                const fontSize = Math.max(7, Math.min(12, viewBox.w * 0.01));
-                return (
-                  <g key={node.id} data-node-id={node.id} style={{ cursor: 'grab' }}>
-                    <circle cx={pos.x} cy={pos.y} r={nodeR + 4} fill="transparent" />
-                    <circle cx={pos.x} cy={pos.y} r={nodeR} fill={color} opacity={0.85} stroke="#fff" strokeWidth={1.5} />
-                    <text
-                      x={pos.x} y={pos.y + nodeR + fontSize + 2}
-                      textAnchor="middle"
-                      style={{ fontSize, fill: 'var(--text-primary, #333)', pointerEvents: 'none', fontWeight: 500 }}
-                    >
-                      {label}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Hint */}
-            <div style={{
-              position: 'absolute', bottom: 8, left: 8,
-              fontSize: 9, color: 'var(--text-tertiary, #aaa)',
-              background: 'var(--bg-primary, rgba(255,255,255,0.9))',
-              padding: '2px 6px', borderRadius: 4,
-            }}>
-              {t('knowledgeGraph.panZoomHint')}
-            </div>
-          </>
+          <ReactECharts
+            ref={(e) => setEchartRef(e)}
+            option={option}
+            style={{ height: '100%', width: '100%' }}
+            onEvents={{ click: handleChartClick }}
+            opts={{ renderer: 'canvas' }}
+            notMerge
+          />
         )}
       </div>
 
-      {/* Triple list in collapsible bottom area */}
-      {filtered.length > 0 && (
-        <div style={{
-          maxHeight: 180, overflow: 'auto', borderTop: '1px solid var(--border-secondary)',
-          padding: '4px 12px',
-        }}>
-          <Text strong style={{ fontSize: 11 }}>{t('knowledgeGraph.tripleList')} ({filtered.length})</Text>
-          <List
-            size="small"
-            dataSource={filtered}
-            renderItem={(triple, idx) => (
+      {/* Selected node triples or full triple list */}
+      <div style={{
+        maxHeight: 180, overflow: 'auto', borderTop: '1px solid var(--border-secondary)',
+        padding: '4px 12px',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <Text strong style={{ fontSize: 11 }}>
+            {selectedNode
+              ? `${selectedNode} (${selectedTriples.length})`
+              : `${t('knowledgeGraph.tripleList')} (${triples.length})`}
+          </Text>
+          {selectedNode && (
+            <Button type="link" size="small" onClick={() => setSelectedNode(null)}>
+              {t('common.clear')}
+            </Button>
+          )}
+        </div>
+        <List
+          size="small"
+          dataSource={selectedNode ? selectedTriples : triples.slice(0, 20)}
+          renderItem={(triple) => {
+            const idx = triples.indexOf(triple);
+            return (
               <List.Item style={{ padding: '2px 8px', fontSize: 11 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
                   <Tag color="purple" style={{ fontSize: 9 }}>{triple.subject}</Tag>
-                  <Text type="secondary">→</Text>
-                  <Tag style={{ fontSize: 9 }}>{triple.predicate}</Tag>
-                  <Text type="secondary">→</Text>
+                  <span style={{ color: getEdgeColor(triple.predicate), fontWeight: 500 }}>{triple.predicate}</span>
                   <Tag color="magenta" style={{ fontSize: 9 }}>{triple.object}</Tag>
+                  {triple.source === 'extracted' && (
+                    <Tag color="purple" style={{ fontSize: 8 }}>{t('knowledgeGraph.inferred')}</Tag>
+                  )}
                 </div>
                 <Button
                   type="text" size="small" danger icon={<DeleteOutlined />}
-                  onClick={() => handleDelete(triples.indexOf(triple))}
+                  onClick={() => handleDelete(idx)}
                 />
               </List.Item>
-            )}
-          />
-        </div>
-      )}
+            );
+          }}
+        />
+      </div>
 
       {/* Add triple modal */}
       <Modal

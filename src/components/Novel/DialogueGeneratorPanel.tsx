@@ -4,8 +4,8 @@
 // ============================================================================
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Select, Input, Button, Space, Card, Tag, Empty, message } from 'antd';
-import { MessageOutlined, CopyOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Select, Input, Button, Space, Card, Tag, Empty, message, Alert } from 'antd';
+import { MessageOutlined, CopyOutlined, ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { providerRouter } from '@/services/providers';
@@ -95,6 +95,15 @@ ${selectedChar.personality ? `性格: ${selectedChar.personality}` : ''}
         <span><MessageOutlined style={{ marginRight: 6 }} />{t('dialogue.title')}</span>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
       </div>
+
+      <Alert
+        type="info"
+        showIcon
+        icon={<InfoCircleOutlined />}
+        message={t('dialogue.usageHint')}
+        style={{ fontSize: 11 }}
+        banner
+      />
 
       <div>
         <div style={{ fontSize: 12, marginBottom: 4, color: 'var(--text-secondary)' }}>

@@ -28,6 +28,10 @@ export class VoiceFingerprintService {
     this.repo = new NarrativeRepository(novelId);
   }
 
+  getFingerprint(): VoiceFingerprint | null {
+    return this.repo.loadVoiceFingerprint();
+  }
+
   /**
    * Compute voice fingerprint from chapter content using local heuristics
    * supplemented by optional LLM analysis.

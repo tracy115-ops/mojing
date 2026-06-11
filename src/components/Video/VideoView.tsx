@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Typography, message } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
@@ -18,6 +18,16 @@ const VideoView: React.FC = () => {
   const toggleFavorite = useProjectStore((s) => s.toggleFavorite);
 
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Listen for global "new project" event from titlebar
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { type } = (e as CustomEvent).detail;
+      if (type === 'video') setCreateOpen(true);
+    };
+    window.addEventListener('mojing:create-project', handler);
+    return () => window.removeEventListener('mojing:create-project', handler);
+  }, []);
 
   const videoProjects = useMemo(() => projects.filter((p) => p.type === 'video'), [projects]);
   const activeProject = projects.find((p) => p.id === activeProjectId && p.type === 'video');

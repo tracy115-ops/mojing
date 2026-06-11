@@ -13,6 +13,7 @@ import { useTranslation } from '@/i18n';
 import { ContextBudgetAllocator } from '@/services/novel/context-budget';
 import { EvolutionEngine, type EvolutionEvent, type ContinuityViolation } from '@/services/novel/evolution-engine';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { panelHeader } from './PanelStyles';
 import type { StoryPhase, Foreshadowing } from '@/types/narrative';
 
 const { Text } = Typography;
@@ -250,11 +251,7 @@ const StoryPhaseEvolutionPanel: React.FC<StoryPhaseEvolutionPanelProps> = ({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{
-        padding: '4px 12px', fontWeight: 600, fontSize: 13,
-        borderBottom: '1px solid var(--border-secondary)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      }}>
+      <div style={panelHeader()}>
         <span><FlagOutlined style={{ marginRight: 6 }} />{t('phase.title')}</span>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
       </div>

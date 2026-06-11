@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AppSettings, AppearanceSettings, CreativeSettings } from '@/types';
 
-const resolveAppearanceTheme = (theme: 'dark' | 'light' | 'system'): 'dark' | 'light' => {
+const resolveAppearanceTheme = (theme: 'dark' | 'light' | 'anchor' | 'system'): 'dark' | 'light' | 'anchor' => {
   if (theme === 'system') {
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
       return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -76,7 +76,7 @@ const normalizeSettings = (settings?: Partial<AppSettings>): AppSettings => {
 interface SettingsState {
   settings: AppSettings;
   loading: boolean;
-  currentTheme: 'dark' | 'light';
+  currentTheme: 'dark' | 'light' | 'anchor';
 
   fetchSettings: () => Promise<void>;
   updateSettings: (updates: Partial<AppSettings>) => Promise<void>;
@@ -84,7 +84,7 @@ interface SettingsState {
   updateAppearanceSettings: (updates: Partial<AppearanceSettings>) => Promise<void>;
   updateNotificationSettings: (updates: Partial<AppSettings['notifications']>) => Promise<void>;
   updateCreativeSettings: (updates: Partial<CreativeSettings>) => Promise<void>;
-  setTheme: (theme: 'dark' | 'light' | 'system') => void;
+  setTheme: (theme: 'dark' | 'light' | 'anchor' | 'system') => void;
   resetSettings: () => Promise<void>;
 }
 
@@ -162,7 +162,7 @@ export const useSettingsStore = create<SettingsState>()(
         await get().updateSettings({ creative: updates } as Partial<AppSettings>);
       },
 
-      setTheme: (theme) => {
+      setTheme: (theme: 'dark' | 'light' | 'anchor' | 'system') => {
         const resolvedTheme = resolveAppearanceTheme(theme);
         document.documentElement.setAttribute('data-theme', resolvedTheme);
         set({

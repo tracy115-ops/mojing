@@ -18,7 +18,7 @@ interface ClichePattern {
 }
 
 const CLICHE_PATTERNS: ClichePattern[] = [
-  // --- Critical: strong AI indicators ---
+  // --- Critical: strong AI indicators (PlotPilot's 35+ patterns) ---
   { id: 'c01', pattern: /不由得/g, label: '不由得', severity: 'critical', suggestion: '用具体动作或内心独白替代' },
   { id: 'c02', pattern: /心中一动/g, label: '心中一动', severity: 'critical', suggestion: '展示角色的具体反应' },
   { id: 'c03', pattern: /缓缓开口/g, label: '缓缓开口', severity: 'critical', suggestion: '用更具体的说话方式替代' },
@@ -31,6 +31,19 @@ const CLICHE_PATTERNS: ClichePattern[] = [
   { id: 'c10', pattern: /深深地看了.{1,10}一眼/g, label: '深深看了一眼', severity: 'critical', suggestion: '用注视、瞪视等更具体的眼神描写' },
   { id: 'c11', pattern: /时间.{0,2}仿佛.{0,2}静止/g, label: '时间静止', severity: 'critical', suggestion: '用感官冻结的细节展示紧张瞬间' },
   { id: 'c12', pattern: /一股强大的.{0,6}(力量|气息|能量)/g, label: '一股强大的…', severity: 'critical', suggestion: '用具体的感官体验描述力量' },
+  { id: 'c13', pattern: /指尖.{0,2}(泛白|发白|颤抖)/g, label: '指尖泛白', severity: 'critical', suggestion: '用更有新意的身体紧张描写' },
+  { id: 'c14', pattern: /一丝.{0,2}(笑意|寒意|暖意|凉意|不安)/g, label: '一丝系列', severity: 'critical', suggestion: '删除"一丝"，直接写具体感受' },
+  { id: 'c15', pattern: /带着.{0,4}口吻/g, label: '带着XX口吻', severity: 'critical', suggestion: '通过对话内容展示语气' },
+  { id: 'c16', pattern: /不容置疑/g, label: '不容置疑', severity: 'critical', suggestion: '通过行动展示权威' },
+  { id: 'c17', pattern: /声音变得冰冷/g, label: '声音变得冰冷', severity: 'critical', suggestion: '通过对话内容和具体描写展示冷淡' },
+  { id: 'c18', pattern: /心湖.{0,2}(涟漪|波澜|震荡)/g, label: '心湖涟漪', severity: 'critical', suggestion: '用真实的内心活动替代比喻' },
+  { id: 'c19', pattern: /投入心湖/g, label: '投入心湖', severity: 'critical', suggestion: '用更自然的心理描写' },
+  { id: 'c20', pattern: /呼吸一滞/g, label: '呼吸一滞', severity: 'critical', suggestion: '用更具体的生理反应' },
+  { id: 'c21', pattern: /四肢百骸/g, label: '四肢百骸', severity: 'critical', suggestion: '用更精准的身体部位描写' },
+  { id: 'c22', pattern: /生理性.{0,2}(泪水|反应)/g, label: '生理性泪水', severity: 'critical', suggestion: '不需要用"生理性"来解释流泪' },
+  { id: 'c23', pattern: /感到(愤怒|悲伤|恐惧|绝望)/g, label: '感到XX', severity: 'critical', suggestion: '用行为展示而非直接陈述情绪' },
+  { id: 'c24', pattern: /不是.{1,8}而是/g, label: '不是…而是', severity: 'critical', suggestion: '直接说是什么，不需要先否定' },
+  { id: 'c25', pattern: /(.{3,})\s*——\s*\1/g, label: '重复破折号结构', severity: 'critical', suggestion: '避免在破折号前后重复相同内容' },
 
   // --- Warning: mild AI flavor ---
   { id: 'w01', pattern: /声音.{0,2}(微微|有些|不禁)颤抖/g, label: '声音颤抖', severity: 'warning', suggestion: '用更具体的语音变化展示紧张' },

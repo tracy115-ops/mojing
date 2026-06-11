@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Menu, Button, Tooltip, Modal } from 'antd';
+import { Button, Tooltip, Modal, Dropdown } from 'antd';
 import {
   BookOutlined,
   PictureOutlined,
@@ -7,12 +7,12 @@ import {
   SettingOutlined,
   MinusOutlined,
   BorderOutlined,
-  BlockOutlined,
   CloseOutlined,
   SunOutlined,
   MoonOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  CrownOutlined,
+  BlockOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,9 +26,15 @@ import SettingsPanel from '@/components/Settings/SettingsPanel';
 
 type ViewKey = 'novels' | 'comics' | 'videos';
 
+interface NavTab {
+  key: ViewKey | 'settings';
+  icon: React.ReactNode;
+  label: string;
+  color: string;
+}
+
 const MainLayout: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewKey>('novels');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { t } = useTranslation();
   const currentTheme = useSettingsStore((s) => s.currentTheme);
@@ -55,25 +61,29 @@ const MainLayout: React.FC = () => {
   const cycleTheme = useCallback(() => {
     const current = settings.appearance.theme;
     if (current === 'dark') setTheme('light');
-    else if (current === 'light') setTheme('system');
+    else if (current === 'light') setTheme('anchor');
+    else if (current === 'anchor') setTheme('system');
     else setTheme('dark');
   }, [settings.appearance.theme, setTheme]);
 
   const themeIcon = settings.appearance.theme === 'dark' ? <MoonOutlined />
     : settings.appearance.theme === 'light' ? <SunOutlined />
+    : settings.appearance.theme === 'anchor' ? <CrownOutlined />
     : <BlockOutlined />;
 
   const themeTooltip = settings.appearance.theme === 'dark' ? t('settings.general.theme.dark')
     : settings.appearance.theme === 'light' ? t('settings.general.theme.light')
+    : settings.appearance.theme === 'anchor' ? t('settings.general.theme.anchor')
     : t('settings.general.theme.system');
 
-  const menuItems = [
-    { key: 'novels', icon: <BookOutlined />, label: t('sidebar.novels') },
-    { key: 'comics', icon: <PictureOutlined />, label: t('sidebar.comics') },
-    { key: 'videos', icon: <VideoCameraOutlined />, label: t('sidebar.videos') },
-    { type: 'divider' as const },
-    { key: 'settings', icon: <SettingOutlined />, label: t('sidebar.settings') },
+  const navTabs: NavTab[] = [
+    { key: 'novels', icon: <BookOutlined />, label: t('sidebar.novels'), color: '#3b82f6' },
+    { key: 'comics', icon: <PictureOutlined />, label: t('sidebar.comics'), color: '#f59e0b' },
+    { key: 'videos', icon: <VideoCameraOutlined />, label: t('sidebar.videos'), color: '#ef4444' },
+    { key: 'settings', icon: <SettingOutlined />, label: t('sidebar.settings'), color: '#8b5cf6' },
   ];
+
+  const activeKey = settingsOpen ? 'settings' : activeView;
 
   const renderContent = () => {
     switch (activeView) {
@@ -83,6 +93,15 @@ const MainLayout: React.FC = () => {
       default: return <NovelView />;
     }
   };
+
+  const dispatchCreate = useCallback((type: string) => {
+    // Switch to the corresponding view and dispatch a custom event
+    if (type === 'novel') setActiveView('novels');
+    else if (type === 'comic') setActiveView('comics');
+    else if (type === 'video') setActiveView('videos');
+    setSettingsOpen(false);
+    window.dispatchEvent(new CustomEvent('mojing:create-project', { detail: { type } }));
+  }, []);
 
   const handleTitlebarMouseDown = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -97,22 +116,76 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="ws-shell">
+      {/* Titlebar with integrated horizontal nav */}
       <div className="ws-titlebar" onMouseDown={handleTitlebarMouseDown}>
-        <Tooltip title={sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')} placement="right">
-          <Button
-            type="text"
-            size="small"
-            className="ws-titlebar-btn"
-            icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          />
-        </Tooltip>
-
-        <div className="ws-titlebar-title">
-          MoJing 墨境
+        {/* Nav tabs — integrated into titlebar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
+          {navTabs.map((tab) => {
+            const isActive = activeKey === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (tab.key === 'settings') {
+                    setSettingsOpen(true);
+                  } else {
+                    setSettingsOpen(false);
+                    setActiveView(tab.key as ViewKey);
+                  }
+                }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                  padding: '4px 12px', fontSize: 12,
+                  fontWeight: isActive ? 600 : 400,
+                  color: isActive ? tab.color : 'var(--text-secondary)',
+                  background: isActive ? tab.color + '10' : 'transparent',
+                  border: 'none',
+                  borderBottom: isActive ? `2px solid ${tab.color}` : '2px solid transparent',
+                  borderRadius: '4px 4px 0 0',
+                  cursor: 'pointer', transition: 'all 0.15s',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent';
+                }}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <div style={{ display: 'flex', gap: 2 }}>
+        {/* New project — dropdown before window controls */}
+        <div style={{ display: 'flex', alignItems: 'center', marginRight: 2 }}>
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'novel', icon: <BookOutlined />, label: t('sidebar.novels'), onClick: () => dispatchCreate('novel') },
+                { key: 'comic', icon: <PictureOutlined />, label: t('sidebar.comics'), onClick: () => dispatchCreate('comic') },
+                { key: 'video', icon: <VideoCameraOutlined />, label: t('sidebar.videos'), onClick: () => dispatchCreate('video') },
+              ],
+            }}
+            trigger={['click']}
+          >
+            <Tooltip title={t('project.new')}>
+              <button
+                className="ws-titlebar-btn"
+                onClick={(e) => e.stopPropagation()}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <PlusOutlined style={{ fontSize: 13 }} />
+              </button>
+            </Tooltip>
+          </Dropdown>
+        </div>
+
+        {/* Window controls */}
+        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
           <Tooltip title={themeTooltip}>
             <Button
               type="text"
@@ -134,31 +207,8 @@ const MainLayout: React.FC = () => {
         </div>
       </div>
 
-      {/* Body */}
+      {/* Body — no sidebar, content takes full width */}
       <div className="ws-body">
-        {/* Sidebar */}
-        <div className={`ws-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
-          <div className="ws-sidebar-nav">
-            <Menu
-              mode="inline"
-              selectedKeys={[settingsOpen ? 'settings' : activeView]}
-              onClick={({ key }) => {
-                if (key === 'settings') {
-                  setSettingsOpen(true);
-                } else {
-                  setSettingsOpen(false);
-                  setActiveView(key as ViewKey);
-                }
-              }}
-              items={menuItems}
-              inlineCollapsed={sidebarCollapsed}
-              style={{ border: 'none', background: 'transparent' }}
-              theme={currentTheme === 'dark' ? 'dark' : 'light'}
-            />
-          </div>
-        </div>
-
-        {/* Content */}
         <div className="ws-content">
           {renderContent()}
         </div>

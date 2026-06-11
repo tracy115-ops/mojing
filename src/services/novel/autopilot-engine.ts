@@ -4,7 +4,7 @@ import type {
   NovelStage,
   CircuitBreakerState,
 } from '@/types/pipeline';
-import type { StoryPhaseState, Foreshadowing, ChapterAftermathResult, Beat } from '@/types/narrative';
+import type { StoryPhaseState, Foreshadowing, ChapterAftermathResult, Beat, GlobalPlan, StoryNode } from '@/types/narrative';
 import type { NovelChapter, NovelMetadata } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
@@ -25,6 +25,8 @@ import { ChapterContinuityLedger } from './chapter-continuity-ledger';
 import { ChapterSummarizer } from './chapter-summarizer';
 import { AutoBibleGenerator } from './auto-bible-generator';
 import { ConflictDetector } from './conflict-detector';
+import { QualityGateService } from './quality-gate';
+import type { QualityGateResult } from './quality-gate';
 import {
   magnifyOutlineToBeats,
   getConductorSignal,
@@ -63,8 +65,14 @@ interface AutopilotConfig {
   targetWordCount: number;
   existingChapters: NovelChapter[];
   onUpdateChapter: (chapterId: string, updates: Partial<NovelChapter>) => void;
-  onAddChapter: () => string;
+  onAddChapter: (volumeId?: string) => string;
+  onAddVolume: (title: string) => string;
   onUpdateMetadata: (updates: Partial<NovelMetadata>) => void;
+  getChapters: () => NovelChapter[];
+  // New StoryNode callbacks (optional — if provided, engine uses StoryNode path)
+  getStoryNodes?: () => StoryNode[];
+  onSetStoryNodes?: (nodes: StoryNode[]) => void;
+  onUpdateStoryNode?: (nodeId: string, updates: Partial<StoryNode>) => void;
 }
 
 const CIRCUIT_BREAKER_THRESHOLD = 3;
@@ -89,12 +97,14 @@ export class AutopilotEngine {
   private chapterSummarizer: ChapterSummarizer;
   private autoBibleGenerator: AutoBibleGenerator;
   private conflictDetector: ConflictDetector;
+  private qualityGate: QualityGateService;
   private repo: NarrativeRepository;
   private abortController: AbortController | null = null;
   private handlers: Set<AutopilotEventHandler> = new Set();
   private config: AutopilotConfig;
   private storyPhase: StoryPhaseState | null = null;
   private lastTensionScore: number = 5;
+  private globalPlan: GlobalPlan | null = null;
 
   constructor(config: AutopilotConfig) {
     this.config = config;
@@ -111,6 +121,7 @@ export class AutopilotEngine {
     this.chapterSummarizer = new ChapterSummarizer(config.novelId);
     this.autoBibleGenerator = new AutoBibleGenerator(config.novelId);
     this.conflictDetector = new ConflictDetector();
+    this.qualityGate = new QualityGateService(config.novelId);
     this.state = {
       novelId: config.novelId,
       status: 'idle',
@@ -168,6 +179,10 @@ export class AutopilotEngine {
     return this.storyPhase;
   }
 
+  getGlobalPlan(): GlobalPlan | null {
+    return this.globalPlan;
+  }
+
   // --- Control ---
 
   async start(): Promise<void> {
@@ -178,6 +193,19 @@ export class AutopilotEngine {
     this.emit('status_change', { status: 'running' });
 
     try {
+      // Check for existing global plan (resume scenario)
+      const existingPlan = this.repo.loadGlobalPlan();
+      if (existingPlan) {
+        this.globalPlan = existingPlan;
+      } else {
+        // Global planning phase — plan all volumes and chapters upfront
+        this.setStage('global_planning');
+        this.emit('stage_change', { stage: 'global_planning' });
+        const plan = await this.doGlobalPlanning();
+        this.globalPlan = plan;
+        await this.executeGlobalPlan(plan);
+      }
+
       await this.runLoop();
     } catch (err) {
       if (!this.abortController.signal.aborted) {
@@ -215,6 +243,7 @@ export class AutopilotEngine {
 
     for (let ch = startChapter; ch < targetChapter; ch++) {
       if (this.abortController?.signal.aborted) return;
+      if (this.state.status === 'paused') return;
       if (this.breaker.state === 'open') {
         this.updateStatus('paused');
         this.emit('status_change', { status: 'paused', reason: 'circuit_breaker' });
@@ -228,7 +257,7 @@ export class AutopilotEngine {
       try {
         await this.generateChapter(ch);
         this.state.consecutiveFailures = 0;
-        this.state.currentWordCount = this.config.existingChapters.reduce(
+        this.state.currentWordCount = this.config.getChapters().reduce(
           (s, c) => s + c.wordCount,
           0,
         );
@@ -277,21 +306,54 @@ export class AutopilotEngine {
     this.setStage('act_beat_planning');
     const outline = await this.doActBeatPlanning(chapterIndex, macroPlan);
 
-    // Add chapter to store
-    const chapterId = this.config.onAddChapter();
+    // Find existing stub from global planning, or create new chapter
+    let chapterId: string;
+    // Try StoryNode path first
+    if (this.config.getStoryNodes) {
+      const nodes = this.config.getStoryNodes();
+      const chapterNodes = nodes.filter((n) => n.nodeType === 'chapter').sort((a, b) => a.order - b.order);
+      const existingNode = chapterNodes[chapterIndex];
+      if (existingNode && existingNode.status === 'planned') {
+        chapterId = existingNode.id;
+      } else if (existingNode) {
+        chapterId = existingNode.id;
+      } else {
+        chapterId = this.config.onAddChapter();
+      }
+    } else {
+      const latestChapters = this.config.getChapters();
+      const existingStub = latestChapters.find(
+        (c) => c.order === chapterIndex && c.status === 'planned',
+      );
+      chapterId = existingStub
+        ? existingStub.id
+        : this.config.onAddChapter();
+    }
+
     this.config.onUpdateChapter(chapterId, {
       title: macroPlan.title || `第${chapterNumber}章`,
       outline,
       status: 'drafting',
     });
+    // Also update StoryNode if callback available
+    this.config.onUpdateStoryNode?.(chapterId, {
+      title: macroPlan.title || `第${chapterNumber}章`,
+      outline,
+      status: 'drafting',
+    });
+
+    this.emit('chapter_progress', { chapterId, chapterNumber });
 
     // Stage 3: Chapter generation (beat loop)
     this.setStage('chapter_generation');
-    const content = await this.doChapterGeneration(chapterIndex, outline, chapterId);
+    let content = await this.doChapterGeneration(chapterIndex, outline, chapterId);
 
     // Stage 4: Chapter review
     this.setStage('chapter_review');
     await this.doChapterReview(chapterIndex, content, chapterId);
+
+    // Stage 5: Quality gate with targeted rewrite loop
+    content = await this.doQualityGateRewrite(chapterIndex, content, chapterId);
 
     // Post-chapter aftermath
     await this.doAftermath(chapterIndex, content);
@@ -302,7 +364,7 @@ export class AutopilotEngine {
   private async doMacroPlanning(chapterIndex: number): Promise<{ title: string; direction: string }> {
     this.emit('stage_change', { stage: 'macro_planning', chapter: chapterIndex });
 
-    const prevChapters = this.config.existingChapters
+    const prevChapters = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-3)
       .map((c) => `第${c.order + 1}章 ${c.title}: ${c.outline}`)
@@ -317,6 +379,22 @@ export class AutopilotEngine {
       this.storyPhase ?? ContextBudgetAllocator.computeStoryPhase(chapterIndex, this.state.targetChapterCount),
     );
 
+    // Inject global plan context for richer per-chapter planning
+    let globalPlanContext = '';
+    if (this.globalPlan) {
+      const plannedChapter = this.globalPlan.chapters.find((c) => c.order === chapterIndex);
+      const vol = plannedChapter ? this.globalPlan.volumes[plannedChapter.volumeIndex] : null;
+      globalPlanContext = `【全局规划上下文】
+主线：${this.globalPlan.mainPlot}
+核心冲突：${this.globalPlan.coreConflict}
+主题：${this.globalPlan.themeMessage}${plannedChapter ? `
+本章规划标题：${plannedChapter.title}
+本章大纲：${plannedChapter.outline}
+本章关键事件：${plannedChapter.keyEvents.join('、')}
+本章张力目标：${plannedChapter.tensionHint}/10` : ''}${vol ? `
+当前卷：${vol.title}（${vol.theme}）` : ''}`;
+    }
+
     const template = getTemplate('macro-planning');
     const request: LLMGenerateRequest = {
       taskType: 'planning',
@@ -324,7 +402,7 @@ export class AutopilotEngine {
         title: this.config.title,
         genre: this.config.genre,
         style: this.config.style,
-        phaseDirective,
+        phaseDirective: `${phaseDirective}\n${globalPlanContext}`,
         foreshadowingContext,
         chapterNumber: String(chapterIndex + 1),
         prevChapters,
@@ -341,19 +419,193 @@ export class AutopilotEngine {
     const response = await providerRouter.generate(request);
     try {
       const data = JSON.parse(response.content);
+      // Build richer direction that includes conflict and hook
+      const parts: string[] = [];
+      if (data.direction) parts.push(data.direction);
+      if (data.conflictCore) parts.push(`核心冲突: ${data.conflictCore}`);
+      if (data.endingHook) parts.push(`结尾钩子: ${data.endingHook}`);
       return {
         title: data.title || `第${chapterIndex + 1}章`,
-        direction: data.direction || '',
+        direction: parts.length > 0 ? parts.join('\n') : '',
       };
     } catch {
       return { title: `第${chapterIndex + 1}章`, direction: '' };
     }
   }
 
+  // --- Global planning: plan all volumes and chapters before generation ---
+
+  private async doGlobalPlanning(): Promise<GlobalPlan> {
+    const bible = this.repo.loadBible();
+
+    // Format Bible data for the prompt
+    const charactersText = bible.characters
+      .map((c) => `- ${c.name}（${c.importance}）: ${c.description}`)
+      .join('\n');
+    const worldbuildingText = bible.worldSettings
+      .map((s) => `- [${s.category}] ${s.name}: ${s.description}`)
+      .join('\n');
+    const locationsText = bible.locations
+      .map((l) => `- ${l.name}: ${l.description}`)
+      .join('\n');
+
+    // Load wizard plot outline if available
+    const plotNote = bible.timelineNotes?.find((n) => n.id === 'plot-outline');
+    const plotOutlineStages = plotNote?.significance || '';
+
+    const template = getTemplate('global-planning');
+    const request: LLMGenerateRequest = {
+      taskType: 'planning',
+      systemPrompt: template!.buildSystem({
+        title: this.config.title,
+        genre: this.config.genre,
+        style: this.config.style,
+        targetWordCount: String(this.config.targetWordCount),
+        targetChapterCount: String(this.config.targetChapterCount),
+        worldbuilding: worldbuildingText || '无',
+        characters: charactersText || '无',
+        locations: locationsText || '无',
+        plotOutlineStages,
+      }),
+      userPrompt: template!.buildUser({
+        title: this.config.title,
+        genre: this.config.genre,
+        style: this.config.style,
+        targetWordCount: String(this.config.targetWordCount),
+        targetChapterCount: String(this.config.targetChapterCount),
+        worldbuilding: worldbuildingText || '无',
+        characters: charactersText || '无',
+        locations: locationsText || '无',
+        plotOutlineStages,
+      }),
+      responseFormat: 'json',
+      temperature: 0.7,
+      maxTokens: 4096,
+    };
+
+    const response = await providerRouter.generate(request);
+    try {
+      const data = JSON.parse(response.content);
+      const plan: GlobalPlan = {
+        mainPlot: data.mainPlot || '',
+        coreConflict: data.coreConflict || '',
+        themeMessage: data.themeMessage || '',
+        volumes: (data.volumes || []).map((v: any) => ({
+          title: v.title || `卷`,
+          startChapter: Number(v.startChapter) || 0,
+          endChapter: Number(v.endChapter) || 0,
+          theme: v.theme || '',
+        })),
+        chapters: (data.chapters || []).map((c: any) => ({
+          order: Number(c.order) || 0,
+          title: c.title || `第${(c.order ?? 0) + 1}章`,
+          outline: c.outline || '',
+          volumeIndex: Number(c.volumeIndex) || 0,
+          keyEvents: c.keyEvents || [],
+          tensionHint: Number(c.tensionHint) || 5,
+        })),
+        ending: data.ending || '',
+      };
+      this.repo.saveGlobalPlan(plan);
+      return plan;
+    } catch {
+      // Fallback: create a simple single-volume plan
+      const fallbackPlan: GlobalPlan = {
+        mainPlot: '',
+        coreConflict: '',
+        themeMessage: '',
+        volumes: [{ title: '卷一', startChapter: 0, endChapter: this.config.targetChapterCount - 1, theme: '' }],
+        chapters: Array.from({ length: this.config.targetChapterCount }, (_, i) => ({
+          order: i,
+          title: `第${i + 1}章`,
+          outline: '',
+          volumeIndex: 0,
+          keyEvents: [],
+          tensionHint: 5,
+        })),
+        ending: '',
+      };
+      this.repo.saveGlobalPlan(fallbackPlan);
+      return fallbackPlan;
+    }
+  }
+
+  private async executeGlobalPlan(plan: GlobalPlan): Promise<void> {
+    // Use StoryNode path if callbacks are available
+    if (this.config.getStoryNodes && this.config.onSetStoryNodes) {
+      const existingNodes = this.config.getStoryNodes();
+      const timestamp = new Date().toISOString();
+      let nodes = [...existingNodes];
+
+      // Create volume nodes
+      const volumeIdMap: Map<number, string> = new Map();
+      for (let i = 0; i < plan.volumes.length; i++) {
+        const id = crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        volumeIdMap.set(i, id);
+        nodes.push({
+          id,
+          novelId: this.config.novelId,
+          nodeType: 'volume',
+          parentId: null,
+          order: i,
+          title: plan.volumes[i].title,
+          description: plan.volumes[i].theme,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+
+      // Create chapter nodes
+      for (let i = 0; i < plan.chapters.length; i++) {
+        const ch = plan.chapters[i];
+        const parentId = volumeIdMap.get(ch.volumeIndex) ?? null;
+        nodes.push({
+          id: crypto.randomUUID?.() ?? `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`,
+          novelId: this.config.novelId,
+          nodeType: 'chapter',
+          parentId,
+          order: ch.order,
+          title: ch.title,
+          outline: ch.outline,
+          content: '',
+          wordCount: 0,
+          status: 'planned',
+          keyEvents: ch.keyEvents,
+          tensionHint: ch.tensionHint,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+
+      this.config.onSetStoryNodes(nodes);
+      this.emit('stage_change', { stage: 'global_planning', plan: { volumes: plan.volumes.length, chapters: plan.chapters.length } });
+      return;
+    }
+
+    // Legacy path
+    const volumeIdMap: Map<number, string> = new Map();
+    for (let i = 0; i < plan.volumes.length; i++) {
+      const volId = this.config.onAddVolume(plan.volumes[i].title);
+      volumeIdMap.set(i, volId);
+    }
+
+    for (const ch of plan.chapters) {
+      const volId = volumeIdMap.get(ch.volumeIndex);
+      const chapterId = this.config.onAddChapter(volId);
+      this.config.onUpdateChapter(chapterId, {
+        title: ch.title,
+        outline: ch.outline,
+        status: 'planned',
+      });
+    }
+
+    this.emit('stage_change', { stage: 'global_planning', plan: { volumes: plan.volumes.length, chapters: plan.chapters.length } });
+  }
+
   private async doActBeatPlanning(chapterIndex: number, macroPlan: { title: string; direction: string }): Promise<string> {
     this.emit('stage_change', { stage: 'act_beat_planning', chapter: chapterIndex });
 
-    const prevSummary = this.config.existingChapters
+    const prevSummary = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-1)
       .map((c) => c.content.slice(-500))
@@ -580,12 +832,53 @@ export class AutopilotEngine {
     this.budget.registerChapterOutline(outline);
 
     // T2 slots
-    const prevContent = this.config.existingChapters
+    const prevContent = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-1)
       .map((c) => c.content.slice(-1500))
       .join('\n');
     if (prevContent) this.budget.registerPreviousChapter(prevContent);
+
+    // T0: Previously On — summary of what happened in the last chapter
+    const prevChapterSummary = this.config.getChapters()
+      .filter((c) => c.order < chapterIndex && c.content)
+      .slice(-1)
+      .map((c) => `第${c.order + 1}章 "${c.title}": ${c.outline || c.content.slice(0, 300)}`)
+      .join('\n');
+    if (prevChapterSummary) this.budget.registerPreviouslyOn(prevChapterSummary);
+
+    // T0: Debt Due — inject due foreshadows/debts as [MUST_RESOLVE] blocks
+    const topDue = this.foreshadowing.getTopDue(chapterIndex, 2, 3);
+    if (topDue.length > 0) {
+      const debtText = [
+        '【必须处理的叙事债务】',
+        ...topDue.map((f) => `❗ [Ch${f.plantedInChapter}] ${f.description}（建议第${f.suggestedResolveChapter}章闭合）`),
+        '本章必须推进或闭合以上伏笔/债务。',
+      ].join('\n');
+      this.budget.registerDebtDue(debtText);
+    } else {
+      // Also inject general narrative debts
+      const debts = this.repo.loadNarrativeDebts();
+      const openDebts = debts.filter((d) => d.status === 'open').slice(0, 3);
+      if (openDebts.length > 0) {
+        const debtText = [
+          '【待解决叙事债务】',
+          ...openDebts.map((d) => `- ${d.description}（第${d.plantedInChapter}章产生）`),
+        ].join('\n');
+        this.budget.registerDebtDue(debtText);
+      }
+    }
+
+    // T0: Scars & Motivations — active character motivations
+    const bible = this.repo.loadBible();
+    const activeMotivations = bible.characters
+      .filter((c) => c.importance === 'protagonist' || c.importance === 'major')
+      .slice(0, 5)
+      .map((c) => `${c.name}: ${c.backstory || c.description}`)
+      .join('\n');
+    if (activeMotivations) {
+      this.budget.registerScarsAndMotivations(`【角色驱动力】\n${activeMotivations}`);
+    }
 
     // T1: Prop context injection
     const propContext = this.propManager.buildContextForChapter(chapterIndex);
@@ -622,6 +915,18 @@ export class AutopilotEngine {
         estimatedTokens: this.estimateTokens(ledgerContext),
         maxTokens: 600, minTokens: 100, priority: 35,
       });
+    }
+
+    // T0: Quality gate corrective directives (highest priority)
+    const qualityDirectives = this.qualityGate.getPendingDirectives();
+    if (qualityDirectives.length > 0) {
+      const directiveText = qualityDirectives.join('\n');
+      this.budget.registerSlot({
+        name: 'QUALITY_GATE_DIRECTIVES', tier: 'T0', content: directiveText,
+        estimatedTokens: this.estimateTokens(directiveText),
+        maxTokens: 800, minTokens: 100, priority: 50,
+      });
+      this.qualityGate.clearDirectives();
     }
   }
 
@@ -665,6 +970,96 @@ export class AutopilotEngine {
     }
   }
 
+  /**
+   * Quality gate with targeted rewrite loop (PlotPilot-style 定向修写).
+   * Runs after chapter review. If quality issues are detected,
+   * triggers an immediate targeted rewrite of the current chapter
+   * before proceeding to aftermath.
+   */
+  private async doQualityGateRewrite(
+    chapterIndex: number,
+    content: string,
+    chapterId: string,
+  ): Promise<string> {
+    const chapterNumber = chapterIndex + 1;
+    let currentContent = content;
+
+    try {
+      this.emit('stage_change', { stage: 'chapter_review', chapter: chapterIndex, substage: 'quality_gate' });
+
+      const rewriteResult = await this.qualityGate.evaluateAndRewrite(
+        chapterNumber,
+        content,
+        (attempt, score, rewritten) => {
+          this.emit('chapter_progress', {
+            chapter: chapterIndex,
+            chapterId,
+            qualityGateRewrite: { attempt, score, rewritten },
+          });
+        },
+      );
+
+      if (rewriteResult.improved) {
+        currentContent = rewriteResult.rewrittenContent;
+
+        // Update chapter with rewritten content
+        this.config.onUpdateChapter(chapterId, {
+          content: currentContent,
+          wordCount: currentContent.length,
+          status: 'complete',
+        });
+
+        this.config.onUpdateStoryNode?.(chapterId, {
+          status: 'complete',
+        });
+
+        this.emit('chapter_progress', {
+          chapter: chapterIndex,
+          chapterId,
+          wordCount: currentContent.length,
+          rewritten: true,
+          rewriteAttempts: rewriteResult.attempts,
+          qualityScore: rewriteResult.finalScore,
+        });
+      }
+
+      // Exhausted retries but still below threshold → pause engine for human intervention
+      if (rewriteResult.needsHumanIntervention) {
+        this.config.onUpdateChapter(chapterId, {
+          content: currentContent,
+          wordCount: currentContent.length,
+          status: 'revising',
+        });
+
+        this.config.onUpdateStoryNode?.(chapterId, {
+          status: 'revising',
+        });
+
+        this.updateStatus('paused');
+        this.emit('status_change', { status: 'paused' });
+        this.emit('error', {
+          error: `质量门: 第${chapterNumber}章经${rewriteResult.attempts}次定向修写仍不达标(${rewriteResult.finalScore}/100)，引擎已暂停，请人工审核`,
+          qualityGateHumanIntervention: true,
+          chapterNumber,
+          finalScore: rewriteResult.finalScore,
+          unresolvedIssues: rewriteResult.unresolvedIssues,
+          rewrittenContent: currentContent,
+        });
+
+        return currentContent;
+      }
+
+      if (!rewriteResult.improved) {
+        this.config.onUpdateChapter(chapterId, { status: 'complete' });
+      }
+    } catch (err) {
+      console.warn('AutopilotEngine: quality gate rewrite failed, using original content', err);
+      this.config.onUpdateChapter(chapterId, { status: 'complete' });
+    }
+
+    return currentContent;
+  }
+
   private async doAftermath(chapterIndex: number, content: string): Promise<void> {
     const chapterNumber = chapterIndex + 1;
 
@@ -689,27 +1084,65 @@ export class AutopilotEngine {
         this.memory.mergeTriples(aftermathResult.triples);
       }
 
-      for (const planted of aftermathResult.foreshadowings.planted) {
-        this.foreshadowing.plant(planted);
+      // V9 Reform: plant foreshadowings with budget enforcement
+      if (aftermathResult.foreshadowings.planted.length > 0) {
+        const budgetResult = this.foreshadowing.plantWithBudget(
+          aftermathResult.foreshadowings.planted,
+          chapterNumber,
+        );
+        if (budgetResult.rejected > 0) {
+          console.info(`AutopilotEngine: foreshadowing budget rejected ${budgetResult.rejected} new items (pending: ${this.foreshadowing.getPlanted().length}/${15})`);
+        }
       }
+
+      // Resolve foreshadowings that the LLM detected as consumed
       for (const resolved of aftermathResult.foreshadowings.resolved) {
-        // LLM returns resolved items with new IDs — match by description instead
         const matched = this.foreshadowing.resolveByDescription(
           resolved.description,
           resolved.resolvedInChapter ?? chapterNumber,
         );
         if (!matched) {
-          // Fallback: try exact ID match
           this.foreshadowing.resolve(resolved.id, resolved.resolvedInChapter ?? chapterNumber);
         }
       }
+
+      // Auto-abandon very old unresolved foreshadows
+      const abandoned = this.foreshadowing.autoAbandonOld(chapterNumber);
+      if (abandoned > 0) {
+        console.info(`AutopilotEngine: auto-abandoned ${abandoned} foreshadows older than 30 chapters`);
+      }
+
       // Persist foreshadowing to repository so ForeshadowLedgerPanel can read it
       this.repo.saveForeshadowing(this.foreshadowing.serialize());
 
-      // Persist narrative debts
+      // Resolve narrative debts that are overdue or approaching deadline
       if (aftermathResult.narrativeDebts?.length) {
         const existingDebts = this.repo.loadNarrativeDebts();
-        this.repo.saveNarrativeDebts([...existingDebts, ...aftermathResult.narrativeDebts]);
+        // Mark debts resolved by this chapter
+        const updatedDebts = existingDebts.map((d) => {
+          if (d.status !== 'open') return d;
+          // Auto-resolve debts whose deadline has passed and this chapter addresses them
+          if (d.suggestedResolveBy <= chapterNumber) {
+            return { ...d, status: 'resolved' as const };
+          }
+          return d;
+        });
+        // Add new debts but cap total open debts
+        const openCount = updatedDebts.filter((d) => d.status === 'open').length;
+        const newDebtsToAdd = openCount < 6
+          ? aftermathResult.narrativeDebts.slice(0, 6 - openCount)
+          : [];
+        this.repo.saveNarrativeDebts([...updatedDebts, ...newDebtsToAdd]);
+      } else {
+        // Even without new debts, auto-resolve overdue ones
+        const existingDebts = this.repo.loadNarrativeDebts();
+        const updatedDebts = existingDebts.map((d) => {
+          if (d.status === 'open' && d.suggestedResolveBy <= chapterNumber) {
+            return { ...d, status: 'resolved' as const };
+          }
+          return d;
+        });
+        this.repo.saveNarrativeDebts(updatedDebts);
       }
 
       // Persist character states
@@ -991,6 +1424,12 @@ export class AutopilotEngine {
     const tensionHistory = this.tension.getTensionHistory();
     if (tensionHistory.length > 0) {
       this.lastTensionScore = tensionHistory[tensionHistory.length - 1].score;
+    }
+
+    // 7. Restore global plan
+    const savedPlan = this.repo.loadGlobalPlan();
+    if (savedPlan) {
+      this.globalPlan = savedPlan;
     }
   }
 

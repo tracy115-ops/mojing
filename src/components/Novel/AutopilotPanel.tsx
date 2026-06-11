@@ -131,6 +131,8 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
   const currentChapter = autopilotState?.currentChapterNumber ?? 0;
   const targetChapters = autopilotState?.targetChapterCount ?? 0;
   const lastError = autopilotState?.lastError;
+  // Use store word count when running, otherwise props
+  const liveWordCount = autopilotState?.currentWordCount ?? currentWordCount;
 
   const isRunning = status === 'running';
   const isPaused = status === 'paused';
@@ -188,6 +190,7 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
 
   const stageLabel = useMemo(() => {
     const keyMap: Record<string, string> = {
+      global_planning: 'novel.engine.stage.globalPlanning',
       macro_planning: 'novel.engine.stage.macroPlanning',
       act_beat_planning: 'novel.engine.stage.actBeatPlanning',
       chapter_generation: 'novel.engine.stage.chapterGeneration',
@@ -200,8 +203,8 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
 
   const wordPercent = useMemo(() => {
     if (!targetWordCount) return 0;
-    return Math.min(100, Math.round((currentWordCount / targetWordCount) * 100));
-  }, [currentWordCount, targetWordCount]);
+    return Math.min(100, Math.round((liveWordCount / targetWordCount) * 100));
+  }, [liveWordCount, targetWordCount]);
 
   // Last tension score
   const lastTension = tensionPoints.length > 0 ? tensionPoints[tensionPoints.length - 1].score : null;
@@ -388,7 +391,7 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
               {stage === 'chapter_generation' && ` — ${t('novel.chapterOrder', { order: currentChapter + 1 })}`}
             </Text>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {currentChapter}/{targetChapters} {t('novel.chapters')} | {currentWordCount.toLocaleString()}/{targetWordCount.toLocaleString()} {t('autopilot.words')}
+              {currentChapter}/{targetChapters} {t('novel.chapters')} | {liveWordCount.toLocaleString()}/{targetWordCount.toLocaleString()} {t('autopilot.words')}
             </Text>
           </div>
           <Progress
@@ -473,7 +476,7 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <CheckCircleOutlined style={{ color: '#22c55e' }} />
             <Text style={{ fontSize: 12, color: '#22c55e' }}>
-              {t('novel.engine.autopilot.completed')} — {chapterCount} {t('novel.chapters')}, {currentWordCount.toLocaleString()} {t('autopilot.words')}
+              {t('novel.engine.autopilot.completed')} — {chapterCount} {t('novel.chapters')}, {liveWordCount.toLocaleString()} {t('autopilot.words')}
             </Text>
           </div>
           {/* Show final tension sparkline + graph stats */}

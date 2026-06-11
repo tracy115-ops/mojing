@@ -4,7 +4,7 @@ import { StyleProvider } from '@ant-design/cssinjs';
 import { Toaster } from 'sonner';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import { darkTheme, lightTheme } from '@/styles/themes';
+import { darkTheme, lightTheme, anchorTheme } from '@/styles/themes';
 import { useSettingsStore } from '@/stores/settingsStore';
 
 const MainLayout = lazy(() => import('@/components/Layout/MainLayout'));
@@ -14,8 +14,8 @@ const App: React.FC = () => {
   const language = useSettingsStore((s) => s.settings.general.language);
   const closeAction = useSettingsStore((s) => s.settings.general.closeAction);
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
-  const isDark = currentTheme !== 'light';
-  const activeTheme = isDark ? darkTheme : lightTheme;
+  const isDark = currentTheme === 'dark' || currentTheme === 'anchor';
+  const activeTheme = currentTheme === 'anchor' ? anchorTheme : (isDark ? darkTheme : lightTheme);
   const antdLocale = language === 'en-US' ? enUS : zhCN;
 
   useEffect(() => {

@@ -60,11 +60,12 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
   const [wb, setWb] = useState<Worldbuilding>(() => repo.loadWorldbuilding());
   const [dirty, setDirty] = useState(false);
 
-  // Reload data on tick
+  // Reload data on tick (skip if user has unsaved edits)
   useEffect(() => {
+    if (dirty) return;
     const fresh = repo.loadWorldbuilding();
     setWb(fresh);
-  }, [tick, repo]);
+  }, [tick, repo, dirty]);
 
   const handleSave = useCallback(() => {
     repo.saveWorldbuilding(wb);

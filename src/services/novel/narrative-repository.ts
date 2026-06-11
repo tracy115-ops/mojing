@@ -390,10 +390,20 @@ export class NarrativeRepository {
     save(key(this.novelId, suffix), data);
   }
 
+  // --- Global Plan ---
+
+  loadGlobalPlan(): import('@/types/narrative').GlobalPlan | null {
+    return load<import('@/types/narrative').GlobalPlan | null>(key(this.novelId, 'global-plan'), null);
+  }
+
+  saveGlobalPlan(plan: import('@/types/narrative').GlobalPlan): void {
+    save(key(this.novelId, 'global-plan'), plan);
+  }
+
   // --- Clear all narrative data ---
 
   clearAll(): void {
-    const suffixes = ['bible', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts'];
+    const suffixes = ['bible', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts', 'global-plan'];
     for (const s of suffixes) {
       localStorage.removeItem(key(this.novelId, s));
     }

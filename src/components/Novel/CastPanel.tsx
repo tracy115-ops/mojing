@@ -1,20 +1,24 @@
 // ============================================================================
 // Cast Panel — Chapter-level character locking & coverage analysis
-// Shows which Bible characters are locked to appear in which chapters
+// Shows which Bible characters appear in which chapters
+// Coverage is auto-derived from chapter content (name matching)
+// Cast lock lets users manually pin characters to chapters
 // ============================================================================
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  Card, Select, Button, Space, Tag, Empty, Table, Badge, message, Tabs, Tooltip,
+  Button, Space, Tag, Empty, Table, Badge, message, Tabs, Tooltip, Alert,
 } from 'antd';
-import { TeamOutlined, LockOutlined, UnlockOutlined, UserOutlined, ReloadOutlined } from '@ant-design/icons';
+import { TeamOutlined, LockOutlined, UnlockOutlined, ReloadOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import { useProjectStore } from '@/stores/projectStore';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { BibleCharacter, ChapterCast } from '@/types/narrative';
 
 interface CastPanelProps {
   novelId: string;
   totalChapters: number;
+  currentChapter: number;
 }
 
 const importanceColor: Record<string, string> = {
@@ -24,13 +28,16 @@ const importanceColor: Record<string, string> = {
   minor: 'default',
 };
 
-const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters }) => {
+const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentChapter }) => {
   const { t } = useTranslation();
   const [repo] = useState(() => new NarrativeRepository(novelId));
 
   const [characters, setCharacters] = useState<BibleCharacter[]>([]);
   const [casts, setCasts] = useState<ChapterCast[]>([]);
-  const [selectedChapter, setSelectedChapter] = useState<number>(0);
+  const [selectedChapter, setSelectedChapter] = useState<number>(currentChapter);
+
+  const projects = useProjectStore((s) => s.projects);
+  const getStoryNodes = useProjectStore((s) => s.getStoryNodes);
 
   const refresh = useCallback(() => {
     setCharacters(repo.getCharacters());
@@ -39,12 +46,53 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters }) => {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // Get all chapter contents for coverage analysis
+  const chapterContents = useMemo(() => {
+    const proj = projects.find((p) => p.id === novelId);
+    if (!proj || proj.type !== 'novel') return [] as string[];
+
+    const nodes = getStoryNodes(novelId);
+    const chapterNodes = nodes
+      .filter((n) => n.nodeType === 'chapter')
+      .sort((a, b) => a.order - b.order);
+    return chapterNodes.map((n) => n.content ?? '');
+  }, [projects, novelId, getStoryNodes]);
+
+  // Build a name→charId lookup (including aliases)
+  const nameLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of characters) {
+      map.set(c.name, c.id);
+      for (const alias of (c.aliases ?? [])) {
+        map.set(alias, c.id);
+      }
+    }
+    return map;
+  }, [characters]);
+
+  // Auto-detect which characters appear in each chapter based on content
+  const autoDetectedPresence = useMemo(() => {
+    const result: Map<number, Set<string>> = new Map();
+    for (let i = 0; i < chapterContents.length; i++) {
+      const content = chapterContents[i];
+      if (!content) continue;
+      const found = new Set<string>();
+      for (const [name, charId] of nameLookup) {
+        if (content.includes(name)) {
+          found.add(charId);
+        }
+      }
+      result.set(i, found);
+    }
+    return result;
+  }, [chapterContents, nameLookup]);
+
   const currentCast = useMemo(
     () => casts.find((c) => c.chapterIndex === selectedChapter),
     [casts, selectedChapter],
   );
 
-  const lockedNames = useMemo(() => {
+  const lockedIds = useMemo(() => {
     if (!currentCast) return new Set<string>();
     return new Set(currentCast.lockedCharacters);
   }, [currentCast]);
@@ -61,40 +109,65 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters }) => {
     message.success(t('common.saved'));
   };
 
-  // Coverage analysis: how many chapters each character appears in
+  // Coverage analysis: combine auto-detected + manually locked
   const coverage = useMemo(() => {
     const map = new Map<string, number>();
-    for (const cast of casts) {
-      for (const charId of cast.lockedCharacters) {
+    const total = Math.max(totalChapters, chapterContents.length);
+
+    for (const [chapterIdx, presentChars] of autoDetectedPresence) {
+      for (const charId of presentChars) {
         map.set(charId, (map.get(charId) ?? 0) + 1);
       }
     }
+    // Also count manually locked characters
+    for (const cast of casts) {
+      for (const charId of cast.lockedCharacters) {
+        if (!autoDetectedPresence.get(cast.chapterIndex)?.has(charId)) {
+          map.set(charId, (map.get(charId) ?? 0) + 1);
+        }
+      }
+    }
+
     return characters.map((c) => ({
       id: c.id,
       name: c.name,
       importance: c.importance,
       chapters: map.get(c.id) ?? 0,
-      coverage: totalChapters > 0 ? Math.round(((map.get(c.id) ?? 0) / totalChapters) * 100) : 0,
+      coverage: total > 0 ? Math.round(((map.get(c.id) ?? 0) / total) * 100) : 0,
     }));
-  }, [characters, casts, totalChapters]);
+  }, [characters, autoDetectedPresence, casts, totalChapters, chapterContents.length]);
 
-  const chapterOptions = Array.from({ length: totalChapters }, (_, i) => ({
+  const chapterOptions = Array.from({ length: Math.max(totalChapters, chapterContents.length) }, (_, i) => ({
     value: i,
     label: t('novel.chapterOrder', { order: i + 1 }),
   }));
 
+  const isAutoDetected = (charId: string): boolean => {
+    return autoDetectedPresence.get(selectedChapter)?.has(charId) ?? false;
+  };
+
   const castLockTab = (
     <div>
+      <Alert
+        type="info"
+        showIcon
+        icon={<InfoCircleOutlined />}
+        message={t('cast.autoDetectHint')}
+        style={{ marginBottom: 8, fontSize: 11 }}
+        banner
+      />
       <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t('cast.selectChapter')}:</span>
         {chapterOptions.length > 0 ? (
-          <Select
+          <select
             value={selectedChapter}
-            onChange={setSelectedChapter}
-            options={chapterOptions}
-            style={{ width: 160 }}
-            size="small"
-          />
+            onChange={(e) => setSelectedChapter(Number(e.target.value))}
+            style={{ padding: '2px 8px', borderRadius: 4, fontSize: 12, background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-secondary)' }}
+          >
+            {chapterOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         ) : (
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t('cast.noChapters')}</span>
         )}
@@ -105,15 +178,16 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters }) => {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {characters.map((char) => {
-            const isLocked = lockedNames.has(char.id);
+            const isLocked = lockedIds.has(char.id);
+            const isDetected = isAutoDetected(char.id);
             return (
               <div
                 key={char.id}
                 style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   padding: '4px 8px', borderRadius: 4,
-                  background: isLocked ? 'rgba(22,119,255,0.06)' : 'transparent',
-                  border: isLocked ? '1px solid rgba(22,119,255,0.2)' : '1px solid transparent',
+                  background: isLocked ? 'rgba(22,119,255,0.06)' : isDetected ? 'rgba(82,196,26,0.06)' : 'transparent',
+                  border: isLocked ? '1px solid rgba(22,119,255,0.2)' : isDetected ? '1px solid rgba(82,196,26,0.2)' : '1px solid transparent',
                 }}
               >
                 <Space>
@@ -121,6 +195,9 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters }) => {
                     {t(`bible.importance.${char.importance}`)}
                   </Tag>
                   <span style={{ fontSize: 12 }}>{char.name}</span>
+                  {isDetected && !isLocked && (
+                    <Tag color="green" style={{ fontSize: 9 }}>{t('cast.autoDetected')}</Tag>
+                  )}
                 </Space>
                 <Tooltip title={isLocked ? t('cast.unlock') : t('cast.lock')}>
                   <Button

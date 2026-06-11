@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
-  Card, Row, Col, Statistic, Tag, Space, Button, Form, Input, Select, Typography, Divider, List, Progress, Tooltip, Empty, message,
+  Card, Row, Col, Tag, Space, Button, Form, Input, Select, Typography, Divider, List, Progress, Tooltip, Empty, message,
 } from 'antd';
 import {
   SafetyCertificateOutlined, CheckCircleOutlined, WarningOutlined,
@@ -14,6 +14,9 @@ import {
 import { useTranslation } from '@/i18n';
 import { GovernanceEngine, type NarrativeContract, type GovernanceReport } from '@/services/novel/governance-engine';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { ContextBudgetAllocator } from '@/services/novel/context-budget';
+import { useProjectStore } from '@/stores/projectStore';
+import { metricCard, metricLabel, metricValue, metricSub } from './PanelStyles';
 
 const { TextArea } = Input;
 const { Text } = Typography;
@@ -35,10 +38,14 @@ const GovernanceCockpit: React.FC<GovernanceCockpitProps> = ({ novelId }) => {
   const [contract, setContract] = useState<NarrativeContract | null>(() => {
     const existing = engine.loadContract();
     if (existing) return existing;
-    // Auto-create a default contract from novel metadata so users have something to start with
-    const bible = new NarrativeRepository(novelId).loadBible();
-    const title = bible.timelineNotes?.[0]?.event ?? '';
+    // Auto-create a default contract from project title & description
+    const proj = useProjectStore.getState().projects.find((p) => p.id === novelId);
+    const title = proj?.title ?? '';
+    const desc = proj?.description ?? '';
     const defaultContract = engine.createDefaultContract(novelId, title);
+    if (desc) {
+      defaultContract.coreQuestion = `${desc}——这个故事要回答什么根本问题？`;
+    }
     engine.saveContract(defaultContract);
     return defaultContract;
   });
@@ -51,15 +58,21 @@ const GovernanceCockpit: React.FC<GovernanceCockpitProps> = ({ novelId }) => {
     if (!contract) return null;
     const foreshadowing = repo.loadForeshadowing();
     const debts = repo.loadNarrativeDebts();
-    const totalChapters = foreshadowing.length > 0
-      ? Math.max(...foreshadowing.map((f) => f.plantedInChapter), 1)
-      : 1;
+    // Derive chapter count from all available data sources
+    const allChapterNums = [
+      ...foreshadowing.map((f) => f.plantedInChapter),
+      ...foreshadowing.map((f) => f.resolvedInChapter ?? 0),
+      ...debts.map((d) => d.plantedInChapter),
+      ...debts.map((d) => d.suggestedResolveBy),
+    ].filter((n) => n > 0);
+    const totalChapters = allChapterNums.length > 0 ? Math.max(...allChapterNums) : 1;
     const currentChapter = totalChapters;
+    const phaseState = ContextBudgetAllocator.computeStoryPhase(currentChapter, totalChapters);
 
     return engine.generateReport({
       chapterNumber: currentChapter,
       totalChapters,
-      storyPhase: 'development',
+      storyPhase: phaseState.currentPhase,
       chapterContent: '',
       foreshadowing,
       debts,
@@ -148,53 +161,27 @@ const GovernanceCockpit: React.FC<GovernanceCockpitProps> = ({ novelId }) => {
       </div>
 
       {/* Scrollable content */}
-      <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
-        {/* Top: Key Metrics */}
-        <Row gutter={8}>
-          <Col span={6}>
-            <Card size="small" style={{ textAlign: 'center' }}>
-              <Statistic
-                title={t('governance.score')}
-                value={governanceScore}
-                suffix="/100"
-                valueStyle={{ color: scoreColor(governanceScore), fontSize: 20 }}
-                prefix={<SafetyCertificateOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small" style={{ textAlign: 'center' }}>
-              <Statistic
-                title={t('governance.hitRate')}
-                value={Math.round(promiseHitRate * 100)}
-                suffix="%"
-                valueStyle={{ fontSize: 20 }}
-                prefix={<CheckCircleOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small" style={{ textAlign: 'center' }}>
-              <Statistic
-                title={t('governance.openDebts')}
-                value={openDebts}
-                valueStyle={{ fontSize: 20, color: openDebts > 3 ? '#ef4444' : '#22c55e' }}
-                prefix={<WarningOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col span={6}>
-            <Card size="small" style={{ textAlign: 'center' }}>
-              <Statistic
-                title={t('governance.closureRate')}
-                value={foreshadowing.length > 0 ? Math.round((resolvedCount / foreshadowing.length) * 100) : 0}
-                suffix="%"
-                valueStyle={{ fontSize: 20 }}
-              />
-              <Text type="secondary" style={{ fontSize: 10 }}>{t('governance.closurePending', { count: plantedCount })}</Text>
-            </Card>
-          </Col>
-        </Row>
+      <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
+        {/* Top: Key Metrics — dashboard card style */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+          <div style={{ ...metricCard(), textAlign: 'center' }}>
+            <div style={metricLabel}>{t('governance.score')}</div>
+            <div style={metricValue(scoreColor(governanceScore))}>{governanceScore}<span style={{ fontSize: 11, fontWeight: 400 }}>/100</span></div>
+          </div>
+          <div style={{ ...metricCard(), textAlign: 'center' }}>
+            <div style={metricLabel}>{t('governance.hitRate')}</div>
+            <div style={metricValue()}>{Math.round(promiseHitRate * 100)}%</div>
+          </div>
+          <div style={{ ...metricCard(), textAlign: 'center' }}>
+            <div style={metricLabel}>{t('governance.openDebts')}</div>
+            <div style={metricValue(openDebts > 3 ? '#ef4444' : '#22c55e')}>{openDebts}</div>
+          </div>
+          <div style={{ ...metricCard(), textAlign: 'center' }}>
+            <div style={metricLabel}>{t('governance.closureRate')}</div>
+            <div style={metricValue()}>{foreshadowing.length > 0 ? Math.round((resolvedCount / foreshadowing.length) * 100) : 0}%</div>
+            <div style={metricSub}>{t('governance.closurePending', { count: plantedCount })}</div>
+          </div>
+        </div>
 
         {/* Narrative Contract */}
         <Card

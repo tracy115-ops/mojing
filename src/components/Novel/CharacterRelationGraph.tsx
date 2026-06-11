@@ -1,35 +1,24 @@
 // ============================================================================
-// Character Relation Graph — Interactive SVG with pan/zoom/drag
+// Character Relation Graph — ECharts force-directed graph
+// PlotPilot-inspired interactive visualization with importance coloring
 // ============================================================================
 
-import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { Typography, Tag, Space, Empty, Badge, Card, Drawer, Button } from 'antd';
+import React, { useMemo, useState, useCallback } from 'react';
+import { Typography, Tag, Space, Empty, Badge, Drawer, Card, Button } from 'antd';
 import {
   TeamOutlined, ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
+import ReactECharts from 'echarts-for-react';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { BibleCharacter, RelationshipTriple } from '@/types/narrative';
+import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
 
 const { Text } = Typography;
 
 interface CharacterRelationGraphProps {
   novelId: string;
-}
-
-interface GraphNode {
-  id: string;
-  name: string;
-  importance: string;
-  x: number;
-  y: number;
-}
-
-interface GraphEdge {
-  source: string;
-  target: string;
-  predicate: string;
-  sinceChapter: number;
 }
 
 const IMPORTANCE_COLOR: Record<string, string> = {
@@ -39,185 +28,231 @@ const IMPORTANCE_COLOR: Record<string, string> = {
   minor: '#9ca3af',
 };
 
+const IMPORTANCE_SIZE: Record<string, number> = {
+  protagonist: 50,
+  major: 40,
+  supporting: 30,
+  minor: 22,
+};
+
+const PREDICATE_COLOR: Record<string, string> = {
+  '恋人': '#ec4899', '夫妻': '#ec4899', '朋友': '#22c55e', '盟友': '#22c55e',
+  '敌对': '#ef4444', '仇人': '#ef4444', '死敌': '#ef4444', '对手': '#f97316',
+  '师傅': '#8b5cf6', '师父': '#8b5cf6', '徒弟': '#8b5cf6', '弟子': '#8b5cf6',
+  '父亲': '#06b6d4', '母亲': '#06b6d4', '兄弟': '#06b6d4', '姐妹': '#06b6d4',
+};
+
+function getEdgeColor(predicate: string): string {
+  for (const [key, color] of Object.entries(PREDICATE_COLOR)) {
+    if (predicate.includes(key)) return color;
+  }
+  return '#6b7280';
+}
+
 const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId }) => {
   const { t } = useTranslation();
-  const [repo] = useState(() => new NarrativeRepository(novelId));
+  const chartTheme = useChartTheme();
   const [selectedChar, setSelectedChar] = useState<BibleCharacter | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const [echartRef, setEchartRef] = useState<ReactECharts | null>(null);
 
-  // Canvas transform
-  const [viewBox, setViewBox] = useState({ x: 0, y: 0, w: 640, h: 500 });
-  const dragRef = useRef<{ type: 'pan' | 'node'; startX: number; startY: number; nodeId?: string; origX?: number; origY?: number } | null>(null);
-  const [nodePositions, setNodePositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
 
-  const { characters, triples, rawNodes, edges } = useMemo(() => {
+  const { characters, triples, charSet } = useMemo(() => {
     const bible = repo.loadBible();
     const allTriples = repo.loadTriples();
     const charNames = new Set(bible.characters.map((c) => c.name));
     const charTriples = allTriples.filter(
-      (tr) => charNames.has(tr.subject) || charNames.has(tr.object)
+      (tr) => charNames.has(tr.subject) && charNames.has(tr.object),
     );
 
-    const activeChars = new Set<string>();
-    for (const tr of charTriples) {
-      activeChars.add(tr.subject);
-      activeChars.add(tr.object);
-    }
-
-    const graphNodes: GraphNode[] = bible.characters
-      .filter((c) => activeChars.has(c.name))
-      .map((c) => ({
-        id: c.name,
-        name: c.name,
-        importance: c.importance || 'supporting',
-        x: 320 + (Math.random() - 0.5) * 200,
-        y: 250 + (Math.random() - 0.5) * 200,
-      }));
-
-    const graphEdges: GraphEdge[] = charTriples.map((tr) => ({
-      source: tr.subject,
-      target: tr.object,
-      predicate: tr.predicate,
-      sinceChapter: tr.sinceChapter,
-    }));
-
-    return { characters: bible.characters, triples: charTriples, rawNodes: graphNodes, edges: graphEdges };
-  }, [repo]);
-
-  // Force simulation
-  const nodes = useMemo(() => {
-    if (rawNodes.length === 0) return rawNodes;
-    const sim = rawNodes.map((n) => ({ ...n }));
-    const simMap = new Map(sim.map((n) => [n.id, n]));
-
-    for (let iter = 0; iter < 100; iter++) {
-      const cooling = 1 - iter / 100;
-      for (let i = 0; i < sim.length; i++) {
-        for (let j = i + 1; j < sim.length; j++) {
-          const a = sim[i], b = sim[j];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const force = (8000 / (dist * dist)) * cooling;
-          const fx = (dx / dist) * force, fy = (dy / dist) * force;
-          a.x -= fx; a.y -= fy;
-          b.x += fx; b.y += fy;
+    // Also extract relationships from Bible character data
+    const bibleTriples: RelationshipTriple[] = [];
+    const charNameToId = new Map(bible.characters.map((c) => [c.id, c.name]));
+    for (const char of bible.characters) {
+      for (const rel of char.relationships) {
+        const targetName = charNameToId.get(rel.targetCharacterId) || rel.targetCharacterId;
+        if (charNames.has(targetName)) {
+          bibleTriples.push({
+            subject: char.name,
+            predicate: rel.type,
+            object: targetName,
+            sinceChapter: rel.sinceChapter,
+            source: 'bible',
+          });
         }
       }
-      for (const edge of edges) {
-        const a = simMap.get(edge.source), b = simMap.get(edge.target);
-        if (!a || !b) continue;
-        const dx = b.x - a.x, dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = (dist - 120) * 0.05;
-        const fx = (dx / dist) * force, fy = (dy / dist) * force;
-        a.x += fx; a.y += fy;
-        b.x -= fx; b.y -= fy;
-      }
-      for (const n of sim) {
-        n.x += (320 - n.x) * 0.01;
-        n.y += (250 - n.y) * 0.01;
-        n.x = Math.max(40, Math.min(600, n.x));
-        n.y = Math.max(40, Math.min(460, n.y));
+    }
+
+    // Merge: deduplicate by subject+predicate+object
+    const allLinks = [...charTriples];
+    const existingKeys = new Set(charTriples.map((t) => `${t.subject}|${t.predicate}|${t.object}`));
+    for (const bt of bibleTriples) {
+      const key = `${bt.subject}|${bt.predicate}|${bt.object}`;
+      if (!existingKeys.has(key)) {
+        allLinks.push(bt);
+        existingKeys.add(key);
       }
     }
-    return sim;
-  }, [rawNodes, edges]);
 
-  // Sync positions
-  useEffect(() => {
-    setNodePositions(new Map(nodes.map((n) => [n.id, { x: n.x, y: n.y }])));
-    // Auto-fit
-    if (nodes.length > 0) {
-      const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-      const pad = 60;
-      setViewBox({
-        x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
-        w: Math.max(...xs) - Math.min(...xs) + pad * 2,
-        h: Math.max(...ys) - Math.min(...ys) + pad * 2,
-      });
-    }
-  }, [nodes]);
-
-  const nodeMap = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-
-  const getPos = useCallback((id: string) => {
-    return nodePositions.get(id) ?? nodeMap.get(id) ?? { x: 0, y: 0 };
-  }, [nodePositions, nodeMap]);
+    return { characters: bible.characters, triples: allLinks, charSet: charNames };
+  }, [repo]);
 
   const relatedTriples = useMemo(() => {
     if (!selectedChar) return [];
     return triples.filter((tr) => tr.subject === selectedChar.name || tr.object === selectedChar.name);
   }, [selectedChar, triples]);
 
-  // Mouse handlers
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target as SVGElement;
-    const nodeGroup = target.closest('[data-node-id]');
-    if (nodeGroup) {
-      const nodeId = nodeGroup.getAttribute('data-node-id')!;
-      const pos = getPos(nodeId);
-      dragRef.current = { type: 'node', startX: e.clientX, startY: e.clientY, nodeId, origX: pos.x, origY: pos.y };
+  const option = useMemo(() => {
+    // Show graph if we have characters (even without relationships)
+    if (characters.length === 0) return null;
+
+    const activeNames = new Set<string>();
+    for (const tr of triples) {
+      activeNames.add(tr.subject);
+      activeNames.add(tr.object);
+    }
+    // If no triples, include all characters as standalone nodes
+    if (activeNames.size === 0) {
+      for (const c of characters) {
+        activeNames.add(c.name);
+      }
     } else {
-      dragRef.current = { type: 'pan', startX: e.clientX, startY: e.clientY };
+      // Also add characters that have no triples but exist in Bible
+      for (const c of characters) {
+        activeNames.add(c.name);
+      }
     }
-    e.preventDefault();
-  }, [getPos]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragRef.current) return;
-    const d = dragRef.current;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const sx = viewBox.w / rect.width, sy = viewBox.h / rect.height;
+    const charMap = new Map(characters.map((c) => [c.name, c]));
 
-    if (d.type === 'pan') {
-      setViewBox((prev) => ({
-        ...prev,
-        x: prev.x - (e.clientX - d.startX) * sx,
-        y: prev.y - (e.clientY - d.startY) * sy,
-      }));
-      d.startX = e.clientX; d.startY = e.clientY;
-    } else if (d.type === 'node' && d.nodeId) {
-      const dx = (e.clientX - d.startX) * sx, dy = (e.clientY - d.startY) * sy;
-      setNodePositions((prev) => {
-        const next = new Map(prev);
-        next.set(d.nodeId!, { x: (d.origX ?? 0) + dx, y: (d.origY ?? 0) + dy });
-        return next;
-      });
-    }
-  }, [viewBox]);
+    const nodes = Array.from(activeNames).map((name) => {
+      const char = charMap.get(name);
+      const importance = char?.importance || 'supporting';
+      return {
+        id: name,
+        name,
+        symbolSize: IMPORTANCE_SIZE[importance],
+        itemStyle: {
+          color: IMPORTANCE_COLOR[importance],
+          borderColor: '#fff',
+          borderWidth: 2,
+          shadowBlur: 8,
+          shadowColor: IMPORTANCE_COLOR[importance] + '40',
+        },
+        label: {
+          show: true,
+          fontSize: importance === 'protagonist' ? 13 : importance === 'major' ? 12 : 11,
+          fontWeight: importance === 'protagonist' ? 'bold' : 'normal',
+          color: chartTheme.textPrimary,
+        },
+        category: importance,
+        value: importance === 'protagonist' ? 4 : importance === 'major' ? 3 : importance === 'supporting' ? 2 : 1,
+      };
+    });
 
-  const handleMouseUp = useCallback(() => { dragRef.current = null; }, []);
-
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const factor = e.deltaY > 0 ? 1.1 : 0.9;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const mx = viewBox.x + ((e.clientX - rect.left) / rect.width) * viewBox.w;
-    const my = viewBox.y + ((e.clientY - rect.top) / rect.height) * viewBox.h;
-    setViewBox((prev) => ({
-      x: prev.x + (mx - prev.x) * (1 - factor),
-      y: prev.y + (my - prev.y) * (1 - factor),
-      w: prev.w * factor, h: prev.h * factor,
+    const links = triples.map((tr, i) => ({
+      source: tr.subject,
+      target: tr.object,
+      value: tr.predicate,
+      lineStyle: {
+        color: getEdgeColor(tr.predicate),
+        width: 1.5,
+        curveness: 0.15,
+        opacity: 0.7,
+      },
+      label: {
+        show: true,
+        formatter: tr.predicate,
+        fontSize: 10,
+        color: chartTheme.textSecondary,
+        backgroundColor: chartTheme.bgPrimary + 'dd',
+        padding: [2, 4],
+        borderRadius: 3,
+      },
+      emphasis: {
+        lineStyle: { width: 3, opacity: 1 },
+        label: { fontSize: 12, fontWeight: 'bold' },
+      },
     }));
-  }, [viewBox]);
 
-  const zoomIn = () => setViewBox((v) => ({ x: v.x + v.w * 0.05, y: v.y + v.h * 0.05, w: v.w * 0.9, h: v.h * 0.9 }));
-  const zoomOut = () => setViewBox((v) => ({ x: v.x - v.w * 0.05, y: v.y - v.h * 0.05, w: v.w * 1.1, h: v.h * 1.1 }));
-  const resetView = () => {
-    if (nodes.length > 0) {
-      const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
-      const pad = 60;
-      setViewBox({
-        x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
-        w: Math.max(...xs) - Math.min(...xs) + pad * 2,
-        h: Math.max(...ys) - Math.min(...ys) + pad * 2,
-      });
+    const categories = [
+      { name: t('bible.importance.protagonist'), itemStyle: { color: '#ef4444' } },
+      { name: t('bible.importance.major'), itemStyle: { color: '#f59e0b' } },
+      { name: t('bible.importance.supporting'), itemStyle: { color: '#3b82f6' } },
+      { name: t('bible.importance.minor'), itemStyle: { color: '#9ca3af' } },
+    ];
+
+    return {
+      tooltip: {
+        trigger: 'item',
+        ...chartTooltipStyle(chartTheme),
+        formatter: (params: any) => {
+          if (params.dataType === 'node') {
+            const char = charMap.get(params.name);
+            const imp = char?.importance || 'supporting';
+            const desc = char?.description?.slice(0, 80) || '';
+            return `<b>${params.name}</b><br/>` +
+              `<span style="color:${IMPORTANCE_COLOR[imp]}">${t('bible.importance.' + imp) || imp}</span>` +
+              (desc ? `<br/><span style="color:#888;font-size:11px">${desc}…</span>` : '');
+          }
+          if (params.dataType === 'edge') {
+            return `${params.data.source} → <b>${params.data.value}</b> → ${params.data.target}`;
+          }
+          return '';
+        },
+      },
+      legend: {
+        data: categories.map((c) => c.name),
+        bottom: 0,
+        left: 'center',
+        ...chartLegendStyle(chartTheme),
+      },
+      series: [{
+        type: 'graph',
+        layout: 'force',
+        animation: true,
+        animationDuration: 800,
+        animationEasingUpdate: 'quinticInOut',
+        data: nodes,
+        links,
+        categories,
+        roam: true,
+        draggable: true,
+        force: {
+          repulsion: 400,
+          gravity: 0.08,
+          edgeLength: [80, 200],
+          layoutAnimation: true,
+        },
+        emphasis: {
+          focus: 'adjacency',
+          lineStyle: { width: 3 },
+        },
+        blur: {
+          itemStyle: { opacity: 0.2 },
+          lineStyle: { opacity: 0.1 },
+        },
+        selectedMode: 'single',
+        select: {
+          itemStyle: { borderWidth: 3, borderColor: '#3b82f6' },
+        },
+      }],
+    };
+  }, [characters, triples, chartTheme, t]);
+
+  const handleChartClick = useCallback((params: any) => {
+    if (params.dataType === 'node') {
+      const char = characters.find((c) => c.name === params.name);
+      setSelectedChar(char ?? null);
     }
-  };
+  }, [characters]);
+
+  const handleResetZoom = useCallback(() => {
+    const chart = echartRef?.getEchartsInstance();
+    if (chart) {
+      chart.dispatchAction({ type: 'restore' });
+    }
+  }, [echartRef]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -228,113 +263,29 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
       }}>
         <span><TeamOutlined style={{ marginRight: 6 }} />{t('relationGraph.title')}</span>
         <Space size={4}>
-          <Badge count={nodes.length} style={{ backgroundColor: '#3b82f6' }} />
-          <Badge count={edges.length} style={{ backgroundColor: '#22c55e' }} />
-          <Button size="small" icon={<ZoomInOutlined />} onClick={zoomIn} />
-          <Button size="small" icon={<ZoomOutOutlined />} onClick={zoomOut} />
-          <Button size="small" icon={<FullscreenOutlined />} onClick={resetView} />
+          <Badge count={charSet.size} style={{ backgroundColor: '#3b82f6' }} />
+          <Badge count={triples.length} style={{ backgroundColor: '#22c55e' }} />
+          <Button size="small" icon={<FullscreenOutlined />} onClick={handleResetZoom} />
         </Space>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-        {nodes.length === 0 ? (
+      <div style={{ flex: 1, overflow: 'hidden' }}>
+        {!option ? (
           <div style={{ padding: 40 }}>
-            <Empty description={t('relationGraph.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            <Empty description={characters.length === 0 ? t('relationGraph.empty') : t('relationGraph.noData')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           </div>
         ) : (
-          <>
-            <svg
-              ref={svgRef}
-              width="100%" height="100%"
-              viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-              style={{ cursor: 'grab', background: 'var(--bg-secondary, rgba(0,0,0,0.02))' }}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              onWheel={handleWheel}
-            >
-              {/* Edges */}
-              {edges.map((edge, i) => {
-                const srcPos = getPos(edge.source), tgtPos = getPos(edge.target);
-                return (
-                  <g key={`edge-${i}`}>
-                    <line x1={srcPos.x} y1={srcPos.y} x2={tgtPos.x} y2={tgtPos.y}
-                      stroke="var(--border-secondary, #999)" strokeWidth={1.5} />
-                    <text
-                      x={(srcPos.x + tgtPos.x) / 2} y={(srcPos.y + tgtPos.y) / 2 - 6}
-                      textAnchor="middle"
-                      style={{ fontSize: 9, fill: 'var(--text-secondary, #666)', pointerEvents: 'none' }}
-                    >
-                      {edge.predicate.length > 8 ? edge.predicate.slice(0, 8) + '…' : edge.predicate}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* Nodes */}
-              {nodes.map((node) => {
-                const pos = getPos(node.id);
-                const color = IMPORTANCE_COLOR[node.importance] || '#9ca3af';
-                const isSelected = selectedChar?.name === node.id;
-                const nodeR = Math.max(8, Math.min(18, viewBox.w * 0.015));
-                return (
-                  <g
-                    key={node.id}
-                    data-node-id={node.id}
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => {
-                      const char = characters.find((c) => c.name === node.id);
-                      setSelectedChar(char ?? null);
-                    }}
-                  >
-                    {isSelected && (
-                      <circle cx={pos.x} cy={pos.y} r={nodeR + 6} fill="none" stroke={color} strokeWidth={2} opacity={0.4} />
-                    )}
-                    <circle cx={pos.x} cy={pos.y} r={nodeR}
-                      fill={isSelected ? color : 'var(--bg-primary, #fff)'}
-                      stroke={color} strokeWidth={2} />
-                    <text x={pos.x} y={pos.y + 1} textAnchor="middle" dominantBaseline="middle"
-                      style={{ fontSize: Math.max(8, nodeR * 0.7), fill: isSelected ? '#fff' : color, fontWeight: 600, pointerEvents: 'none' }}>
-                      {node.name.slice(0, 2)}
-                    </text>
-                    <text x={pos.x} y={pos.y + nodeR + Math.max(10, viewBox.w * 0.012)}
-                      textAnchor="middle"
-                      style={{ fontSize: Math.max(8, viewBox.w * 0.01), fill: 'var(--text-secondary, #666)', pointerEvents: 'none' }}>
-                      {node.name}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Legend */}
-            <div style={{
-              position: 'absolute', bottom: 8, left: 8,
-              display: 'flex', gap: 4,
-              background: 'var(--bg-primary, rgba(255,255,255,0.9))',
-              padding: '2px 8px', borderRadius: 4,
-            }}>
-              <Tag color="red" style={{ fontSize: 9, margin: 0 }}>{t('bible.importance.protagonist')}</Tag>
-              <Tag color="orange" style={{ fontSize: 9, margin: 0 }}>{t('bible.importance.major')}</Tag>
-              <Tag color="blue" style={{ fontSize: 9, margin: 0 }}>{t('bible.importance.supporting')}</Tag>
-              <Tag style={{ fontSize: 9, margin: 0 }}>{t('bible.importance.minor')}</Tag>
-            </div>
-
-            {/* Pan/zoom hint */}
-            <div style={{
-              position: 'absolute', bottom: 8, right: 8,
-              fontSize: 9, color: 'var(--text-tertiary, #aaa)',
-              background: 'var(--bg-primary, rgba(255,255,255,0.9))',
-              padding: '2px 6px', borderRadius: 4,
-            }}>
-              {t('knowledgeGraph.panZoomHint')}
-            </div>
-          </>
+          <ReactECharts
+            ref={(e) => setEchartRef(e)}
+            option={option}
+            style={{ height: '100%', width: '100%' }}
+            onEvents={{ click: handleChartClick }}
+            opts={{ renderer: 'canvas' }}
+            notMerge
+          />
         )}
       </div>
 
-      {/* Character detail drawer */}
       <Drawer
         title={selectedChar?.name ?? ''}
         open={!!selectedChar}
@@ -345,7 +296,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div>
               <Tag color={IMPORTANCE_COLOR[selectedChar.importance] || 'default'}>
-                {selectedChar.importance}
+                {t('bible.importance.' + selectedChar.importance) || selectedChar.importance}
               </Tag>
               <Tag>{selectedChar.status}</Tag>
             </div>
@@ -354,14 +305,19 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
                 <Text style={{ fontSize: 12 }}>{selectedChar.description.slice(0, 200)}</Text>
               </Card>
             )}
+            {selectedChar.personality && (
+              <Card size="small" title={t('bible.characterPersonality')}>
+                <Text style={{ fontSize: 12 }}>{selectedChar.personality}</Text>
+              </Card>
+            )}
             {relatedTriples.length > 0 && (
               <Card size="small" title={t('bible.characterRelationships')}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {relatedTriples.map((tr, i) => (
-                    <div key={i} style={{ fontSize: 11 }}>
-                      <Tag color="blue" style={{ fontSize: 9 }}>{tr.subject}</Tag>
-                      <span style={{ color: 'var(--text-secondary)' }}>→ {tr.predicate} →</span>
-                      <Tag color="green" style={{ fontSize: 9 }}>{tr.object}</Tag>
+                    <div key={i} style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Tag color="blue" style={{ fontSize: 9, margin: 0 }}>{tr.subject}</Tag>
+                      <span style={{ color: getEdgeColor(tr.predicate), fontWeight: 500 }}>{tr.predicate}</span>
+                      <Tag color="green" style={{ fontSize: 9, margin: 0 }}>{tr.object}</Tag>
                     </div>
                   ))}
                 </div>
