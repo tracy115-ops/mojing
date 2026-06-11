@@ -48,6 +48,7 @@ export interface RewriteResult {
 
 const STORAGE_KEY_PREFIX = 'mojing-quality-gate:directives:';
 const REWRITE_THRESHOLD = 60;
+const HUMAN_INTERVENTION_THRESHOLD = 40;
 const MAX_REWRITE_ATTEMPTS = 2;
 
 export class QualityGateService {
@@ -130,14 +131,16 @@ export class QualityGateService {
 
   /**
    * Check if quality gate result warrants a targeted rewrite.
-   * Returns true if there are critical issues or score is below threshold.
+   * Only triggers rewrite when score is genuinely low or has severe unfixed issues.
+   * High scores with minor critical issues are allowed through with directives only.
    */
   needsRewrite(result: QualityGateResult): boolean {
     if (result.overallScore < REWRITE_THRESHOLD) return true;
-    const hasCritical = result.dimensions.some(
-      (d) => d.issues.some((i) => i.severity === 'critical' && !i.autoFixed),
+    // Only rewrite if multiple dimensions are critically failing
+    const criticalDims = result.dimensions.filter(
+      (d) => d.score < 40 && d.issues.some((i) => i.severity === 'critical' && !i.autoFixed),
     );
-    return hasCritical;
+    return criticalDims.length >= 2;
   }
 
   /**
@@ -219,8 +222,8 @@ export class QualityGateService {
       }
     }
 
-    const stillBad = this.needsRewrite(lastResult);
-    const unresolvedIssues = stillBad
+    const stillBad = lastResult.overallScore < HUMAN_INTERVENTION_THRESHOLD;
+    const unresolvedIssues = stillBad || this.needsRewrite(lastResult)
       ? lastResult.dimensions
           .flatMap((d) => d.issues
             .filter((i) => i.severity === 'critical' || i.severity === 'warning')
