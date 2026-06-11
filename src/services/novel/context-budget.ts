@@ -167,6 +167,48 @@ export class ContextBudgetAllocator {
     });
   }
 
+  // --- T0: Active character states from aftermath ---
+
+  registerCharacterStates(text: string): void {
+    this.registerSlot({
+      name: 'CHARACTER_STATES',
+      tier: 'T0',
+      content: text,
+      estimatedTokens: this.estimateTokens(text),
+      maxTokens: 600,
+      minTokens: 0,
+      priority: 112,
+    });
+  }
+
+  // --- T0: Recent relationship changes ---
+
+  registerRelationshipTriples(text: string): void {
+    this.registerSlot({
+      name: 'RELATIONSHIP_TRIPLES',
+      tier: 'T0',
+      content: text,
+      estimatedTokens: this.estimateTokens(text),
+      maxTokens: 500,
+      minTokens: 0,
+      priority: 109,
+    });
+  }
+
+  // --- T0: Multi-chapter previously on ---
+
+  registerMultiChapterRecap(text: string): void {
+    this.registerSlot({
+      name: 'MULTI_CHAPTER_RECAP',
+      tier: 'T0',
+      content: text,
+      estimatedTokens: this.estimateTokens(text),
+      maxTokens: 800,
+      minTokens: 0,
+      priority: 106,
+    });
+  }
+
   // --- T0: New fine-grained slots (V2) ---
 
   registerLifecycleDirective(phase: StoryPhase, chapterIndex: number, totalChapters: number): void {

@@ -831,7 +831,7 @@ export class AutopilotEngine {
     // T1 slots
     this.budget.registerChapterOutline(outline);
 
-    // T2 slots
+    // T2 slots — previous chapter content (last 1500 chars)
     const prevContent = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-1)
@@ -839,13 +839,44 @@ export class AutopilotEngine {
       .join('\n');
     if (prevContent) this.budget.registerPreviousChapter(prevContent);
 
-    // T0: Previously On — summary of what happened in the last chapter
+    // T0: Previously On — last chapter summary
     const prevChapterSummary = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-1)
       .map((c) => `第${c.order + 1}章 "${c.title}": ${c.outline || c.content.slice(0, 300)}`)
       .join('\n');
     if (prevChapterSummary) this.budget.registerPreviouslyOn(prevChapterSummary);
+
+    // T0: Multi-chapter recap — last 3-5 chapters' summaries for continuity
+    const recentChapters = this.config.getChapters()
+      .filter((c) => c.order < chapterIndex && c.content)
+      .slice(-5);
+    if (recentChapters.length > 1) {
+      const recapLines = recentChapters.map((c) =>
+        `第${c.order + 1}章 "${c.title}": ${c.outline || c.content.slice(0, 150)}`
+      );
+      this.budget.registerMultiChapterRecap(`【近期剧情回顾（最近${recapLines.length}章）】\n${recapLines.join('\n')}`);
+    }
+
+    // T0: Character states from aftermath — location, emotion, knowledge
+    const charStates = this.repo.loadCharacterStates();
+    if (charStates.length > 0) {
+      const stateLines = charStates.slice(0, 8).map((cs) => {
+        const parts = [cs.characterId];
+        if (cs.emotionalState) parts.push(`情绪:${cs.emotionalState}`);
+        if (cs.location) parts.push(`位于:${cs.location}`);
+        if (cs.knowledge && cs.knowledge.length > 0) parts.push(`已知:${cs.knowledge.slice(0, 3).join(',')}`);
+        return `- ${parts.join(' | ')}`;
+      });
+      this.budget.registerCharacterStates(`【角色当前状态】\n${stateLines.join('\n')}`);
+    }
+
+    // T0: Recent relationship triples — who knows whom, how they relate
+    const triples = this.repo.loadTriples();
+    if (triples.length > 0) {
+      const tripleLines = triples.slice(-15).map((t) => `${t.subject}—${t.predicate}→${t.object}`);
+      this.budget.registerRelationshipTriples(`【人物关系】\n${tripleLines.join('\n')}`);
+    }
 
     // T0: Debt Due — inject due foreshadows/debts as [MUST_RESOLVE] blocks
     const topDue = this.foreshadowing.getTopDue(chapterIndex, 2, 3);
@@ -869,12 +900,16 @@ export class AutopilotEngine {
       }
     }
 
-    // T0: Scars & Motivations — active character motivations
+    // T0: Scars & Motivations — character motivations from bible + recent states
     const bible = this.repo.loadBible();
     const activeMotivations = bible.characters
       .filter((c) => c.importance === 'protagonist' || c.importance === 'major')
       .slice(0, 5)
-      .map((c) => `${c.name}: ${c.backstory || c.description}`)
+      .map((c) => {
+        const state = charStates.find((s) => s.characterId === c.name);
+        const stateStr = state?.emotionalState ? ` [当前:${state.emotionalState}]` : '';
+        return `${c.name}${stateStr}: ${c.backstory || c.description}`;
+      })
       .join('\n');
     if (activeMotivations) {
       this.budget.registerScarsAndMotivations(`【角色驱动力】\n${activeMotivations}`);
