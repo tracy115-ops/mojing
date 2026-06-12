@@ -896,6 +896,7 @@ const NovelView: React.FC = () => {
               {/* Autopilot toolbar */}
               {activeProjectId && (
                 <AutopilotPanel
+                  key={activeProjectId}
                   novelId={activeProjectId}
                   novelTitle={activeProject.title}
                   genre={novelMeta?.genre ?? 'fantasy'}
@@ -948,6 +949,7 @@ const NovelView: React.FC = () => {
                         position="left"
                       />
                       <NarrativeWorkbench
+                        key={activeProjectId}
                         novelId={activeProjectId}
                         totalChapters={chapters.length}
                         currentChapter={chapters.filter((c) => c.content).length}
