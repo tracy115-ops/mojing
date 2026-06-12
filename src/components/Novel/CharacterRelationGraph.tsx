@@ -3,7 +3,7 @@
 // PlotPilot-inspired interactive visualization with importance coloring
 // ============================================================================
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { Typography, Tag, Space, Empty, Badge, Drawer, Card, Button } from 'antd';
 import {
   TeamOutlined, ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
@@ -14,6 +14,7 @@ import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { BibleCharacter, RelationshipTriple } from '@/types/narrative';
 import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
+import { useEchartsReady } from '@/hooks/useEchartsReady';
 
 const { Text } = Typography;
 
@@ -53,7 +54,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
   const { t } = useTranslation();
   const chartTheme = useChartTheme();
   const [selectedChar, setSelectedChar] = useState<BibleCharacter | null>(null);
-  const [echartRef, setEchartRef] = useState<ReactECharts | null>(null);
+  const echartRef = useRef<ReactECharts | null>(null);
 
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
 
@@ -125,6 +126,8 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
 
     const charMap = new Map(characters.map((c) => [c.name, c]));
 
+    const importanceToIdx: Record<string, number> = { protagonist: 0, major: 1, supporting: 2, minor: 3 };
+
     const nodes = Array.from(activeNames).map((name) => {
       const char = charMap.get(name);
       const importance = char?.importance || 'supporting';
@@ -145,7 +148,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
           fontWeight: importance === 'protagonist' ? 'bold' : 'normal',
           color: chartTheme.textPrimary,
         },
-        category: importance,
+        category: importanceToIdx[importance] ?? 2,
         value: importance === 'protagonist' ? 4 : importance === 'major' ? 3 : importance === 'supporting' ? 2 : 1,
       };
     });
@@ -219,10 +222,11 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
         roam: true,
         draggable: true,
         force: {
-          repulsion: 400,
-          gravity: 0.08,
-          edgeLength: [80, 200],
+          repulsion: 240,
+          gravity: 0.15,
+          edgeLength: [40, 110],
           layoutAnimation: true,
+          friction: 0.6,
         },
         emphasis: {
           focus: 'adjacency',
@@ -240,6 +244,8 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
     };
   }, [characters, triples, chartTheme, t]);
 
+  useEchartsReady(echartRef, option);
+
   const handleChartClick = useCallback((params: any) => {
     if (params.dataType === 'node') {
       const char = characters.find((c) => c.name === params.name);
@@ -248,11 +254,11 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
   }, [characters]);
 
   const handleResetZoom = useCallback(() => {
-    const chart = echartRef?.getEchartsInstance();
+    const chart = echartRef.current?.getEchartsInstance();
     if (chart) {
       chart.dispatchAction({ type: 'restore' });
     }
-  }, [echartRef]);
+  }, []);
 
   return (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -277,7 +283,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
           </div>
         ) : (
           <ReactECharts
-            ref={(e) => setEchartRef(e)}
+            ref={(e) => { echartRef.current = e; }}
             option={option}
             style={{ height: '100%', width: '100%' }}
             onEvents={{ click: handleChartClick }}

@@ -3,7 +3,7 @@
 // PlotPilot-inspired: entity-type coloring, contradiction warnings, search
 // ============================================================================
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip, Alert } from 'antd';
 import {
   ApartmentOutlined, PlusOutlined, DeleteOutlined, SearchOutlined,
@@ -16,6 +16,7 @@ import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { KnowledgeGraphEngine } from '@/services/novel/knowledge-graph';
 import type { RelationshipTriple } from '@/types/narrative';
 import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
+import { useEchartsReady } from '@/hooks/useEchartsReady';
 
 const { Text } = Typography;
 
@@ -58,22 +59,51 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
   const kgEngine = useMemo(() => new KnowledgeGraphEngine(novelId), [novelId]);
 
-  const [triples, setTriples] = useState<RelationshipTriple[]>(() => repo.loadTriples());
+  const [rawTriples, setRawTriples] = useState<RelationshipTriple[]>(() => repo.loadTriples());
   const [searchQuery, setSearchQuery] = useState('');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [contradictions, setContradictions] = useState(() => kgEngine.detectContradictions());
-  const [echartRef, setEchartRef] = useState<ReactECharts | null>(null);
+  const echartRef = useRef<ReactECharts | null>(null);
   const [form] = Form.useForm();
 
-  // Character/location name sets for entity typing
-  const { charNames, locNames } = useMemo(() => {
+  // Character/location name sets for entity typing + Bible-derived relationships
+  const { charNames, locNames, bibleTriples } = useMemo(() => {
     const bible = repo.loadBible();
-    return {
-      charNames: new Set(bible.characters.map((c) => c.name)),
-      locNames: new Set(bible.locations.map((l) => l.name)),
-    };
+    const charNameToId = new Map(bible.characters.map((c) => [c.id, c.name]));
+    const names = new Set(bible.characters.map((c) => c.name));
+    const locs = new Set(bible.locations.map((l) => l.name));
+    const derived: RelationshipTriple[] = [];
+    for (const char of bible.characters) {
+      for (const rel of char.relationships) {
+        const targetName = charNameToId.get(rel.targetCharacterId) || rel.targetCharacterId;
+        if (names.has(targetName)) {
+          derived.push({
+            subject: char.name,
+            predicate: rel.type,
+            object: targetName,
+            sinceChapter: rel.sinceChapter,
+            source: 'bible',
+          });
+        }
+      }
+    }
+    return { charNames: names, locNames: locs, bibleTriples: derived };
   }, [repo]);
+
+  // Merge extracted triples with Bible-derived ones (dedup by subject|predicate|object)
+  const triples = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: RelationshipTriple[] = [];
+    for (const tr of [...rawTriples, ...bibleTriples]) {
+      const k = `${tr.subject}|${tr.predicate}|${tr.object}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        merged.push(tr);
+      }
+    }
+    return merged;
+  }, [rawTriples, bibleTriples]);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return triples;
@@ -106,6 +136,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       connectionCount.set(tr.object, (connectionCount.get(tr.object) ?? 0) + 1);
     }
 
+    const typeToIdx: Record<string, number> = { character: 0, location: 1, unknown: 2 };
+
     const nodes = Array.from(entitySet.entries()).map(([id, type]) => {
       const conns = connectionCount.get(id) ?? 1;
       const size = Math.max(20, Math.min(50, 15 + conns * 6));
@@ -126,7 +158,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           fontWeight: conns > 3 ? 'bold' : 'normal',
           color: chartTheme.textPrimary,
         },
-        category: type,
+        category: typeToIdx[type] ?? 2,
       };
     });
 
@@ -198,10 +230,11 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         roam: true,
         draggable: true,
         force: {
-          repulsion: 350,
-          gravity: 0.06,
-          edgeLength: [60, 180],
+          repulsion: 220,
+          gravity: 0.15,
+          edgeLength: [40, 110],
           layoutAnimation: true,
+          friction: 0.6,
         },
         emphasis: {
           focus: 'adjacency',
@@ -215,6 +248,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
     };
   }, [filtered, charNames, locNames, selectedNode, chartTheme, t]);
 
+  useEchartsReady(echartRef, option);
+
   const handleChartClick = useCallback((params: any) => {
     if (params.dataType === 'node') {
       setSelectedNode((prev) => prev === params.name ? null : params.name);
@@ -224,7 +259,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   const handleRunInference = useCallback(() => {
     const result = kgEngine.runInference();
     const updated = repo.loadTriples();
-    setTriples(updated);
+    setRawTriples(updated);
     setContradictions(kgEngine.detectContradictions());
     if (result.newTriples.length > 0) {
       message.success(t('knowledgeGraph.inferenceResult', { count: result.newTriples.length }));
@@ -234,9 +269,9 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   }, [kgEngine, repo, t]);
 
   const handleResetZoom = useCallback(() => {
-    const chart = echartRef?.getEchartsInstance();
+    const chart = echartRef.current?.getEchartsInstance();
     if (chart) chart.dispatchAction({ type: 'restore' });
-  }, [echartRef]);
+  }, []);
 
   const handleAdd = async () => {
     const values = await form.validateFields();
@@ -247,8 +282,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       sinceChapter: 0,
       source: 'bible',
     };
-    const updated = [...triples, newTriple];
-    setTriples(updated);
+    const updated = [...rawTriples, newTriple];
+    setRawTriples(updated);
     repo.saveTriples(updated);
     setAddModalOpen(false);
     form.resetFields();
@@ -256,8 +291,13 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   };
 
   const handleDelete = (index: number) => {
-    const updated = triples.filter((_, i) => i !== index);
-    setTriples(updated);
+    // Note: index refers to position in the merged list; we delete the matching raw triple
+    const target = triples[index];
+    if (!target) return;
+    const updated = rawTriples.filter(
+      (t) => !(t.subject === target.subject && t.predicate === target.predicate && t.object === target.object),
+    );
+    setRawTriples(updated);
     repo.saveTriples(updated);
   };
 
@@ -317,7 +357,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           </div>
         ) : (
           <ReactECharts
-            ref={(e) => setEchartRef(e)}
+            ref={(e) => { echartRef.current = e; }}
             option={option}
             style={{ height: '100%', width: '100%' }}
             onEvents={{ click: handleChartClick }}

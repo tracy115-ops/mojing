@@ -3,7 +3,7 @@
 // Shows the generation pipeline as connected nodes with progress animation
 // ============================================================================
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { Typography, Tag, Space, Empty, Badge, Tooltip, Button } from 'antd';
 import {
   RocketOutlined, GlobalOutlined, FileTextOutlined, EditOutlined,
@@ -15,6 +15,7 @@ import { useTranslation } from '@/i18n';
 import { useAutopilotStore } from '@/stores/autopilotStore';
 import type { AutopilotState } from '@/types/pipeline';
 import { useChartTheme } from '@/hooks/useChartTheme';
+import { useEchartsReady } from '@/hooks/useEchartsReady';
 
 interface AutopilotPipelineViewProps {
   novelId: string;
@@ -166,6 +167,9 @@ const AutopilotPipelineView: React.FC<AutopilotPipelineViewProps> = ({ novelId }
     };
   }, [currentStage, status, chartTheme, t]);
 
+  const pipelineChartRef = useRef<ReactECharts | null>(null);
+  useEchartsReady(pipelineChartRef, chartOption);
+
   const isActive = status === 'running' || status === 'paused';
 
   return (
@@ -194,6 +198,7 @@ const AutopilotPipelineView: React.FC<AutopilotPipelineViewProps> = ({ novelId }
             {/* Pipeline chart */}
             <div style={{ height: 100, border: '1px solid var(--border-secondary)', borderRadius: 8, overflow: 'hidden' }}>
               <ReactECharts
+                ref={(e) => { pipelineChartRef.current = e; }}
                 option={chartOption}
                 style={{ height: '100%', width: '100%' }}
                 opts={{ renderer: 'svg' }}

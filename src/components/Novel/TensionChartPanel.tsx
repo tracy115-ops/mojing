@@ -3,7 +3,7 @@
 // Uses ECharts for interactive chart rendering
 // ============================================================================
 
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { Card, Row, Col, Tag, Space, Typography, Statistic, Tooltip, Button, Empty, Select, message } from 'antd';
 import {
   LineChartOutlined, FireOutlined, ThunderboltOutlined,
@@ -17,6 +17,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';
 import type { TensionPoint, TensionDimensions } from '@/types/narrative';
 import { useChartTheme } from '@/hooks/useChartTheme';
+import { useEchartsReady } from '@/hooks/useEchartsReady';
 
 const { Text } = Typography;
 
@@ -270,6 +271,9 @@ const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
     };
   }, [points, chartTheme, t]);
 
+  const tensionChartRef = useRef<ReactECharts | null>(null);
+  useEchartsReady(tensionChartRef, chartOption);
+
   // Empty state with chapter selector
   if (contentChapters.length === 0) {
     return (
@@ -396,6 +400,7 @@ const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
             <Card size="small" style={{ padding: 0 }}>
               {chartOption && (
                 <ReactECharts
+                  ref={(e) => { tensionChartRef.current = e; }}
                   option={chartOption}
                   style={{ height: 220 }}
                   opts={{ renderer: 'svg' }}
