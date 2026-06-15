@@ -184,14 +184,14 @@ export class AntiAIAuditor {
     }
 
     // Normalize to 0-100 score (100 = no AI patterns detected)
-    // Gentler scoring: tolerate a few clichés, only penalize dense AI patterns
+    // Strict curve: 1+ per thousand starts penalizing, 3+ per thousand is severe.
+    // Previous curve tolerated 2 per thousand which let heavy AI tone slip through.
     const contentLength = Math.max(1, content.length);
     const perThousand = rawScore / (contentLength / 1000);
-    // Soft penalty curve: 0-2 per thousand barely penalized, heavy penalty above 6
     const score = Math.max(0, Math.round(
-      perThousand <= 2 ? 100 - perThousand * 3  // 0→100, 2→94
-      : perThousand <= 5 ? 94 - (perThousand - 2) * 6  // 2→94, 5→76
-      : 76 - (perThousand - 5) * 10  // 5→76, drops faster
+      perThousand <= 1 ? 100 - perThousand * 8       // 0→100, 1→92
+      : perThousand <= 3 ? 92 - (perThousand - 1) * 12  // 1→92, 3→68
+      : 68 - (perThousand - 3) * 15                      // 3→68, drops fast
     ));
 
     // Determine severity

@@ -414,7 +414,7 @@ export class AutopilotEngine {
       }),
       responseFormat: 'json',
       temperature: 0.8,
-      maxTokens: 1024,
+      maxTokens: 2048,
     };
 
     const response = await providerRouter.generate(request);
@@ -719,7 +719,7 @@ export class AutopilotEngine {
         taskType: 'generation',
         systemPrompt,
         userPrompt,
-        temperature: 0.85,
+        temperature: 0.75,
         maxTokens: Math.min(4096, Math.ceil(adjustedTarget * 1.5)),
       };
 

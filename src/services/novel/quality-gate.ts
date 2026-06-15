@@ -49,7 +49,7 @@ export interface RewriteResult {
 const STORAGE_KEY_PREFIX = 'mojing-quality-gate:directives:';
 const REWRITE_THRESHOLD = 60;
 const HUMAN_INTERVENTION_THRESHOLD = 40;
-const MAX_REWRITE_ATTEMPTS = 1;
+const MAX_REWRITE_ATTEMPTS = 2;
 
 export class QualityGateService {
   private novelId: string;
@@ -197,39 +197,59 @@ export class QualityGateService {
     content: string,
     onAttempt?: (attempt: number, score: number, rewritten: boolean) => void,
   ): Promise<RewriteResult> {
-    const initialResult = await this.evaluateChapter(chapterNumber, content);
     let currentContent = content;
+    let currentResult = await this.evaluateChapter(chapterNumber, content);
     let attempts = 0;
+    let bestContent = content;
+    let bestScore = currentResult.overallScore;
 
-    if (this.needsRewrite(initialResult)) {
-      attempts = 1;
-      onAttempt?.(attempts, initialResult.overallScore, false);
+    // Iteratively rewrite while quality is below threshold and attempts remain.
+    // After each rewrite, re-evaluate and keep the best-scoring version
+    // (rewrite can introduce new problems — never accept a regression).
+    while (this.needsRewrite(currentResult) && attempts < MAX_REWRITE_ATTEMPTS) {
+      attempts += 1;
+      onAttempt?.(attempts, currentResult.overallScore, false);
 
       try {
-        const rewritten = await this.rewriteChapter(chapterNumber, content, initialResult);
-        if (rewritten.length > content.length * 0.5) {
-          currentContent = rewritten;
-          onAttempt?.(attempts, initialResult.overallScore, true);
+        const rewritten = await this.rewriteChapter(chapterNumber, currentContent, currentResult);
+        if (rewritten.length < currentContent.length * 0.5) {
+          // Rewrite produced garbage; abort the loop.
+          break;
+        }
+        currentContent = rewritten;
+
+        // Re-evaluate the rewritten version
+        const postScore = await this.evaluateChapter(chapterNumber, currentContent);
+        onAttempt?.(attempts, postScore.overallScore, true);
+
+        if (postScore.overallScore > bestScore) {
+          bestContent = currentContent;
+          bestScore = postScore.overallScore;
+          currentResult = postScore;
+        } else {
+          // Rewrite didn't improve; revert and stop to avoid wasting more attempts.
+          currentContent = bestContent;
+          break;
         }
       } catch (err) {
         console.warn('QualityGate: rewrite attempt failed', err);
+        break;
       }
     }
 
-    // Only pause if original was catastrophically bad
-    const needsHuman = initialResult.overallScore < HUMAN_INTERVENTION_THRESHOLD;
+    const needsHuman = bestScore < HUMAN_INTERVENTION_THRESHOLD;
     const unresolvedIssues = needsHuman
-      ? initialResult.dimensions
+      ? currentResult.dimensions
           .flatMap((d) => d.issues
             .filter((i) => i.severity === 'critical' || i.severity === 'warning')
             .map((i) => `[${d.dimension}] ${i.description}`))
       : [];
 
     return {
-      rewrittenContent: currentContent,
+      rewrittenContent: bestContent,
       attempts,
-      finalScore: initialResult.overallScore,
-      improved: currentContent !== content,
+      finalScore: bestScore,
+      improved: bestContent !== content,
       needsHumanIntervention: needsHuman,
       unresolvedIssues,
     };
