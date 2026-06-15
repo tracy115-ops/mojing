@@ -3,6 +3,8 @@ use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState, TrayIconEvent}
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 
+mod ffmpeg;
+
 #[tauri::command]
 async fn write_export_file(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, &content).map_err(|e| e.to_string())
@@ -15,7 +17,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![write_export_file])
+        .invoke_handler(tauri::generate_handler![
+            write_export_file,
+            ffmpeg::ffmpeg_probe,
+            ffmpeg::ffmpeg_download_clip,
+            ffmpeg::ffmpeg_compose_clips
+        ])
         .setup(|app| {
             // System tray
             let show_item = MenuItemBuilder::with_id("show", "Show MoJing").build(app)?;

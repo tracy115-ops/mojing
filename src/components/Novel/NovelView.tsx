@@ -13,6 +13,7 @@ import {
   FolderOpenOutlined,
   MoreOutlined,
   InfoCircleOutlined,
+  VideoCameraOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
@@ -37,6 +38,7 @@ import NarrativeWorkbench from './NarrativeWorkbench';
 import ExportPanel from './ExportPanel';
 import ReaderPanel from './ReaderPanel';
 import NovelInfoModal from './NovelInfoModal';
+import VideoGeneratorModal from '@/components/Video/VideoGeneratorModal';
 
 const { Text } = Typography;
 
@@ -286,6 +288,7 @@ const NovelView: React.FC = () => {
   const [exportOpen, setExportOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false);
   const [collapsedVolumes, setCollapsedVolumes] = useState<Set<string>>(new Set());
   const [editingVolumeId, setEditingVolumeId] = useState<string | null>(null);
   const [editingVolumeTitle, setEditingVolumeTitle] = useState('');
@@ -979,6 +982,16 @@ const NovelView: React.FC = () => {
                       {t('workbench.toggle')}
                     </Button>
                   </Tooltip>
+                  <Tooltip title={t('video.gen.title')}>
+                    <Button
+                      size="small"
+                      icon={<VideoCameraOutlined />}
+                      disabled={chapters.filter((c) => c.content).length === 0}
+                      onClick={() => setVideoOpen(true)}
+                    >
+                      {t('video.gen.title')}
+                    </Button>
+                  </Tooltip>
                   <Tooltip title={t('reader.title')}>
                     <Button
                       size="small"
@@ -1033,6 +1046,13 @@ const NovelView: React.FC = () => {
           open={infoOpen}
           onClose={() => setInfoOpen(false)}
           projectId={activeProjectId}
+        />
+      )}
+      {activeProjectId && (
+        <VideoGeneratorModal
+          open={videoOpen}
+          onClose={() => setVideoOpen(false)}
+          defaultNovelId={activeProjectId}
         />
       )}
     </div>
