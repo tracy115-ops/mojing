@@ -1,9 +1,15 @@
 // ============================================================================
-// Video Generation Types — Phase 1 MVP
+// Video Generation Types — 完整 14 步流水线
 // ============================================================================
-// 8 步流水线：
-//   章节切片 → 分镜 prompt → (角色锚定图) → 分镜图 → I2V 生成 → TTS+字幕 → BGM → 合成
-// Phase 1 跳过角色锚定图与分镜图，直接走 T2V 简化路径。
+// 14 步:
+//   剧本处理: 1.原始内容 2.AI改写 3.提取(角色/场景/道具) 4.音色 5.分镜
+//   制作流程: 6.角色立绘 7.场景图 8.TTS 9.镜头关键帧 10.视频生成 11.音视合并
+//   导出:     12.拼接 13.字幕 14.导出
+//
+// 三种模式(见 docs/video-generation/12-dual-channel-unification.md §3):
+//   - pure:    跑步 1/10/14(纯 T2V,最小子集)
+//   - extract: 跑步 2/3/5/6/9/10/14(视觉一致性链路)
+//   - multishot: 跑完整 14 步
 
 import type { VideoProviderId, ImageProviderId } from './providers';
 
@@ -11,68 +17,274 @@ import type { VideoProviderId, ImageProviderId } from './providers';
 
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 
+// --- Source Mode ---
+
+/** Direct modal 的三种模式 */
+export type DirectSourceMode = 'pure' | 'extract' | 'multishot';
+
 // --- Pipeline Stages ---
 
 export type VideoStage =
   | 'idle'
-  | 'script_slicing'        // 章节切片为镜头
-  | 'storyboard_prompt'     // 生成分镜 prompt
-  | 'character_anchor'      // (Phase 2) 角色锚定图
-  | 'storyboard_image'      // (Phase 2) 分镜图
-  | 'video_generation'      // T2V 或 I2V 生成
-  | 'voice_subtitle'        // TTS 配音 + 字幕
-  | 'composing'             // FFmpeg 合成
+  | 'script_slicing'        // 步 1:章节切片
+  | 'storyboard_prompt'     // 步 2+5:LLM 改写 + 分镜
+  | 'extraction'            // 步 3:提取角色/场景/道具(新)
+  | 'voice_assignment'      // 步 4:分配音色(新)
+  | 'character_anchor'      // 步 6:角色立绘
+  | 'scene_image'           // 步 7:场景图(新)
+  | 'tts'                   // 步 8:TTS 配音(新)
+  | 'keyframe_image'        // 步 9:镜头关键帧(新)
+  | 'video_generation'      // 步 10:T2V / I2V
+  | 'audio_merge'           // 步 11:音视合并(新)
+  | 'composing'             // 步 12-14:FFmpeg 拼接 + 字幕 + 导出
   | 'complete'
   | 'error';
 
 export type VideoStageStatus =
   | 'pending'
   | 'running'
-  | 'awaiting_review'  // 人工 checkpoint（如分镜图审核）
+  | 'awaiting_review'  // 人工 checkpoint
   | 'completed'
-  | 'skipped'          // Phase 1 跳过的阶段
+  | 'skipped'
   | 'error';
 
 export interface VideoStageState {
   stage: VideoStage;
   status: VideoStageStatus;
-  progress: number;       // 0-1，对当前 stage 内部进度
+  progress: number;
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  /** 该步骤所有 provider 调用(LLM/image/video/tts)的逐条记录。
+   *  由 router 自动上报、videoStore 归档。账本 = UI 三段式中第三段。 */
+  invocations?: StageInvocation[];
+  /** 该步骤总账本(router 在每次 append 后自动汇总)。 */
+  totals?: StageTotals;
+  /** 该步骤输入摘要(章节字数 / 上一步产物数 / spec 字段),UI 第一段展示。 */
+  inputSummary?: StageInputSummary;
 }
 
-// --- Storyboard (分镜) ---
+/** 单次 provider 调用的明细记录。 */
+export interface StageInvocation {
+  /** 调用类别,决定 UI 怎么展示账本。 */
+  category: 'llm' | 'image' | 'video' | 'tts';
+  provider: string;
+  model: string;
+  endpointId?: string;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  retries: number;
+  /** LLM:输入 token */
+  inputTokens?: number;
+  /** LLM:输出 token */
+  outputTokens?: number;
+  /** image:生成图片张数(目前总是 1,留扩展) */
+  imageCount?: number;
+  /** tts:合成音频时长(秒) */
+  audioSeconds?: number;
+  /** video:生成视频时长(秒) */
+  videoSeconds?: number;
+  /** 估算成本 USD(可选,目前先不填,留字段) */
+  cost?: number;
+  /** 实际发给 provider 的 prompt 全文(可折叠展开) */
+  promptPreview?: string;
+  /** 触发本次调用的源 label(如 "shot 3 character[林墨]") */
+  sourceLabel?: string;
+  error?: string;
+}
+
+/** 步骤汇总账本。 */
+export interface StageTotals {
+  calls: number;
+  durationMs: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  imageCount?: number;
+  audioSeconds?: number;
+  videoSeconds?: number;
+  cost?: number;
+}
+
+/** 步骤输入摘要(纯展示用)。 */
+export interface StageInputSummary {
+  /** 一句话描述输入,如 "3 个章节 / 共 12,345 字" */
+  headline?: string;
+  /** 详细列表项(可折叠),如章节标题 + 字数 */
+  details?: string[];
+  /** 上一步产物引用,如 "5 个分镜" */
+  upstreamArtifacts?: string;
+}
+
+// --- Core: SceneSpec (跨通道共享的剧本表示) ---
 
 /**
- * 一个分镜 = 一段最终视频镜头（典型 5s）
+ * 角色立绘的换装变体。同角色在不同场景可能有不同服装,
+ * 每个 variant 对应一张独立立绘,用于精准锚定。
  */
-export interface StoryboardShot {
+export interface CostumeVariant {
+  id: string;                    // 'default' | 'rain' | ...
+  description: string;
+  portraitImage?: string;        // 步 6 产物:base64
+}
+
+/** 步 3 提取的角色 */
+export interface CharacterAnchor {
+  id: string;                    // 'char_xxx'
+  name: string;                  // '林墨'
+  appearance: string;            // 完整外貌(gender/age/face/hair/...)
+  gender?: 'male' | 'female' | 'unknown';
+  ageGroup?: 'child' | 'teen' | 'young' | 'middle' | 'elder' | 'unknown';
+  costumeVariants?: CostumeVariant[];
+  voiceRef?: string;             // 步 4 产物:音色 ID
+  portraitImage?: string;        // 步 6 产物:default 立绘 base64
+  firstAppearShotIndex: number;
+}
+
+/** 步 3 提取的场景 */
+export interface SceneAnchor {
+  id: string;                    // 'scene_xxx'
+  name: string;                  // '咖啡馆'
+  description: string;
+  backgroundImage?: string;      // 步 7 产物:base64
+  firstAppearShotIndex: number;
+}
+
+/** 步 3 提取的关键道具(暂不生成图,只做 prompt 增强) */
+export interface PropSpec {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/** 步 5 产出的镜头(ShotSpec 与 StoryboardShot 字段对齐) */
+export interface ShotSpec {
   id: string;
   index: number;
-  /** 镜头来源（章节号 + 段落索引） */
+  /** 镜头来源(Novel 通道有,Novel 通道走 chapter-slicer) */
   sourceChapterId?: string;
-  sourceText: string;            // 原文片段
-  /** 给视频模型的 prompt（已优化，含画面、动作、镜头语言） */
+  sourceText?: string;
+  /** 步 2 产物:画面描述(T2V/I2V 都用) */
   videoPrompt: string;
-  /** 给图像模型的 prompt（Phase 2 用） */
-  imagePrompt?: string;
-  /** 镜头时长（秒） */
-  durationSeconds: number;
-  /** 旁白/对话文本（用于 TTS + 字幕） */
+  /** 步 9 产物:关键帧 base64,作为 I2V 首帧 */
+  keyframeImage?: string;
+  /** 步 5 产物:旁白 */
   narration?: string;
   dialogue?: {
     speaker: string;
     text: string;
     emotion?: string;
   }[];
-  /** 在场角色 ID 列表（用于一致性约束） */
-  characters: string[];
-  /** 拍摄位置/场景 */
+  /** 引用 CharacterAnchor.id */
+  characterIds: string[];
+  /** charId → costumeVariantId,决定该镜用哪套服装立绘 */
+  costumeVariantRefs?: Record<string, string>;
+  /** 引用 SceneAnchor.id */
+  sceneId?: string;
   location?: string;
-  /** 情绪/氛围 */
   mood?: string;
-  /** 镜头语言：close-up / wide / aerial / dolly 等 */
+  cameraMovement?: string;
+  durationSeconds: 5 | 10;
+  /** 步 8 产物:TTS 音频路径/URL */
+  audioTrack?: string;
+}
+
+/**
+ * 跨通道共享的剧本表示。不管来源是小说章节还是手写 prompt,
+ * 进入 pipeline-runner 后都是这层结构。
+ */
+export interface SceneSpec {
+  characters?: CharacterAnchor[];
+  scenes?: SceneAnchor[];
+  props?: PropSpec[];
+  shots: ShotSpec[];
+  meta: {
+    title?: string;
+    style?: string;
+    genre?: string;
+    aspectRatio: AspectRatio;
+    defaultShotDuration: 5 | 10;
+    /** 来源模式(Novel 通道填 'multishot' 语义;Direct 按用户选择) */
+    sourceMode: DirectSourceMode;
+    /** 'novel' | 'direct' */
+    channel: 'novel' | 'direct';
+  };
+}
+
+// --- Pipeline Options (用户在 UI 里勾选的可选步骤) ---
+
+export interface PipelineOptions {
+  /** 步 6:角色立绘 */
+  enableCharacterAnchor: boolean;
+  /** 步 7:场景图 */
+  enableSceneImage: boolean;
+  /** 步 8:TTS */
+  enableTTS: boolean;
+  /** 步 9:镜头关键帧 */
+  enableKeyframe: boolean;
+  /** 步 10 用 I2V(否则 T2V) */
+  enableI2V: boolean;
+  /** 步 11:音视合并 */
+  enableAudioMerge: boolean;
+  /** 步 13:字幕 */
+  enableSubtitles: boolean;
+  /** 角色立绘上限(超出未选的角色其描述拼到 prompt 里) */
+  characterAnchorLimit: number;
+}
+
+/** Direct modal 三种模式的预设开关 */
+export const DIRECT_MODE_PRESETS: Record<DirectSourceMode, PipelineOptions> = {
+  pure: {
+    enableCharacterAnchor: false,
+    enableSceneImage: false,
+    enableTTS: false,
+    enableKeyframe: false,
+    enableI2V: false,
+    enableAudioMerge: false,
+    enableSubtitles: false,
+    characterAnchorLimit: 0,
+  },
+  extract: {
+    enableCharacterAnchor: true,
+    enableSceneImage: false,
+    enableTTS: false,
+    enableKeyframe: true,
+    enableI2V: true,
+    enableAudioMerge: false,
+    enableSubtitles: false,
+    characterAnchorLimit: 5,
+  },
+  multishot: {
+    enableCharacterAnchor: true,
+    enableSceneImage: true,
+    enableTTS: true,
+    enableKeyframe: true,
+    enableI2V: true,
+    enableAudioMerge: true,
+    enableSubtitles: true,
+    characterAnchorLimit: 5,
+  },
+};
+
+// --- Storyboard (兼容旧字段,Novel 通道仍用) ---
+
+export interface StoryboardShot {
+  id: string;
+  index: number;
+  sourceChapterId?: string;
+  sourceText: string;
+  videoPrompt: string;
+  imagePrompt?: string;
+  durationSeconds: number;
+  narration?: string;
+  dialogue?: {
+    speaker: string;
+    text: string;
+    emotion?: string;
+  }[];
+  characters: string[];
+  location?: string;
+  mood?: string;
   cameraMovement?: string;
 }
 
@@ -80,19 +292,26 @@ export interface StoryboardShot {
 
 export interface GeneratedClip {
   shotId: string;
-  videoUrl: string;          // 本地路径或远程 URL
+  videoUrl: string;
   thumbnailUrl?: string;
   durationSeconds: number;
   provider: VideoProviderId;
   model: string;
-  /** 是否含原声（部分模型支持原生音频） */
   hasAudio: boolean;
   generatedAt: string;
+  /** 步 9 产物:关键帧 base64(若有) */
+  keyframeImage?: string;
+  /** 步 8/11 产物:音轨路径/URL */
+  audioTrack?: string;
+  /** 来源:'novel' | 'direct' */
+  sceneSource?: 'novel' | 'direct';
+  /** Direct 模式标记 */
+  sourceMode?: DirectSourceMode;
 }
 
 export interface GeneratedAudio {
   shotId: string;
-  audioUrl: string;          // 本地路径
+  audioUrl: string;
   durationSeconds: number;
   voiceProvider: string;
   voiceId: string;
@@ -107,52 +326,47 @@ export interface AnchorImage {
   generatedAt: string;
 }
 
-// --- Video Project (运行时状态，不入库) ---
+// --- Video Project (运行时状态) ---
 
 export interface VideoProjectState {
-  /** 关联的小说项目 ID（视频源） */
   novelProjectId: string;
-  /** 用户选定的章节 ID 列表（按顺序） */
   selectedChapterIds: string[];
-  /** 视频规格 */
   spec: VideoSpec;
-  /** 流水线状态机 */
+  /** 用户选择的步骤开关 */
+  options?: PipelineOptions;
   stages: Record<VideoStage, VideoStageState>;
-  /** 当前所在阶段 */
   currentStage: VideoStage;
-  /** 分镜结果 */
   shots: StoryboardShot[];
-  /** 角色锚定图（Phase 2） */
+  /** SceneSpec(步 3 产物,跨步复用) */
+  sceneSpec?: SceneSpec;
   anchorImages: AnchorImage[];
-  /** 生成的视频片段 */
   clips: GeneratedClip[];
-  /** 生成的配音 */
   audios: GeneratedAudio[];
-  /** 最终合成视频路径 */
   finalVideoUrl?: string;
-  /** 整体错误信息 */
+  /** Final video metadata (filled by compose step). */
+  finalDurationSeconds?: number;
+  finalSizeBytes?: number;
   error?: string;
-  /** 创建与更新时间 */
   createdAt: string;
   updatedAt: string;
 }
 
 export interface VideoSpec {
   aspectRatio: AspectRatio;
-  resolution: string;          // '1920x1080'
-  fps: number;                 // 24 / 30
-  /** 单镜头时长（秒） */
+  resolution: string;
+  fps: number;
   shotDurationSeconds: 5 | 10;
-  /** 偏好的视频模型 tier */
   videoTier: ModelTier;
-  /** 偏好的图像模型 tier（Phase 2） */
   imageTier: ModelTier;
-  /** 偏好的 TTS 模型 tier */
   ttsTier: ModelTier;
-  /** 是否硬编码字幕 */
   hardcodeSubtitles: boolean;
-  /** BGM 风格 */
   bgmStyle?: string;
+  /** Phase 2:是否启用角色立绘(默认 true) */
+  enableCharacterAnchor?: boolean;
+  /** Phase 2:是否启用场景图 */
+  enableSceneImage?: boolean;
+  /** Phase 2:是否启用 TTS */
+  enableTTS?: boolean;
 }
 
 export type ModelTier = 'free' | 'value' | 'quality' | 'premium';
@@ -162,15 +376,16 @@ export type ModelTier = 'free' | 'value' | 'quality' | 'premium';
 export const VIDEO_PIPELINE_STAGES: VideoStage[] = [
   'script_slicing',
   'storyboard_prompt',
+  'extraction',
+  'voice_assignment',
   'character_anchor',
-  'storyboard_image',
+  'scene_image',
+  'tts',
+  'keyframe_image',
   'video_generation',
-  'voice_subtitle',
+  'audio_merge',
   'composing',
 ];
 
-/** Phase 1 跳过的阶段 */
-export const PHASE1_SKIPPED_STAGES: ReadonlySet<VideoStage> = new Set([
-  'character_anchor',
-  'storyboard_image',
-]);
+/** 步骤默认跳过集合(无对应 provider 时) */
+export const DEFAULT_SKIPPED_STAGES: ReadonlySet<VideoStage> = new Set<VideoStage>([]);

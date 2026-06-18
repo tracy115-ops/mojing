@@ -5,6 +5,7 @@
 // 持久化策略：暂不 persist（重启后重建即可），避免长期堆积临时 URL。
 
 import { create } from 'zustand';
+import { logger } from '@/services/log';
 import type {
   VideoProjectState,
   VideoStage,
@@ -17,12 +18,29 @@ import type {
   AnchorImage,
   AspectRatio,
   ModelTier,
+  SceneSpec,
+  PipelineOptions,
+  StageInvocation,
+  StageTotals,
+  StageInputSummary,
 } from '@/types/video';
-import { VIDEO_PIPELINE_STAGES, PHASE1_SKIPPED_STAGES } from '@/types/video';
+import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 
 interface VideoStoreState {
   /** 按 novelProjectId 索引 */
   projects: Record<string, VideoProjectState>;
+  /** 直接生成的 clip 列表（不绑小说，用户手写 prompt 直接 T2V） */
+  directClips: GeneratedClip[];
+  /** 直接生成进行中标志 */
+  directGenerating: boolean;
+  /** 直接生成的最后错误 */
+  directError: string | undefined;
+  /**
+   * 当前在主面板展示的流水线 id（novelProjectId 或合成 direct_xxx）。
+   * 由 VideoGeneratorModal/DirectVideoModal 启动时写入,VideoPipelinePanel 据此渲染。
+   */
+  activePipelineId: string | undefined;
+  setActivePipelineId: (id: string | undefined) => void;
 
   // --- selectors ---
   getProject: (novelProjectId: string) => VideoProjectState | undefined;
@@ -48,7 +66,35 @@ interface VideoStoreState {
   addClip: (novelProjectId: string, clip: GeneratedClip) => void;
   addAudio: (novelProjectId: string, audio: GeneratedAudio) => void;
   addAnchorImage: (novelProjectId: string, anchor: AnchorImage) => void;
-  setFinalVideo: (novelProjectId: string, url: string) => void;
+  setFinalVideo: (
+    novelProjectId: string,
+    url: string,
+    meta?: { durationSeconds?: number; sizeBytes?: number },
+  ) => void;
+  /** Phase 2:写入跨步复用的 SceneSpec(含角色立绘/场景图/分镜) */
+  setSceneSpec: (novelProjectId: string, spec: SceneSpec) => void;
+  /** Phase 2:写入用户选择的步骤开关 */
+  setPipelineOptions: (novelProjectId: string, options: PipelineOptions) => void;
+
+  /** 把 router 上报的一次 provider 调用追加到对应 stage 的 invocations[],
+   *  同时重算 totals。空 stage 跳过(避免误写)。 */
+  appendInvocation: (
+    novelProjectId: string,
+    stage: VideoStage,
+    invocation: StageInvocation,
+  ) => void;
+  /** 设置某 stage 的输入摘要(UI 账本第一段)。 */
+  setStageInputSummary: (
+    novelProjectId: string,
+    stage: VideoStage,
+    summary: StageInputSummary,
+  ) => void;
+
+  // --- direct (no-novel) mode ---
+  setDirectGenerating: (inProgress: boolean) => void;
+  setDirectError: (error: string | undefined) => void;
+  addDirectClip: (clip: GeneratedClip) => void;
+  clearDirectClips: () => void;
 }
 
 const DEFAULT_SPEC: VideoSpec = {
@@ -70,7 +116,7 @@ function buildInitialStages(): Record<VideoStage, VideoStageState> {
     if (s === 'idle' || s === 'complete' || s === 'error') continue; // not tracked as stage-state
     stages[s] = {
       stage: s,
-      status: PHASE1_SKIPPED_STAGES.has(s) ? 'skipped' : 'pending',
+      status: DEFAULT_SKIPPED_STAGES.has(s) ? 'skipped' : 'pending',
       progress: 0,
     };
   }
@@ -81,12 +127,58 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function recomputeTotals(invocations: StageInvocation[] | undefined): StageTotals {
+  if (!invocations || invocations.length === 0) {
+    return { calls: 0, durationMs: 0 };
+  }
+  const totals: StageTotals = { calls: invocations.length, durationMs: 0 };
+  let hasTokens = false, hasImages = false, hasAudio = false, hasVideo = false, hasCost = false;
+  for (const inv of invocations) {
+    totals.durationMs += inv.durationMs ?? 0;
+    if (inv.inputTokens !== undefined) {
+      totals.inputTokens = (totals.inputTokens ?? 0) + inv.inputTokens;
+      hasTokens = true;
+    }
+    if (inv.outputTokens !== undefined) {
+      totals.outputTokens = (totals.outputTokens ?? 0) + inv.outputTokens;
+      hasTokens = true;
+    }
+    if (inv.imageCount !== undefined) {
+      totals.imageCount = (totals.imageCount ?? 0) + inv.imageCount;
+      hasImages = true;
+    }
+    if (inv.audioSeconds !== undefined) {
+      totals.audioSeconds = (totals.audioSeconds ?? 0) + inv.audioSeconds;
+      hasAudio = true;
+    }
+    if (inv.videoSeconds !== undefined) {
+      totals.videoSeconds = (totals.videoSeconds ?? 0) + inv.videoSeconds;
+      hasVideo = true;
+    }
+    if (inv.cost !== undefined) {
+      totals.cost = (totals.cost ?? 0) + inv.cost;
+      hasCost = true;
+    }
+  }
+  if (!hasTokens) totals.inputTokens = totals.outputTokens = undefined;
+  if (!hasImages) totals.imageCount = undefined;
+  if (!hasAudio) totals.audioSeconds = undefined;
+  if (!hasVideo) totals.videoSeconds = undefined;
+  if (!hasCost) totals.cost = undefined;
+  return totals;
+}
+
 function touch(state: VideoProjectState): VideoProjectState {
   return { ...state, updatedAt: now() };
 }
 
 export const useVideoStore = create<VideoStoreState>((set, get) => ({
   projects: {},
+  directClips: [],
+  directGenerating: false,
+  directError: undefined,
+  activePipelineId: undefined,
+  setActivePipelineId: (id) => set({ activePipelineId: id }),
 
   getProject: (novelProjectId) => get().projects[novelProjectId],
 
@@ -133,6 +225,10 @@ export const useVideoStore = create<VideoStoreState>((set, get) => ({
   },
 
   setStageStatus: (novelProjectId, stage, status, extra) => {
+    // 仅 error 状态写日志(running 高频,信息量低)
+    if (status === 'error') {
+      void logger.error(`[store] ${stage} → error: ${extra?.error ?? '(no msg)'}`, 'diag');
+    }
     set((s) => {
       const proj = s.projects[novelProjectId];
       if (!proj) return s;
@@ -264,20 +360,119 @@ export const useVideoStore = create<VideoStoreState>((set, get) => ({
     });
   },
 
-  setFinalVideo: (novelProjectId, url) => {
+  setFinalVideo: (novelProjectId, url, meta) => {
     set((s) => {
       const proj = s.projects[novelProjectId];
       if (!proj) return s;
       return {
         projects: {
           ...s.projects,
-          [novelProjectId]: touch({ ...proj, finalVideoUrl: url, currentStage: 'complete' }),
+          [novelProjectId]: touch({
+            ...proj,
+            finalVideoUrl: url,
+            finalDurationSeconds: meta?.durationSeconds ?? proj.finalDurationSeconds,
+            finalSizeBytes: meta?.sizeBytes ?? proj.finalSizeBytes,
+            currentStage: 'complete',
+          }),
         },
       };
     });
+  },
+
+  setSceneSpec: (novelProjectId, spec) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec: spec }),
+        },
+      };
+    });
+  },
+
+  setPipelineOptions: (novelProjectId, options) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, options }),
+        },
+      };
+    });
+  },
+
+  appendInvocation: (novelProjectId, stage, invocation) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const prevStage = proj.stages[stage];
+      if (!prevStage) return s;
+      const invocations = [...(prevStage.invocations ?? []), invocation];
+      const totals = recomputeTotals(invocations);
+      const next: VideoStageState = { ...prevStage, invocations, totals };
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({
+            ...proj,
+            stages: { ...proj.stages, [stage]: next },
+          }),
+        },
+      };
+    });
+  },
+
+  setStageInputSummary: (novelProjectId, stage, summary) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const prevStage = proj.stages[stage];
+      if (!prevStage) return s;
+      const next: VideoStageState = { ...prevStage, inputSummary: summary };
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({
+            ...proj,
+            stages: { ...proj.stages, [stage]: next },
+          }),
+        },
+      };
+    });
+  },
+
+  // --- direct (no-novel) mode ---
+
+  setDirectGenerating: (inProgress) => {
+    set({ directGenerating: inProgress });
+  },
+
+  setDirectError: (error) => {
+    set({ directError: error });
+  },
+
+  addDirectClip: (clip) => {
+    set((s) => ({ directClips: [clip, ...s.directClips] }));
+  },
+
+  clearDirectClips: () => {
+    set({ directClips: [] });
   },
 }));
 
 // --- Re-exports for convenience ---
 
 export type { AspectRatio, ModelTier };
+
+// --- 订阅 provider router 的 invocation 上报 ---
+// router 每次发一个 invocation,自动追加到栈顶 stage 的账本。
+// 栈顶由 pipeline 进入/退出 stage 时通过 pushStageContext/popStageContext 设置。
+import { subscribeInvocation } from '@/services/providers/invocation-context';
+
+subscribeInvocation((ctx, invocation) => {
+  useVideoStore.getState().appendInvocation(ctx.novelProjectId, ctx.stage as VideoStage, invocation);
+});

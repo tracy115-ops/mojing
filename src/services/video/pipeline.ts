@@ -1,33 +1,31 @@
 // ============================================================================
-// Video Pipeline — 编排 Phase 1 流水线
+// Video Pipeline — Novel 通道入口(瘦身后接入 core)
 // ============================================================================
-// 流程：
-//   script_slicing     ← chapter-slicer.ts (本地启发式，无 LLM)
-//   storyboard_prompt  ← storyboard-prompt.ts (LLM 批处理)
-//   [skipped]          ← character_anchor (Phase 2)
-//   [skipped]          ← storyboard_image (Phase 2)
-//   video_generation   ← providerRouter.generateVideo (T2V，按 shot 并发)
-//   voice_subtitle     ← (Phase 1 占位：暂不生成 TTS，字幕直接走原文 narration)
-//   composing          ← (Phase 1 占位：FFmpeg 后端待实现)
+// 职责:
+//   1. chapter-slicer + storyboard-prompt 产出 ShotSpec[]
+//   2. step-extract 补全场景/道具
+//   3. 构造 SceneSpec
+//   4. 调 core/pipeline-runner 跑下游 14 步子集
 //
-// 设计要点：
-//   - 每个阶段独立、可重入（重试时跳过已完成的 shot）
-//   - 通过回调 onStageChange / onProgress 让 UI 订阅状态
-//   - 异常不中断整条流水线，只标记单个 shot 失败
+// 下游 6/7/9/10/12-14 由 runner 编排,本文件只管"剧本处理"段(步 1-5)。
 
 import type {
   VideoProjectState,
   VideoStage,
   StoryboardShot,
-  GeneratedClip,
   VideoSpec,
+  SceneSpec,
+  ShotSpec,
+  PipelineOptions,
+  CharacterAnchor,
 } from '@/types/video';
-import type { NovelChapter, NovelMetadata } from '@/types';
+import type { NovelChapter } from '@/types';
 import { useVideoStore } from '@/stores/videoStore';
-import { providerRouter } from '@/services/providers';
 import { sliceChapters, type RawShot } from './chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from './storyboard-prompt';
-import { probeFFmpeg, downloadClip, composeClips } from './ffmpeg-bridge';
+import { stepExtract } from './core/step-extract';
+import { runPipeline, type VideoGenOptions } from './core/pipeline-runner';
+import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
 
 export interface PipelineCallbacks {
   onStageChange?: (stage: VideoStage) => void;
@@ -40,12 +38,12 @@ export interface PipelineInput {
   novelTitle: string;
   genre: string;
   style: string;
-  /** 用户选定的章节（按顺序） */
+  /** 用户选定的章节(按顺序) */
   chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[];
   spec: VideoSpec;
+  /** Phase 2:用户勾选的可选步骤 */
+  options?: PipelineOptions;
 }
-
-const VIDEO_GENERATION_CONCURRENCY = 2;
 
 export class VideoPipeline {
   private readonly input: PipelineInput;
@@ -63,49 +61,93 @@ export class VideoPipeline {
 
   async run(): Promise<VideoProjectState | null> {
     const store = useVideoStore.getState();
-    store.initProject(this.input.novelProjectId, this.input.chapters.map((c) => c.id), this.input.spec);
+    const { novelProjectId, chapters, spec, options } = this.input;
+    store.initProject(novelProjectId, chapters.map((c) => c.id), spec);
+
+    // 默认开关(若用户没传 options,从 spec 的 enable* 字段构造)
+    const pipelineOptions: PipelineOptions =
+      options ?? specToOptions(spec);
+
+    store.setPipelineOptions(novelProjectId, pipelineOptions);
 
     try {
-      await this.runScriptSlicing();
-      if (this.aborted) return null;
-      await this.runStoryboardPrompt();
-      if (this.aborted) return null;
-      await this.runVideoGeneration();
-      if (this.aborted) return null;
-      await this.runComposing();
-      return useVideoStore.getState().getProject(this.input.novelProjectId) ?? null;
+      // --- 步 1:章节切片 ---
+      const rawShots = await this.runScriptSlicing();
+
+      // --- 步 2+5:LLM 改写 + 分镜 ---
+      const storyboardShots = await this.runStoryboardPrompt(rawShots);
+
+      // --- 步 3:提取角色/场景/道具 ---
+      const sceneSpec = await this.runExtraction(rawShots, storyboardShots);
+
+      // --- 步 4:音色(期 3) ---
+      // 暂跳过
+
+      // --- 步 6-14:交由 core runner ---
+      const videoGen: VideoGenOptions = {
+        spec: {
+          resolution: spec.resolution,
+          fps: spec.fps,
+          videoTier: spec.videoTier,
+        },
+        sceneSource: 'novel',
+        sourceMode: 'multishot', // Novel 通道语义上是多镜头
+      };
+
+      return await runPipeline({
+        novelProjectId,
+        spec: sceneSpec,
+        options: pipelineOptions,
+        callbacks: this.cb,
+        videoGen,
+        shouldAbort: () => this.aborted,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      useVideoStore.getState().setError(this.input.novelProjectId, msg);
+      useVideoStore.getState().setError(novelProjectId, msg);
       this.cb.onError?.(msg);
       return null;
     }
   }
 
-  // --- stages ---
+  // --- 步 1 ---
 
-  private async runScriptSlicing(): Promise<void> {
-    const { novelProjectId, chapters, spec } = this.input;
+  private async runScriptSlicing(): Promise<RawShot[]> {
+    const { chapters, spec } = this.input;
     const store = useVideoStore.getState();
     const stage: VideoStage = 'script_slicing';
 
-    store.advanceToStage(novelProjectId, stage);
-    store.setStageStatus(novelProjectId, stage, 'running');
+    store.advanceToStage(this.input.novelProjectId, stage);
+    store.setStageStatus(this.input.novelProjectId, stage, 'running');
     this.cb.onStageChange?.(stage);
 
-    const rawShots: RawShot[] = sliceChapters(
-      chapters.map((c) => ({ id: c.id, number: c.order + 1, content: c.content })),
-      {
-        targetWordsPerShot: spec.shotDurationSeconds === 10 ? 1200 : 600,
-      },
-    );
+    const totalWords = chapters.reduce((s, c) => s + c.content.length, 0);
+    store.setStageInputSummary(this.input.novelProjectId, stage, {
+      headline: `${chapters.length} 个章节 / 共 ${totalWords.toLocaleString()} 字`,
+      details: chapters.map((c) => `第 ${c.order + 1} 章 · ${(c.content.length / 1000).toFixed(1)}k 字`),
+      upstreamArtifacts: undefined,
+    });
 
-    // Phase 1 占位：先把 RawShot 直接作为 StoryboardShot 的源，待 storyboard_prompt 优化
-    store.setShots(novelProjectId, rawShots.map(toPlaceholderShot));
-    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+    pushStageContext({ novelProjectId: this.input.novelProjectId, stage });
+    try {
+      const rawShots: RawShot[] = sliceChapters(
+        chapters.map((c) => ({ id: c.id, number: c.order + 1, content: c.content })),
+        {
+          targetWordsPerShot: spec.shotDurationSeconds === 10 ? 1200 : 600,
+        },
+      );
+
+      store.setShots(this.input.novelProjectId, rawShots.map(toPlaceholderShot));
+      store.setStageStatus(this.input.novelProjectId, stage, 'completed', { progress: 1 });
+      return rawShots;
+    } finally {
+      popStageContext();
+    }
   }
 
-  private async runStoryboardPrompt(): Promise<void> {
+  // --- 步 2+5 ---
+
+  private async runStoryboardPrompt(rawShots: RawShot[]): Promise<StoryboardShot[]> {
     const { novelProjectId, novelTitle, genre, style, spec } = this.input;
     const store = useVideoStore.getState();
     const stage: VideoStage = 'storyboard_prompt';
@@ -114,8 +156,11 @@ export class VideoPipeline {
     store.setStageStatus(novelProjectId, stage, 'running');
     this.cb.onStageChange?.(stage);
 
-    const project = store.getProject(novelProjectId);
-    if (!project) throw new Error('Video project not initialized');
+    store.setStageInputSummary(novelProjectId, stage, {
+      headline: `${rawShots.length} 个候选镜头(章节切片后)`,
+      details: rawShots.slice(0, 10).map((r, i) => `镜头 ${i + 1} · ${(r.rawText.length / 1000).toFixed(1)}k 字`),
+      upstreamArtifacts: `输入 ${rawShots.reduce((s, r) => s + r.rawText.length, 0).toLocaleString()} 字`,
+    });
 
     const ctx: StoryboardContext = {
       novelTitle,
@@ -125,191 +170,112 @@ export class VideoPipeline {
       defaultShotDuration: spec.shotDurationSeconds,
     };
 
-    const rawShots: RawShot[] = project.shots.map((sh) => ({
-      id: sh.id,
-      index: sh.index,
-      sourceChapterId: sh.sourceChapterId ?? '',
-      sourceChapterNumber: 0,
-      rawText: sh.sourceText,
-      characters: sh.characters,
-      location: sh.location,
-      mood: sh.mood,
-      hasDialogue: !!sh.dialogue,
-      hasAction: false,
-    }));
-
-    const shots = await buildStoryboard(rawShots, ctx, (done, total) => {
-      store.setStageStatus(novelProjectId, stage, 'running', { progress: done / total });
-      this.cb.onShotProgress?.(done, total);
-    });
-
-    store.setShots(novelProjectId, shots);
-    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
-  }
-
-  private async runVideoGeneration(): Promise<void> {
-    const { novelProjectId, spec } = this.input;
-    const store = useVideoStore.getState();
-    const stage: VideoStage = 'video_generation';
-
-    store.advanceToStage(novelProjectId, stage);
-    store.setStageStatus(novelProjectId, stage, 'running');
-    this.cb.onStageChange?.(stage);
-
-    const project = store.getProject(novelProjectId);
-    if (!project) throw new Error('Video project not initialized');
-
-    const pending = project.shots.filter((sh) => {
-      const exists = project.clips.some((c) => c.shotId === sh.id);
-      return !exists;
-    });
-
-    let done = 0;
-    const total = pending.length;
-    this.cb.onShotProgress?.(done, total);
-
-    // 简单的并发池
-    const queue = [...pending];
-    const workers: Promise<void>[] = [];
-    for (let w = 0; w < VIDEO_GENERATION_CONCURRENCY; w++) {
-      workers.push(this.videoWorker(queue, spec, async (clip) => {
-        store.addClip(novelProjectId, clip);
-        done += 1;
+    pushStageContext({ novelProjectId, stage });
+    try {
+      const shots = await buildStoryboard(rawShots, ctx, (done, total) => {
         store.setStageStatus(novelProjectId, stage, 'running', { progress: done / total });
         this.cb.onShotProgress?.(done, total);
-      }));
-    }
-    await Promise.all(workers);
+      });
 
-    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
-  }
-
-  private async videoWorker(
-    queue: StoryboardShot[],
-    spec: VideoSpec,
-    onDone: (clip: GeneratedClip) => Promise<void>,
-  ): Promise<void> {
-    while (queue.length > 0 && !this.aborted) {
-      const shot = queue.shift();
-      if (!shot) break;
-      try {
-        const clip = await this.generateOneClip(shot, spec);
-        await onDone(clip);
-      } catch (err) {
-        console.warn(`Video gen failed for shot ${shot.id}:`, err);
-        // 标记该 shot 失败但不中断其他 shot；UI 会显示缺失的片段
-      }
+      store.setShots(novelProjectId, shots);
+      store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+      return shots;
+    } finally {
+      popStageContext();
     }
   }
 
-  private async generateOneClip(shot: StoryboardShot, spec: VideoSpec): Promise<GeneratedClip> {
-    const [w, h] = parseResolution(spec.resolution);
-    const response = await providerRouter.generateVideo({
-      taskType: 'clip',
-      prompt: shot.videoPrompt,
-      model: tierToDefaultModel(spec.videoTier),
-      width: w,
-      height: h,
-      durationSeconds: shot.durationSeconds,
-      fps: spec.fps,
-    });
+  // --- 步 3 ---
 
-    return {
-      shotId: shot.id,
-      videoUrl: response.videoData,
-      thumbnailUrl: undefined,
-      durationSeconds: response.durationSeconds || shot.durationSeconds,
-      provider: response.provider,
-      model: response.model,
-      hasAudio: false,
-      generatedAt: new Date().toISOString(),
-    };
-  }
-
-  /**
-   * Phase 1 合成：
-   *   1. 检测 FFmpeg（Tauri 环境）
-   *   2. 把远程 clip URL 全部下载到本地临时目录
-   *   3. 调用 FFmpeg 拼接 + 可选字幕硬编码
-   *   4. 把最终成片路径写入 store
-   * 非 Tauri 环境降级：直接用第一个 clip URL 作为占位。
-   */
-  private async runComposing(): Promise<void> {
-    const { novelProjectId, spec } = this.input;
+  private async runExtraction(
+    rawShots: RawShot[],
+    storyboardShots: StoryboardShot[],
+  ): Promise<SceneSpec> {
+    const { novelProjectId, novelTitle, style, spec } = this.input;
     const store = useVideoStore.getState();
-    const stage: VideoStage = 'composing';
+    const stage: VideoStage = 'extraction';
 
     store.advanceToStage(novelProjectId, stage);
     store.setStageStatus(novelProjectId, stage, 'running');
     this.cb.onStageChange?.(stage);
 
-    const project = store.getProject(novelProjectId);
-    if (!project) throw new Error('Video project not initialized');
-    if (project.clips.length === 0) {
-      throw new Error('No clips to compose');
-    }
+    // 把所有 RawShot 拼成大文本供 LLM 提取
+    const fullText = rawShots.map((r) => r.rawText).join('\n\n');
 
-    // 1) Tauri 环境检测
-    const probe = await probeFFmpeg().catch(() => null);
-    if (!probe?.available) {
-      // 非 Tauri / FFmpeg 不可用：降级，直接用第一个 clip URL
-      console.warn('VideoPipeline: FFmpeg unavailable, using first clip as final');
-      store.setFinalVideo(novelProjectId, project.clips[0].videoUrl);
-      store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
-      return;
-    }
+    store.setStageInputSummary(novelProjectId, stage, {
+      headline: `${rawShots.length} 个镜头原文,共 ${fullText.length.toLocaleString()} 字`,
+      details: storyboardShots.slice(0, 5).map((s) => `镜头 ${s.index + 1} · ${(s.videoPrompt || s.sourceText).slice(0, 40)}…`),
+      upstreamArtifacts: `storyboard 已产出 ${storyboardShots.length} 镜`,
+    });
 
-    // 2) 下载远程 clips 到本地临时目录
-    const workDir = `${(await getWorkDir(novelProjectId))}`;
-    const localPaths: string[] = [];
-    for (let i = 0; i < project.clips.length; i++) {
-      const clip = project.clips[i];
-      const isRemote = /^https?:\/\//.test(clip.videoUrl);
-      if (!isRemote) {
-        localPaths.push(clip.videoUrl);
-        continue;
-      }
-      const ext = guessExt(clip.videoUrl);
-      const downloaded = await downloadClip(clip.videoUrl, workDir, `clip_${i}${ext}`);
-      localPaths.push(downloaded.savedPath);
-      store.setStageStatus(novelProjectId, stage, 'running', {
-        progress: (i + 1) / (project.clips.length * 2),
+    // 把 storyboard shot 转成 ShotSpec(占位 characterIds)
+    const shotSpecs: ShotSpec[] = storyboardShots.map((s) => ({
+      id: s.id,
+      index: s.index,
+      sourceChapterId: s.sourceChapterId,
+      sourceText: s.sourceText,
+      videoPrompt: s.videoPrompt,
+      narration: s.narration,
+      dialogue: s.dialogue,
+      characterIds: s.characters, // chapter-slicer 启发式检测的字符串列表
+      location: s.location,
+      mood: s.mood,
+      cameraMovement: s.cameraMovement,
+      durationSeconds: (s.durationSeconds === 10 ? 10 : 5) as 5 | 10,
+    }));
+
+    // 步 3 提取:LLM 解析大文本,产出结构化角色/场景/道具
+    // 注意:shotSpecs 里的 characterIds 是中文名(从 chapter-slicer 来),
+    // LLM 会输出 characterIdMap 把名字映射成 char_xxx,
+    // 我们在 step-extract 里用名字回填。
+    pushStageContext({ novelProjectId, stage });
+    let extractResult;
+    try {
+      extractResult = await stepExtract({
+        text: fullText,
+        shots: shotSpecs,
       });
+    } finally {
+      popStageContext();
     }
 
-    // 3) 调用 FFmpeg 合成
-    const outputPath = `${workDir}/final.mp4`;
-    const subtitles = project.clips.map((clip) => {
-      const shot = project.shots.find((s) => s.id === clip.shotId);
-      return shot?.narration ?? null;
-    });
-    const result = await composeClips({
-      clipPaths: localPaths,
-      subtitles,
-      outputPath,
-      hardcodeSubtitles: spec.hardcodeSubtitles,
-    });
+    // chapter-slicer 检测的角色是中文名,step-extract 也会输出中文名的角色,
+    // 但 step-extract 内部已经做了占位 id 替换。这里再保险一次:把 shots 里
+    // 没匹配上的中文名 characterIds 清掉(因为没法生成对应立绘)。
+    const knownCharNames = new Set(extractResult.characters.map((c) => c.name));
+    const knownCharIds = new Set(extractResult.characters.map((c) => c.id));
+    const finalShots: ShotSpec[] = (extractResult.resolvedShots ?? shotSpecs).map((sh) => ({
+      ...sh,
+      characterIds: sh.characterIds.filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
+    }));
 
-    // 4) 写入最终成片
-    store.setFinalVideo(novelProjectId, result.outputPath);
+    // 把残留的中文名 characterIds 转成对应角色 id
+    const nameToId = new Map(extractResult.characters.map((c) => [c.name, c.id] as const));
+    for (const sh of finalShots) {
+      sh.characterIds = sh.characterIds
+        .map((id) => nameToId.get(id) ?? id)
+        .filter((id, idx, arr) => knownCharIds.has(id) && arr.indexOf(id) === idx);
+    }
+
+    const sceneSpec: SceneSpec = {
+      characters: extractResult.characters,
+      scenes: extractResult.scenes,
+      props: extractResult.props,
+      shots: finalShots,
+      meta: {
+        title: novelTitle,
+        style,
+        genre: this.input.genre,
+        aspectRatio: spec.aspectRatio,
+        defaultShotDuration: spec.shotDurationSeconds,
+        sourceMode: 'multishot',
+        channel: 'novel',
+      },
+    };
+
     store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+    return sceneSpec;
   }
-}
-
-async function getWorkDir(novelProjectId: string): Promise<string> {
-  // 在 Tauri 环境用 app data dir；非 Tauri 走浏览器降级（不会到这里）
-  try {
-    const { appDataDir } = await import('@tauri-apps/api/path');
-    const base = await appDataDir();
-    return `${base}/video-cache/${novelProjectId}`;
-  } catch {
-    return `/tmp/mojing-video/${novelProjectId}`;
-  }
-}
-
-function guessExt(url: string): string {
-  const m = url.match(/\.(mp4|mov|webm|mkv)(\?|$)/i);
-  return m ? `.${m[1].toLowerCase()}` : '.mp4';
 }
 
 // --- helpers ---
@@ -320,7 +286,7 @@ function toPlaceholderShot(raw: RawShot): StoryboardShot {
     index: raw.index,
     sourceChapterId: raw.sourceChapterId,
     sourceText: raw.rawText,
-    videoPrompt: '',  // 待 storyboard_prompt 填充
+    videoPrompt: '',
     durationSeconds: 5,
     characters: raw.characters,
     location: raw.location,
@@ -329,22 +295,19 @@ function toPlaceholderShot(raw: RawShot): StoryboardShot {
   };
 }
 
-function parseResolution(s: string): [number, number] {
-  const m = s.match(/^(\d+)x(\d+)$/);
-  if (!m) return [1920, 1080];
-  return [Number(m[1]), Number(m[2])];
-}
-
 /**
- * 根据 tier 选默认模型 ID。Phase 1 只接入了 Kling（已有 adapter），
- * 后续按 tier 扩展到 Seedance / Veo / Sora。
+ * 从 VideoSpec 的 enable* 字段构造 PipelineOptions。
+ * 默认全开角色锚定 + 关键帧 + I2V,场景图和 TTS 默认关(成本敏感)。
  */
-function tierToDefaultModel(tier: VideoSpec['videoTier']): string {
-  switch (tier) {
-    case 'free':     return 'kling-v2';   // Kling 标准版
-    case 'value':    return 'kling-v2';
-    case 'quality':  return 'kling-v2-pro';
-    case 'premium':  return 'kling-v2-pro';
-    default:         return 'kling-v2';
-  }
+function specToOptions(spec: VideoSpec): PipelineOptions {
+  return {
+    enableCharacterAnchor: spec.enableCharacterAnchor ?? true,
+    enableSceneImage: spec.enableSceneImage ?? false,
+    enableTTS: spec.enableTTS ?? false,
+    enableKeyframe: true,
+    enableI2V: true,
+    enableAudioMerge: spec.enableTTS ?? false,
+    enableSubtitles: spec.hardcodeSubtitles,
+    characterAnchorLimit: 5,
+  };
 }

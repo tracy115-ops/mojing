@@ -205,3 +205,13 @@ export const useSettingsStore = create<SettingsState>()(
     },
   ),
 );
+
+// Keep <html data-theme> in sync with currentTheme. setTheme() does this
+// inline, but updateSettings() (used by Settings page) doesn't — without this
+// bridge, picking "light" / "system" from Settings changes antd algorithm
+// but leaves CSS variables on the old theme.
+useSettingsStore.subscribe((state) => {
+  if (typeof document !== 'undefined' && state.currentTheme) {
+    document.documentElement.setAttribute('data-theme', state.currentTheme);
+  }
+});

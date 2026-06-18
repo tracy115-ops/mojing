@@ -982,11 +982,10 @@ const NovelView: React.FC = () => {
                       {t('workbench.toggle')}
                     </Button>
                   </Tooltip>
-                  <Tooltip title={t('video.gen.title')}>
+                  <Tooltip title={chapters.filter((c) => c.content).length === 0 ? t('video.gen.needChaptersHint') : t('video.gen.title')}>
                     <Button
                       size="small"
                       icon={<VideoCameraOutlined />}
-                      disabled={chapters.filter((c) => c.content).length === 0}
                       onClick={() => setVideoOpen(true)}
                     >
                       {t('video.gen.title')}

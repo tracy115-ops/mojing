@@ -219,9 +219,33 @@ const SettingsPanel: React.FC = () => {
       {contextHolder}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text-primary)' }}>{t('settings.title')}</h2>
-        <Button size="small" onClick={handleReset}>
-          {t('settings.general.resetDefaults')}
-        </Button>
+        <Space>
+          <Button
+            size="small"
+            onClick={async () => {
+              try {
+                const { getLogPath } = await import('@/services/log');
+                const p = await getLogPath();
+                if (!p) {
+                  messageApi.warning(t('settings.general.logOpenUnavailable'));
+                  return;
+                }
+                // 打开日志所在文件夹 (跨平台):用 shell open 打开目录路径
+                const { open } = await import('@tauri-apps/plugin-shell');
+                // 取目录:去掉最后的 app.log
+                const dir = p.replace(/[\\/][^\\/]+$/, '');
+                await open(dir);
+              } catch (err) {
+                messageApi.error(`${t('settings.general.logOpenFailed')}: ${String(err)}`);
+              }
+            }}
+          >
+            {t('settings.general.openLog')}
+          </Button>
+          <Button size="small" onClick={handleReset}>
+            {t('settings.general.resetDefaults')}
+          </Button>
+        </Space>
       </div>
       <Card size="small" style={{ background: 'var(--bg-container)', border: '1px solid var(--border-secondary)' }}>
         <Tabs items={tabItems} />

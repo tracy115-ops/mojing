@@ -17,6 +17,7 @@
 | [09-phase2-roadmap.md](./09-phase2-roadmap.md) | Phase 2 真实感提升路线图（待实施） |
 | [10-phase3-ux.md](./10-phase3-ux.md) | Phase 3 UX 打磨路线图（待实施） |
 | [11-troubleshooting.md](./11-troubleshooting.md) | 常见问题与排查 |
+| [12-dual-channel-unification.md](./12-dual-channel-unification.md) | 14 步完整流程对齐三种模式：Direct/Novel 共享 core（设计中） |
 
 ## 状态速览
 

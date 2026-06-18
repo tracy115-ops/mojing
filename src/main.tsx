@@ -2,6 +2,10 @@ import '@ant-design/v5-patch-for-react-19';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/global.css';
+import { installGlobalLogCapture } from './services/log';
+
+// Install before any app code runs so we capture boot errors too.
+installGlobalLogCapture();
 
 const readInitialTheme = (): 'dark' | 'light' => {
   try {

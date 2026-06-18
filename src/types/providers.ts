@@ -20,6 +20,10 @@ export type ImageProviderId =
   | 'flux'
   | 'comfyui'
   | 'kling-image'
+  | 'cogview'
+  | 'wanx'
+  | 'jimeng'
+  | 'ideogram'
   | 'custom';
 
 export type VideoProviderId =
@@ -30,12 +34,23 @@ export type VideoProviderId =
   | 'pika'
   | 'custom';
 
+export type TTSProviderId =
+  | 'openai-tts'    // OpenAI TTS API (tts-1 / tts-1-hd)
+  | 'doubao-tts'    // 字节豆包 TTS
+  | 'edge-tts'      // Microsoft Edge TTS (免费)
+  | 'custom';
+
 // --- API Endpoint Config ---
 
 export interface ApiEndpoint {
   id: string;
   name: string;
-  provider: LLMProviderId | ImageProviderId | VideoProviderId;
+  provider: LLMProviderId | ImageProviderId | VideoProviderId | TTSProviderId;
+  /**
+   * 类别标记。固定类别 provider(llm/openai 等)可不填,会从 PROVIDER_CATEGORY 推断;
+   * 'custom' provider 必须填,否则会在所有类别列表里都出现/都不出现。
+   */
+  category?: 'llm' | 'image' | 'video' | 'tts';
   baseUrl: string;
   apiKey: string;
   organizationId?: string;
@@ -129,12 +144,26 @@ export interface VideoProviderConfig {
   defaultFps: number;
 }
 
+// --- TTS Provider Config ---
+
+export interface TTSProviderConfig {
+  primary: TTSProviderId;
+  fallback?: TTSProviderId;
+  endpointId?: string;
+  fallbackEndpointId?: string;
+  defaultModel: string;       // e.g. 'tts-1' / 'tts-1-hd'
+  defaultVoice: string;       // e.g. 'alloy' / 'echo' / 'nova'
+  defaultFormat: 'mp3' | 'wav' | 'opus' | 'aac' | 'flac';
+  defaultSpeed: number;       // 0.25 - 4.0
+}
+
 // --- Unified Provider Configuration ---
 
 export interface ProviderConfig {
   llm: LLMProviderConfig;
   image: ImageProviderConfig;
   video: VideoProviderConfig;
+  tts?: TTSProviderConfig;
 }
 
 // --- Generation Request/Response ---
@@ -196,6 +225,7 @@ export interface VideoGenerateRequest {
   fps?: number;
   referenceImages?: string[];
   audioPrompt?: string;
+  endpointId?: string; // Optional: use a specific endpoint instead of the configured primary
 }
 
 export interface VideoGenerateResponse {
@@ -205,6 +235,35 @@ export interface VideoGenerateResponse {
   durationSeconds: number;
   model: string;
   provider: VideoProviderId;
+  latencyMs: number;
+}
+
+// --- TTS ---
+
+export interface TTSRequest {
+  /** 待合成文本(中/英文均可,主流 TTS 模型都支持) */
+  text: string;
+  /** 音色 ID,缺省走 config.defaultVoice */
+  voice?: string;
+  /** 模型 ID,缺省走 config.defaultModel */
+  model?: string;
+  /** 输出格式 */
+  format?: 'mp3' | 'wav' | 'opus' | 'aac' | 'flac';
+  /** 语速 0.25-4.0 */
+  speed?: number;
+  /** 可选:固定到某个 endpoint(用于多 endpoint 场景) */
+  endpointId?: string;
+}
+
+export interface TTSResponse {
+  /** 音频数据 base64 (含 data:audio/xxx;base64, 前缀) */
+  audioData: string;
+  format: 'mp3' | 'wav' | 'opus' | 'aac' | 'flac';
+  /** 估算时长(秒),由 provider 返回或客户端推算 */
+  durationSeconds?: number;
+  model: string;
+  voice: string;
+  provider: TTSProviderId;
   latencyMs: number;
 }
 

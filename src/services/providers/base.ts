@@ -6,6 +6,8 @@ import type {
   ImageGenerateResponse,
   VideoGenerateRequest,
   VideoGenerateResponse,
+  TTSRequest,
+  TTSResponse,
   ApiEndpoint,
 } from '@/types/providers';
 
@@ -60,6 +62,25 @@ export abstract class BaseVideoProvider {
 
   abstract generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse>;
   abstract checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse }>;
+
+  protected getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${this.endpoint.apiKey}`,
+      ...this.endpoint.customHeaders,
+    };
+  }
+}
+
+export abstract class BaseTTSProvider {
+  abstract readonly providerId: string;
+  protected endpoint: ApiEndpoint;
+
+  constructor(endpoint: ApiEndpoint) {
+    this.endpoint = endpoint;
+  }
+
+  abstract generate(request: TTSRequest): Promise<TTSResponse>;
 
   protected getHeaders(): Record<string, string> {
     return {

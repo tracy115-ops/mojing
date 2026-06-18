@@ -238,3 +238,18 @@
   height: 100%;
   overflow: auto;
 }
+
+/* VideoView Tabs — 让流水线/场景面板在右侧主区内撑满高度 */
+.video-view-tabs .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.video-view-tabs .ant-tabs-content {
+  height: 100%;
+}
+.video-view-tabs .ant-tabs-tabpane {
+  height: 100%;
+  overflow: auto;
+}

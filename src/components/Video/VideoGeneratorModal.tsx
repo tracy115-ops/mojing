@@ -12,21 +12,27 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Modal, Button, Select, Checkbox, Tag, Progress, Alert,
   Typography, Divider, Empty, Tooltip, Steps, Card, Spin,
+  Dropdown, Menu, Space,
 } from 'antd';
 import {
   VideoCameraOutlined, PlayCircleOutlined, ReloadOutlined,
   CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
+  DownloadOutlined, EyeOutlined, DownOutlined,
 } from '@ant-design/icons';
+import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProviderStore } from '@/stores/providerStore';
+import { logger } from '@/services/log';
 import { VideoPipeline } from '@/services/video/pipeline';
 import type {
   VideoProjectState, VideoStage, VideoStageStatus, VideoSpec,
   StoryboardShot, AspectRatio, ModelTier,
 } from '@/types/video';
-import { VIDEO_PIPELINE_STAGES, PHASE1_SKIPPED_STAGES } from '@/types/video';
+import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
+import ExportVideoModal from './ExportVideoModal';
+import StageArtifactsModal from './StageArtifactsModal';
 import type { NovelMetadata, NovelChapter } from '@/types';
 
 const { Text, Paragraph, Title } = Typography;
@@ -43,7 +49,7 @@ type ModalPhase = 'config' | 'running' | 'done';
 const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose, defaultNovelId }) => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
-  const videoEndpoints = useProviderStore((s) => s.endpoints.filter((e) => e.enabled));
+  const videoEndpoints = useProviderStore(useShallow((s) => s.endpoints.filter((e) => e.enabled)));
   const videoProject = useVideoStore((s) => (defaultNovelId ? s.projects[defaultNovelId] : undefined));
 
   // Config state
@@ -122,6 +128,8 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
     if (!selectedNovelId || selectedChapterIds.length === 0) return;
     if (!hasVideoProvider) return;
 
+    void logger.info(`[modal] handleStart novel=${selectedNovelId} chapters=${selectedChapterIds.length}`, 'modal');
+
     const novel = useProjectStore.getState().projects.find((p) => p.id === selectedNovelId);
     if (!novel || novel.type !== 'novel') return;
     const meta = novel.metadata as NovelMetadata;
@@ -130,7 +138,6 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
       .map((id) => meta.chapters.find((c) => c.id === id))
       .filter((c): c is NovelChapter => !!c);
 
-    setPhase('running');
     setErrorMsg(undefined);
 
     const pipeline = new VideoPipeline(
@@ -150,17 +157,16 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
     );
     pipelineRef.current = pipeline;
 
-    const result = await pipeline.run();
-    if (result) {
-      setPhase('done');
-    } else {
-      setPhase('config');
-    }
-  };
+    // 切到主面板的流水线 tab,然后立即关闭 Modal —— 执行过程改由 VideoPipelinePanel 展示。
+    useVideoStore.getState().setActivePipelineId(selectedNovelId);
+    onClose();
 
-  const handleAbort = () => {
-    pipelineRef.current?.abort();
-    setPhase('config');
+    // 后台跑流水线;Modal 已关闭,phase 状态不再相关。
+    pipeline.run().catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      void logger.error(`[modal] pipeline.run threw: ${msg}`, 'modal');
+      setErrorMsg(msg);
+    });
   };
 
   const handleReset = () => {
@@ -174,13 +180,6 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
   // --- Render ---
 
   const footer = (() => {
-    if (phase === 'running') {
-      return [
-        <Button key="abort" danger onClick={handleAbort}>
-          {t('video.gen.abort')}
-        </Button>,
-      ];
-    }
     if (phase === 'done') {
       return [
         <Button key="reset" icon={<ReloadOutlined />} onClick={handleReset}>
@@ -255,10 +254,6 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
           estimatedMinutes={estimatedMinutes}
           hasVideoProvider={hasVideoProvider}
         />
-      )}
-
-      {phase === 'running' && videoProject && (
-        <RunningPane project={videoProject} />
       )}
 
       {phase === 'done' && videoProject && (
@@ -426,128 +421,72 @@ const ConfigPane: React.FC<ConfigPaneProps> = ({
 };
 
 // ============================================================================
-// Running Pane — 实时进度
-// ============================================================================
-
-const STAGE_ICONS: Record<VideoStage, React.ReactNode> = {
-  idle: <CheckCircleOutlined />,
-  script_slicing: <VideoCameraOutlined />,
-  storyboard_prompt: <VideoCameraOutlined />,
-  character_anchor: <VideoCameraOutlined />,
-  storyboard_image: <VideoCameraOutlined />,
-  video_generation: <PlayCircleOutlined />,
-  voice_subtitle: <VideoCameraOutlined />,
-  composing: <VideoCameraOutlined />,
-  complete: <CheckCircleOutlined />,
-  error: <CloseCircleOutlined />,
-};
-
-const RunningPane: React.FC<{ project: VideoProjectState }> = ({ project }) => {
-  const { t } = useTranslation();
-  const activeStageIdx = VIDEO_PIPELINE_STAGES.indexOf(project.currentStage);
-
-  return (
-    <div>
-      <Steps
-        current={activeStageIdx}
-        size="small"
-        style={{ marginBottom: 20 }}
-        items={VIDEO_PIPELINE_STAGES.filter((s) => !PHASE1_SKIPPED_STAGES.has(s)).map((stage) => {
-          const state = project.stages[stage];
-          const skipped = PHASE1_SKIPPED_STAGES.has(stage);
-          let icon: React.ReactNode = STAGE_ICONS[stage];
-          let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
-          if (skipped) {
-            status = 'wait';
-            icon = <CloseCircleOutlined style={{ opacity: 0.3 }} />;
-          } else if (state?.status === 'completed') {
-            status = 'finish';
-          } else if (state?.status === 'running') {
-            status = 'process';
-            icon = <LoadingOutlined />;
-          } else if (state?.status === 'error') {
-            status = 'error';
-          }
-          return {
-            title: t(`video.gen.stage.${stage}`),
-            description: state?.progress !== undefined && state.progress > 0 && state.status === 'running'
-              ? `${Math.round(state.progress * 100)}%`
-              : undefined,
-            status,
-            icon,
-          };
-        })}
-      />
-
-      <Divider style={{ margin: '12px 0' }} />
-
-      {/* Shots list */}
-      <Title level={5}>{t('video.gen.shots')} ({project.shots.length})</Title>
-      <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-        {project.shots.length === 0 ? (
-          <Spin tip="..." />
-        ) : (
-          project.shots.map((shot) => (
-            <ShotRow
-              key={shot.id}
-              shot={shot}
-              status={getShotStatus(project, shot)}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-};
-
-function getShotStatus(
-  project: VideoProjectState,
-  shot: StoryboardShot,
-): 'pending' | 'running' | 'done' | 'error' {
-  const clip = project.clips.find((c) => c.shotId === shot.id);
-  if (clip) return 'done';
-  if (project.currentStage === 'video_generation') return 'running';
-  return 'pending';
-}
-
-const ShotRow: React.FC<{
-  shot: StoryboardShot;
-  status: 'pending' | 'running' | 'done' | 'error';
-}> = ({ shot, status }) => {
-  const { t } = useTranslation();
-  return (
-    <Card size="small" style={{ marginBottom: 6 }} bodyStyle={{ padding: '8px 12px' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : 'default'}>
-          {t('video.gen.shot')} {shot.index + 1}
-        </Tag>
-        <Text style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
-          {shot.videoPrompt || shot.sourceText.slice(0, 100)}
-        </Text>
-        <Text type="secondary" style={{ fontSize: 11 }}>{shot.durationSeconds}s</Text>
-        {status === 'running' && <LoadingOutlined style={{ color: 'var(--accent-primary)' }} />}
-        {status === 'done' && <CheckCircleOutlined style={{ color: '#22c55e' }} />}
-      </div>
-    </Card>
-  );
-};
-
-// ============================================================================
-// Done Pane — 成片预览
+// Done Pane — 成片预览（用户从历史项目主动打开 Modal 时仍可见）
 // ============================================================================
 
 const DonePane: React.FC<{ project: VideoProjectState }> = ({ project }) => {
   const { t } = useTranslation();
+  const [exportOpen, setExportOpen] = useState(false);
+  const [artifactStage, setArtifactStage] = useState<VideoStage | null>(null);
+
+  const sizeLabel = project.finalSizeBytes
+    ? `${(project.finalSizeBytes / 1024 / 1024).toFixed(1)} MB`
+    : undefined;
+  const durLabel = project.finalDurationSeconds
+    ? `${project.finalDurationSeconds.toFixed(1)}s`
+    : undefined;
+  const metaLabel = [durLabel, sizeLabel].filter(Boolean).join(' · ');
 
   return (
     <div>
-      <Title level={5}>{t('video.gen.preview')}</Title>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <Title level={5} style={{ margin: 0 }}>{t('video.gen.preview')}</Title>
+        <Space>
+          <Dropdown
+            overlay={(
+              <Menu
+                onClick={(e) => setArtifactStage(e.key as VideoStage)}
+                items={VIDEO_PIPELINE_STAGES
+                  .filter((s) => !DEFAULT_SKIPPED_STAGES.has(s) && project.stages[s]?.status === 'completed')
+                  .map((s) => ({ key: s, label: t(`video.gen.stage.${s}`) }))}
+              />
+            )}
+          >
+            <Button icon={<EyeOutlined />}>
+              {t('video.artifacts.viewStage')} <DownOutlined />
+            </Button>
+          </Dropdown>
+          {project.finalVideoUrl && (
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              onClick={() => setExportOpen(true)}
+            >
+              {t('video.export.button')}
+            </Button>
+          )}
+        </Space>
+      </div>
+
+      <StageArtifactsModal
+        open={!!artifactStage}
+        onClose={() => setArtifactStage(null)}
+        stage={artifactStage}
+        project={project}
+      />
       {project.finalVideoUrl ? (
-        <video
-          src={project.finalVideoUrl}
-          controls
-          style={{ width: '100%', maxHeight: 400, background: '#000', borderRadius: 6 }}
-        />
+        <>
+          <video
+            src={project.finalVideoUrl}
+            controls
+            style={{ width: '100%', maxHeight: 400, background: '#000', borderRadius: 6 }}
+          />
+          {metaLabel && (
+            <div style={{ marginTop: 6 }}>
+              <Tag color="blue" style={{ fontSize: 11 }}>{metaLabel}</Tag>
+            </div>
+          )}
+        </>
       ) : (
         <Empty description={t('video.gen.noVideoYet')} />
       )}
@@ -569,6 +508,15 @@ const DonePane: React.FC<{ project: VideoProjectState }> = ({ project }) => {
           );
         })}
       </div>
+
+      {project.finalVideoUrl && (
+        <ExportVideoModal
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          sourcePath={project.finalVideoUrl}
+          suggestedName={`mojing-${project.novelProjectId}`}
+        />
+      )}
     </div>
   );
 };

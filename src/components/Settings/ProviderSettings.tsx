@@ -31,11 +31,12 @@ import {
   LockOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
-import { useProviderStore } from '@/stores/providerStore';
+import { useProviderStore, PROVIDER_CATEGORY } from '@/stores/providerStore';
 import type {
   LLMProviderId,
   ImageProviderId,
   VideoProviderId,
+  TTSProviderId,
   ApiEndpoint,
 } from '@/types/providers';
 
@@ -50,11 +51,15 @@ const LLM_PROVIDER_OPTIONS: { value: LLMProviderId; label: string }[] = [
 ];
 
 const IMAGE_PROVIDER_OPTIONS: { value: ImageProviderId; label: string }[] = [
-  { value: 'dalle', label: 'DALL-E' },
-  { value: 'stable-diffusion', label: 'Stable Diffusion' },
-  { value: 'flux', label: 'Flux' },
-  { value: 'comfyui', label: 'ComfyUI' },
+  { value: 'dalle', label: 'DALL-E (OpenAI)' },
+  { value: 'cogview', label: 'CogView (智谱 GLM)' },
+  { value: 'wanx', label: 'Wanx (通义万相 / 阿里)' },
+  { value: 'jimeng', label: 'Jimeng (即梦 / 字节)' },
   { value: 'kling-image', label: 'Kling (可灵)' },
+  { value: 'ideogram', label: 'Ideogram' },
+  { value: 'stable-diffusion', label: 'Stable Diffusion (本地)' },
+  { value: 'flux', label: 'Flux (本地)' },
+  { value: 'comfyui', label: 'ComfyUI (本地)' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -65,6 +70,13 @@ const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
   { value: 'vidu', label: 'Vidu' },
   { value: 'pika', label: 'Pika' },
   { value: 'custom', label: 'Custom' },
+];
+
+const TTS_PROVIDER_OPTIONS: { value: TTSProviderId; label: string }[] = [
+  { value: 'openai-tts', label: 'OpenAI TTS (tts-1 / tts-1-hd)' },
+  { value: 'doubao-tts', label: 'Doubao TTS (豆包)' },
+  { value: 'edge-tts', label: 'Edge TTS (免费,微软)' },
+  { value: 'custom', label: 'Custom (OpenAI-compatible)' },
 ];
 
 const COMMON_LLM_MODELS = [
@@ -116,12 +128,19 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   'stable-diffusion': 'http://127.0.0.1:7860',
   flux: 'http://127.0.0.1:7860',
   comfyui: 'http://127.0.0.1:8188',
-  'kling-image': 'https://api.klingai.com',
+  'kling-image': 'https://api-beijing.klingai.com',
+  cogview: 'https://open.bigmodel.cn/api/paas/v4',
+  wanx: 'https://dashscope.aliyuncs.com/api/v1',
+  jimeng: 'https://ark.cn-beijing.volces.com',
+  ideogram: 'https://api.ideogram.ai/v1',
   sora: 'https://api.openai.com/v1',
   runway: 'https://api.runwayml.com',
-  kling: 'https://api.klingai.com',
+  kling: 'https://api-beijing.klingai.com',
   vidu: 'https://api.vidu.studio',
   pika: 'https://api.pika.art',
+  'openai-tts': 'https://api.openai.com/v1',
+  'doubao-tts': 'https://ark.cn-beijing.volces.com/api/v3',
+  'edge-tts': 'https://speech.platform.bing.com',
 };
 
 function getProviderDefaultUrl(provider: string): string {
@@ -132,9 +151,10 @@ const ProviderSettings: React.FC = () => {
   const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState<StepKey>('endpoints');
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [addCategory, setAddCategory] = useState<'llm' | 'image' | 'video'>('llm');
+  const [addCategory, setAddCategory] = useState<'llm' | 'image' | 'video' | 'tts'>('llm');
   const [testingId, setTestingId] = useState<string | null>(null);
   const [form] = Form.useForm();
+  const watchProvider = Form.useWatch('provider', form);
 
   // Individual selectors to prevent unnecessary re-renders
   const config = useProviderStore((s) => s.config);
@@ -145,6 +165,7 @@ const ProviderSettings: React.FC = () => {
   const setLLMProvider = useProviderStore((s) => s.setLLMProvider);
   const setImageProvider = useProviderStore((s) => s.setImageProvider);
   const setVideoProvider = useProviderStore((s) => s.setVideoProvider);
+  const setTTSProvider = useProviderStore((s) => s.setTTSProvider);
   const setLLMFallback = useProviderStore((s) => s.setLLMFallback);
   const setImageFallback = useProviderStore((s) => s.setImageFallback);
   const setVideoFallback = useProviderStore((s) => s.setVideoFallback);
@@ -153,12 +174,10 @@ const ProviderSettings: React.FC = () => {
 
   const hasEndpoints = endpoints.length > 0;
 
-  const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video') => {
-    return endpoints.filter((e) => {
-      if (category === 'llm') return !['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'sora', 'runway', 'kling', 'vidu', 'pika'].includes(e.provider);
-      if (category === 'image') return ['dalle', 'stable-diffusion', 'flux', 'comfyui', 'kling-image', 'custom'].includes(e.provider);
-      return ['sora', 'runway', 'kling', 'vidu', 'pika', 'custom'].includes(e.provider);
-    });
+  const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
+    // Single source of truth: PROVIDER_CATEGORY from providerStore.
+    // Note: includes disabled endpoints — Settings tables show all so the user can toggle.
+    return endpoints.filter((e) => PROVIDER_CATEGORY[e.provider] === category);
   }, [endpoints]);
 
   // Step availability
@@ -172,9 +191,13 @@ const ProviderSettings: React.FC = () => {
 
   // --- Step 1: Endpoints ---
 
-  const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video') => {
+  const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
     setAddCategory(category);
-    const defaultProvider = category === 'llm' ? 'openai' : category === 'image' ? 'dalle' : 'kling';
+    const defaultProvider =
+      category === 'llm' ? 'openai'
+      : category === 'image' ? 'dalle'
+      : category === 'video' ? 'kling'
+      : 'openai-tts';
     const defaultUrl = getProviderDefaultUrl(defaultProvider);
     form.setFieldsValue({
       provider: defaultProvider,
@@ -187,14 +210,18 @@ const ProviderSettings: React.FC = () => {
   const handleSaveEndpoint = useCallback(async () => {
     try {
       const values = await form.validateFields();
-      addEndpoint(values);
+      // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
+      // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
+      // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
+      // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
+      addEndpoint({ ...values, enabled: true, category: addCategory });
       setAddModalOpen(false);
       form.resetFields();
       message.success(t('common.saved'));
     } catch {
       // Validation failed
     }
-  }, [form, addEndpoint, t]);
+  }, [form, addEndpoint, addCategory, t]);
 
   const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
@@ -335,6 +362,26 @@ const ProviderSettings: React.FC = () => {
               </div>
             ),
           },
+          {
+            key: 'tts',
+            label: t('provider.tts'),
+            children: (
+              <div>
+                <Table
+                  dataSource={getEndpointsByCategory('tts')}
+                  columns={endpointColumns}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  locale={{ emptyText: t('common.noData' as const) }}
+                  style={{ marginBottom: 12 }}
+                />
+                <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('tts')}>
+                  {t('provider.addEndpoint')} — {t('provider.tts')}
+                </Button>
+              </div>
+            ),
+          },
         ]}
       />
     </div>
@@ -343,13 +390,26 @@ const ProviderSettings: React.FC = () => {
   // --- Step 2: Model selection ---
 
   const renderModelSelector = (
-    category: 'llm' | 'image' | 'video',
+    category: 'llm' | 'image' | 'video' | 'tts',
     options: { value: string; label: string }[],
   ) => {
     const catConfig = config[category];
-    const setProvider = category === 'llm' ? setLLMProvider : category === 'image' ? setImageProvider : setVideoProvider;
-    const setFallbackFn = category === 'llm' ? setLLMFallback : category === 'image' ? setImageFallback : setVideoFallback;
+    if (!catConfig) {
+      return <Alert type="warning" message={`Category ${category} not configured`} />;
+    }
+    const setProvider =
+      category === 'llm' ? setLLMProvider
+      : category === 'image' ? setImageProvider
+      : category === 'video' ? setVideoProvider
+      : setTTSProvider;
+    // TTS 暂不支持 fallback selector(setTTSFallback 不存在)
+    const setFallbackFn =
+      category === 'llm' ? setLLMFallback
+      : category === 'image' ? setImageFallback
+      : category === 'video' ? setVideoFallback
+      : (() => {});
     const categoryEndpoints = getEndpointsByCategory(category);
+    const showFallback = category !== 'tts';
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -363,16 +423,18 @@ const ProviderSettings: React.FC = () => {
               options={options}
             />
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.fallback')}</div>
-            <Select
-              style={{ width: '100%' }}
-              value={catConfig.fallback}
-              onChange={(v) => setFallbackFn(v as never, catConfig.fallbackEndpointId)}
-              options={[{ value: '', label: '— None —' }, ...options]}
-              allowClear
-            />
-          </div>
+          {showFallback && (
+            <div style={{ flex: 1 }}>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.fallback')}</div>
+              <Select
+                style={{ width: '100%' }}
+                value={(catConfig as { fallback?: string }).fallback}
+                onChange={(v) => setFallbackFn(v as never, (catConfig as { fallbackEndpointId?: string }).fallbackEndpointId)}
+                options={[{ value: '', label: '— None —' }, ...options]}
+                allowClear
+              />
+            </div>
+          )}
         </div>
 
         {categoryEndpoints.length > 0 && (
@@ -387,6 +449,16 @@ const ProviderSettings: React.FC = () => {
               allowClear
             />
           </div>
+        )}
+
+        {/* TTS 额外字段:voice / speed 等(从 TTSProviderConfig 读) */}
+        {category === 'tts' && (
+          <Alert
+            type="info"
+            showIcon
+            message={t('provider.tts.voiceTip')}
+            description={t('provider.tts.voiceDesc')}
+          />
         )}
       </div>
     );
@@ -422,6 +494,11 @@ const ProviderSettings: React.FC = () => {
             key: 'video',
             label: t('provider.video'),
             children: <Card size="small">{renderModelSelector('video', VIDEO_PROVIDER_OPTIONS)}</Card>,
+          },
+          {
+            key: 'tts',
+            label: t('provider.tts'),
+            children: <Card size="small">{renderModelSelector('tts', TTS_PROVIDER_OPTIONS)}</Card>,
           },
         ]}
       />
@@ -575,19 +652,23 @@ const ProviderSettings: React.FC = () => {
               options={
                 (addCategory === 'llm' ? LLM_PROVIDER_OPTIONS
                 : addCategory === 'image' ? IMAGE_PROVIDER_OPTIONS
-                : VIDEO_PROVIDER_OPTIONS) as { value: string; label: string }[]
+                : addCategory === 'video' ? VIDEO_PROVIDER_OPTIONS
+                : TTS_PROVIDER_OPTIONS) as { value: string; label: string }[]
               }
               onChange={(value) => {
                 form.setFieldsValue({ baseUrl: getProviderDefaultUrl(value) });
               }}
             />
           </Form.Item>
-          <Form.Item name="baseUrl" label={t('provider.endpointUrl')} rules={[{ required: true }]}>
-            <Input />
+          <Form.Item name="baseUrl" label={t('provider.endpointUrl')} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]} extra={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : undefined}>
+            <Input placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : ''} />
           </Form.Item>
-          <Form.Item name="apiKey" label={t('provider.apiKey')} rules={[{ required: true }]}>
-            <Input.Password placeholder={t('provider.apiKeyPlaceholder')} />
+          <Form.Item name="apiKey" label={t('provider.apiKey')} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
+            <Input.Password placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsNoKey') : t('provider.apiKeyPlaceholder')} />
           </Form.Item>
+          {watchProvider === 'edge-tts' && (
+            <Alert type="info" showIcon message={t('provider.edgeTtsHint')} style={{ marginTop: 4 }} />
+          )}
         </Form>
       </Modal>
     </div>

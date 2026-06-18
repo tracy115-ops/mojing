@@ -29,6 +29,27 @@ export interface ComposeRequest {
 export interface ComposeResult {
   outputPath: string;
   durationSeconds?: number;
+  sizeBytes?: number;
+}
+
+export interface MergeAudioRequest {
+  videoPath: string;
+  audioPath: string;
+  outputPath: string;
+}
+
+export interface MergeAudioResult {
+  outputPath: string;
+}
+
+export interface WriteDataUriRequest {
+  dataUri: string;
+  outputPath: string;
+}
+
+export interface WriteDataUriResult {
+  savedPath: string;
+  bytes: number;
 }
 
 /** 是否在 Tauri 桌面环境内 */
@@ -58,4 +79,29 @@ export async function downloadClip(url: string, destDir: string, filename: strin
 
 export async function composeClips(req: ComposeRequest): Promise<ComposeResult> {
   return invoke<ComposeResult>('ffmpeg_compose_clips', { req });
+}
+
+export async function mergeAudio(req: MergeAudioRequest): Promise<MergeAudioResult> {
+  return invoke<MergeAudioResult>('ffmpeg_merge_audio', { req });
+}
+
+export async function writeDataUri(req: WriteDataUriRequest): Promise<WriteDataUriResult> {
+  return invoke<WriteDataUriResult>('ffmpeg_write_data_uri', { req });
+}
+
+export interface ExportRequest {
+  sourcePath: string;
+  outputPath: string;
+  /** Target vertical resolution. 0/null = keep original. */
+  targetHeight?: number;
+}
+
+export interface ExportResult {
+  outputPath: string;
+  durationSeconds?: number;
+  sizeBytes?: number;
+}
+
+export async function exportVideo(req: ExportRequest): Promise<ExportResult> {
+  return invoke<ExportResult>('ffmpeg_export', { req });
 }

@@ -4,6 +4,9 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 
 mod ffmpeg;
+mod logging;
+pub use ffmpeg::{ffmpeg_probe, ffmpeg_download_clip, ffmpeg_compose_clips, ffmpeg_merge_audio, ffmpeg_write_data_uri, ffmpeg_export};
+pub use logging::{log_write, log_path};
 
 #[tauri::command]
 async fn write_export_file(path: String, content: String) -> Result<(), String> {
@@ -19,9 +22,14 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             write_export_file,
-            ffmpeg::ffmpeg_probe,
-            ffmpeg::ffmpeg_download_clip,
-            ffmpeg::ffmpeg_compose_clips
+            ffmpeg_probe,
+            ffmpeg_download_clip,
+            ffmpeg_compose_clips,
+            ffmpeg_merge_audio,
+            ffmpeg_write_data_uri,
+            ffmpeg_export,
+            log_write,
+            log_path
         ])
         .setup(|app| {
             // System tray

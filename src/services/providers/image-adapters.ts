@@ -150,6 +150,261 @@ export class KlingImageProvider extends BaseImageProvider {
   }
 }
 
+// --- 智谱 CogView API ---
+// 文档:https://open.bigmodel.cn/dev/api/image-generation
+// POST {baseUrl}/images/generations
+// 鉴权:Bearer JWT(用户在智谱开放平台拿的 API Key 直接当 Bearer 用)
+// 返回:{ data: [{ url }] } (异步任务模式也有,这里走同步)
+
+export class CogViewProvider extends BaseImageProvider {
+  readonly providerId = 'cogview';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const model = request.model || 'cogview-3-plus';
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    // CogView 用 size 字段,格式 "宽x高"
+    const body: Record<string, unknown> = {
+      model,
+      prompt: request.prompt,
+      size: `${width}x${height}`,
+    };
+
+    const response = await fetch(`${this.endpoint.baseUrl}/images/generations`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(180_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`CogView API error ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    const image = data.data?.[0];
+
+    return {
+      imageData: image?.url ?? image?.b64_json ?? '',
+      width,
+      height,
+      model,
+      provider: 'cogview',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+}
+
+// --- 阿里通义万相 Wanx API ---
+// 文档:https://help.aliyun.com/zh/dashscope/developer-reference/api-details-9
+// 走 DashScope OpenAI 兼容接口
+// POST {baseUrl}/services/aigc/text2image/image-synthesis
+// 鉴权:Bearer apiKey
+// 异步任务:返回 task_id,需轮询
+
+export class WanxProvider extends BaseImageProvider {
+  readonly providerId = 'wanx';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const model = request.model || 'wanx-v1';
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    // 通义 size 格式 "1024*1024"
+    const size = `${width}*${height}`;
+
+    const submitResponse = await fetch(`${this.endpoint.baseUrl}/services/aigc/text2image/image-synthesis`, {
+      method: 'POST',
+      headers: {
+        ...this.getHeaders(),
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify({
+        model,
+        input: { prompt: request.prompt },
+        parameters: {
+          size,
+          n: 1,
+          ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
+        },
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!submitResponse.ok) {
+      const text = await submitResponse.text().catch(() => '');
+      throw new Error(`Wanx submit error ${submitResponse.status}: ${text}`);
+    }
+
+    const submitData = await submitResponse.json();
+    const taskId = submitData.output?.task_id;
+    if (!taskId) throw new Error('Wanx: no task_id returned');
+
+    // 轮询任务状态
+    const deadline = startTime + 180_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const statusResp = await fetch(`${this.endpoint.baseUrl}/tasks/${taskId}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!statusResp.ok) {
+        const text = await statusResp.text().catch(() => '');
+        throw new Error(`Wanx status error ${statusResp.status}: ${text}`);
+      }
+      const statusData = await statusResp.json();
+      const status = statusData.output?.task_status;
+      if (status === 'SUCCEEDED') {
+        const url = statusData.output?.results?.[0]?.url ?? '';
+        return {
+          imageData: url,
+          width,
+          height,
+          model,
+          provider: 'wanx',
+          latencyMs: Date.now() - startTime,
+        };
+      }
+      if (status === 'FAILED') {
+        throw new Error(`Wanx task failed: ${statusData.output?.message ?? 'unknown'}`);
+      }
+      // PENDING / RUNNING 继续
+    }
+    throw new Error('Wanx task timed out (180s)');
+  }
+}
+
+// --- 字节即梦 Jimeng API (火山方舟兼容) ---
+// 走火山方舟 visual service,异步任务模式
+// 文档:https://www.volcengine.com/docs/6791/1397048
+// 这里走简化的 OpenAI 兼容路径 — 字节即梦 AIGC 图片生成
+// POST {baseUrl}/api/v3/contents/generations/tasks (视觉)
+
+export class JimengProvider extends BaseImageProvider {
+  readonly providerId = 'jimeng';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    const model = request.model || 'doubao-seedream-3-0-t2i-250415';
+
+    const submitResp = await fetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        model,
+        content: [
+          {
+            text: request.prompt,
+            type: 'text',
+          },
+        ],
+        parameters: {
+          width,
+          height,
+          ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
+        },
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!submitResp.ok) {
+      const text = await submitResp.text().catch(() => '');
+      throw new Error(`Jimeng submit error ${submitResp.status}: ${text}`);
+    }
+
+    const submitData = await submitResp.json();
+    const taskId = submitData.id;
+    if (!taskId) throw new Error('Jimeng: no task id returned');
+
+    const deadline = startTime + 180_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const resp = await fetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks/${taskId}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`Jimeng status error ${resp.status}: ${text}`);
+      }
+      const data = await resp.json();
+      const status = data.status;
+      if (status === 'succeeded') {
+        const url = data.content?.image_url ?? data.output?.image_url ?? '';
+        return {
+          imageData: url,
+          width,
+          height,
+          model,
+          provider: 'jimeng',
+          latencyMs: Date.now() - startTime,
+        };
+      }
+      if (status === 'failed') {
+        throw new Error(`Jimeng task failed: ${data.error?.message ?? 'unknown'}`);
+      }
+    }
+    throw new Error('Jimeng task timed out (180s)');
+  }
+}
+
+// --- Ideogram API ---
+// 文档:https://developer.ideogram.ai/api-reference#tag/Image-Generation/operation/generate
+// POST {baseUrl}/v1/ideogram/v3/generate (form/multipart 或 json)
+
+export class IdeogramProvider extends BaseImageProvider {
+  readonly providerId = 'ideogram';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    const model = request.model || 'V_3';
+
+    const body: Record<string, unknown> = {
+      model,
+      prompt: request.prompt,
+      aspect_ratio: `${width}:${height}`,
+      magic_prompt_option: 'OFF',
+      num_images: 1,
+    };
+
+    if (request.negativePrompt) {
+      body.negative_prompt = request.negativePrompt;
+    }
+
+    const response = await fetch(`${this.endpoint.baseUrl}/ideogram/v1/generate`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(180_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Ideogram API error ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    const image = data.data?.[0];
+
+    return {
+      imageData: image?.url ?? '',
+      width,
+      height,
+      model,
+      provider: 'ideogram',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+}
+
 // --- Factory ---
 
 export function createImageProvider(
@@ -165,6 +420,14 @@ export function createImageProvider(
       return new SDWebUIProvider(endpoint);
     case 'kling-image':
       return new KlingImageProvider(endpoint);
+    case 'cogview':
+      return new CogViewProvider(endpoint);
+    case 'wanx':
+      return new WanxProvider(endpoint);
+    case 'jimeng':
+      return new JimengProvider(endpoint);
+    case 'ideogram':
+      return new IdeogramProvider(endpoint);
     default:
       // Assume OpenAI-compatible image API
       return new DALLEProvider(endpoint);
