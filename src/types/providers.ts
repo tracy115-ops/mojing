@@ -24,6 +24,7 @@ export type ImageProviderId =
   | 'wanx'
   | 'jimeng'
   | 'ideogram'
+  | 'agnes-image'
   | 'custom';
 
 export type VideoProviderId =
@@ -32,6 +33,7 @@ export type VideoProviderId =
   | 'kling'
   | 'vidu'
   | 'pika'
+  | 'agnes-video'
   | 'custom';
 
 export type TTSProviderId =
