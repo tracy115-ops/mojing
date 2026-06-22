@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Modal, Empty, Image, Typography, Tag, Space, Card, Divider, Alert,
+  Modal, Empty, Image, Typography, Tag, Space, Card, Divider, Alert, Spin,
   Collapse, Tooltip, Statistic, Row, Col,
 } from 'antd';
 import {
@@ -189,10 +189,48 @@ export function renderStageContent(
 ): React.ReactNode {
   switch (stage) {
     case 'script_slicing':
+      // 步 1 产出的是 RawShot(章节切片),但落到 project.shots 是 placeholder。
+      // 这里显示章节信息(inputSummary)+ 已切片数,而不是误导性的"分镜 (0)"。
+      return (
+        <Section title={t('video.artifacts.scriptSlicing')}>
+          {project.shots.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.slicingInProgress')} />
+          ) : (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 8 }}
+                message={t('video.artifacts.shotsSliced', { count: project.shots.length })}
+              />
+              {project.shots.slice(0, 5).map((s) => (
+                <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                    <Space>
+                      <Tag color="blue">{t('video.gen.shot')} {s.index + 1}</Tag>
+                    </Space>
+                    <Paragraph style={{ margin: 0, fontSize: 12 }} ellipsis={{ rows: 3 }}>
+                      {s.sourceText}
+                    </Paragraph>
+                  </Space>
+                </Card>
+              ))}
+              {project.shots.length > 5 && (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {t('video.artifacts.andMore', { count: project.shots.length - 5 })}
+                </Text>
+              )}
+            </>
+          )}
+        </Section>
+      );
+
     case 'storyboard_prompt':
       return (
         <Section title={`${t('video.artifacts.shots')} (${project.shots.length})`}>
-          {project.shots.length === 0 ? <Empty /> : project.shots.map((s) => (
+          {project.shots.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.shotsEmptyRunning')} />
+          ) : project.shots.map((s) => (
             <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Space>
@@ -361,7 +399,9 @@ export function renderStageContent(
           {project.finalVideoUrl ? (
             <video src={project.finalVideoUrl} controls style={{ width: '100%', maxHeight: 500, background: '#000' }} />
           ) : (
-            <Empty />
+            <div style={{ padding: 24, textAlign: 'center' }}>
+              <Spin tip={t('video.artifacts.composingInProgress')} />
+            </div>
           )}
           {(project.finalDurationSeconds || project.finalSizeBytes) && (
             <div style={{ marginTop: 8 }}>
