@@ -39,6 +39,7 @@ interface RouterInvocationFields {
   endpointId?: string;
   prompt?: string;
   sourceLabel?: string;
+  baseUrl?: string;
 }
 
 async function runWithInvocation<T extends { latencyMs?: number; model: string; provider: string; usage?: { promptTokens?: number; completionTokens?: number }; durationSeconds?: number }>(
@@ -81,7 +82,7 @@ async function runWithInvocation<T extends { latencyMs?: number; model: string; 
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    void logger.error(`[router] ${fields.category} FAIL ${fields.provider}/${fields.model} endpoint=${fields.endpointId ?? '-'} : ${msg}`, 'router');
+    void logger.error(`[router] ${fields.category} FAIL ${fields.provider}/${fields.model} endpoint=${fields.endpointId ?? '-'} baseUrl=${fields.baseUrl ?? '-'} : ${msg}`, 'router');
     const invocation = {
       category: fields.category,
       provider: fields.provider,
@@ -155,6 +156,7 @@ class ProviderRouter {
         model: requestWithModel.model ?? effectiveModel,
         endpointId: endpoint.id,
         prompt: promptText,
+        baseUrl: endpoint.baseUrl,
       },
       async () => {
         try {
@@ -215,6 +217,7 @@ class ProviderRouter {
         model: requestWithModel.model ?? effectiveModel,
         endpointId: endpoint.id,
         prompt: requestWithModel.prompt,
+        baseUrl: endpoint.baseUrl,
       },
       async () => {
         try {
@@ -264,6 +267,7 @@ class ProviderRouter {
         model: requestWithModel.model ?? effectiveModel,
         endpointId: endpoint.id,
         prompt: requestWithModel.prompt,
+        baseUrl: endpoint.baseUrl,
       },
       async () => {
         try {
@@ -322,6 +326,7 @@ class ProviderRouter {
         model: requestWithDefaults.model ?? config.defaultModel,
         endpointId: endpoint.id,
         prompt: requestWithDefaults.text,
+        baseUrl: endpoint.baseUrl,
       },
       async () => {
         try {

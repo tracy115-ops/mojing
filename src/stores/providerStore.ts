@@ -38,12 +38,14 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
   wanx: 'image',
   jimeng: 'image',
   ideogram: 'image',
+  'agnes-image': 'image',
   // Video
   sora: 'video',
   runway: 'video',
   kling: 'video',
   vidu: 'video',
   pika: 'video',
+  'agnes-video': 'video',
   // TTS
   'openai-tts': 'tts',
   'doubao-tts': 'tts',
@@ -69,26 +71,26 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   image: {
     primary: 'dalle',
     models: {
-      character: 'dall-e-3',
-      scene: 'dall-e-3',
-      panel: 'dall-e-3',
-      'style-transfer': 'dall-e-3',
-      storyboard: 'dall-e-3',
+      character: '',
+      scene: '',
+      panel: '',
+      'style-transfer': '',
+      storyboard: '',
     },
-    defaultModel: 'dall-e-3',
+    defaultModel: '',
     defaultWidth: 1024,
     defaultHeight: 1024,
   },
   video: {
     primary: 'kling',
     models: {
-      clip: 'kling-v2',
-      transition: 'kling-v2',
-      'full-scene': 'kling-v2',
-      'lip-sync': 'kling-v2',
-      effects: 'kling-v2',
+      clip: '',
+      transition: '',
+      'full-scene': '',
+      'lip-sync': '',
+      effects: '',
     },
-    defaultModel: 'kling-v2',
+    defaultModel: '',
     defaultResolution: '1920x1080',
     defaultFps: 24,
   },
@@ -328,6 +330,79 @@ export const useProviderStore = create<ProviderState>()(
 
         const baseUrl = endpoint.baseUrl.replace(/\/+$/, '');
 
+        // 图像/视频/TTS provider 不存在 /models 或 /chat/completions,
+        // 旧逻辑一律按 LLM 路径探活,导致这些 endpoint 永远显示"未连接"。
+        // 这里按 provider 类别分发到各自存在的探测路径。
+        const category = endpoint.category ?? PROVIDER_CATEGORY[endpoint.provider];
+
+        // 图像 provider:GET /models 大多不存在,直接发一个最小生成请求,
+        // 任何 HTTP 响应(即使是 400/402/401)都说明服务可达。
+        if (category === 'image') {
+          const imageUrl = /\/v\d+$/.test(baseUrl)
+            ? `${baseUrl}/images/generations`
+            : `${baseUrl}/v1/images/generations`;
+          try {
+            const startTime = Date.now();
+            const response = await fetch(imageUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${endpoint.apiKey}`,
+                ...endpoint.customHeaders,
+              },
+              body: JSON.stringify({
+                model: 'test',
+                prompt: 'ping',
+                size: '1x1',
+              }),
+              signal: AbortSignal.timeout(10_000),
+            });
+            health.latencyMs = Date.now() - startTime;
+            // 任何 HTTP 响应(非 0 / 非网络错误)都说明服务可达
+            // 401/403 = auth 问题但服务通;400/402/404 = 服务通但参数错;200 = 完全通
+            health.available = response.status >= 100 && response.status < 600;
+            if (!health.available) {
+              health.error = `POST /images/generations → no HTTP response`;
+            }
+          } catch (err) {
+            health.error = err instanceof Error ? err.message : 'Image probe failed';
+          }
+          set((s) => ({ healthStatus: { ...s.healthStatus, [endpointId]: health } }));
+          return health;
+        }
+
+        // 视频 provider:同样,直接 POST 一个最小生成请求探测可达性
+        if (category === 'video') {
+          const videoUrl = /\/v\d+$/.test(baseUrl)
+            ? `${baseUrl}/videos/generations`
+            : `${baseUrl}/v1/videos/generations`;
+          try {
+            const startTime = Date.now();
+            const response = await fetch(videoUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${endpoint.apiKey}`,
+                ...endpoint.customHeaders,
+              },
+              body: JSON.stringify({
+                model: 'test',
+                prompt: 'ping',
+              }),
+              signal: AbortSignal.timeout(10_000),
+            });
+            health.latencyMs = Date.now() - startTime;
+            health.available = response.status >= 100 && response.status < 600;
+            if (!health.available) {
+              health.error = `POST /videos/generations → no HTTP response`;
+            }
+          } catch (err) {
+            health.error = err instanceof Error ? err.message : 'Video probe failed';
+          }
+          set((s) => ({ healthStatus: { ...s.healthStatus, [endpointId]: health } }));
+          return health;
+        }
+
         // Compute /models and /chat/completions URLs
         const modelsUrl = (() => {
           if (/\/v\d+$/.test(baseUrl)) return `${baseUrl}/models`;
@@ -526,4 +601,27 @@ async function probeEdgeTtsWebSocket(): Promise<boolean> {
       resolve(false);
     };
   });
+}
+
+// --- Boot diagnostics dump ---
+// log.ts 启动后会调这个函数,把当前 provider 配置打到日志里。
+// 排查"为什么生成视频走了 kling 而不是 agnes"这类问题的关键信息。
+// 注意:API key 用占位符,不写盘 —— 避免泄漏。
+if (typeof window !== 'undefined') {
+  (window as unknown as { __MOJING_PROVIDER_DUMP__?: () => string }).__MOJING_PROVIDER_DUMP__ = () => {
+    try {
+      const s = useProviderStore.getState();
+      const fmt = (cat: 'llm' | 'image' | 'video' | 'tts') => {
+        const cfg = s.config[cat];
+        if (!cfg) return `${cat}=(unset)`;
+        const epId = (cfg as { endpointId?: string }).endpointId;
+        const ep = epId ? s.endpoints.find((e) => e.id === epId) : s.getEndpointsByCategory(cat)[0];
+        const epDesc = ep ? `${ep.provider}@${ep.baseUrl}(enabled=${ep.enabled})` : '(none)';
+        return `${cat}.primary=${cfg.primary} endpoint=${epDesc}`;
+      };
+      return `[${fmt('llm')} | ${fmt('image')} | ${fmt('video')}]`;
+    } catch (e) {
+      return `dump-failed: ${String(e)}`;
+    }
+  };
 }
