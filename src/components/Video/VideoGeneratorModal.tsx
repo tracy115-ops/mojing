@@ -33,6 +33,7 @@ import type {
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import ExportVideoModal from './ExportVideoModal';
 import StageArtifactsModal from './StageArtifactsModal';
+import ProviderModelsSummary from './ProviderModelsSummary';
 import type { NovelMetadata, NovelChapter } from '@/types';
 
 const { Text, Paragraph, Title } = Typography;
@@ -405,6 +406,11 @@ const ConfigPane: React.FC<ConfigPaneProps> = ({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 将使用的 provider/model(读设置) */}
+      <div style={{ marginTop: 12 }}>
+        <ProviderModelsSummary />
       </div>
 
       {/* Estimate hint */}

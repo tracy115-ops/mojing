@@ -23,7 +23,6 @@ import { useVideoStore } from '@/stores/videoStore';
 import { useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
 import { providerRouter } from '@/services/providers';
-import type { VideoProviderId, ApiEndpoint } from '@/types/providers';
 import type {
   AspectRatio, GeneratedClip, DirectSourceMode, PipelineOptions, CharacterAnchor,
   VideoStage,
@@ -32,20 +31,13 @@ import { DIRECT_MODE_PRESETS } from '@/types/video';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
 import { runPipeline } from '@/services/video/core/pipeline-runner';
 import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import ProviderModelsSummary from './ProviderModelsSummary';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
 
-const VIDEO_PROVIDER_MODELS: Partial<Record<VideoProviderId, string[]>> = {
-  kling: ['kling-v2', 'kling-v2-pro', 'kling-v2-master', 'kling-v1-6'],
-  runway: ['gen-3-alpha', 'gen-3-alpha-turbo', 'gen-2'],
-  vidu: ['vidu-1.5', 'vidu-1.0'],
-  sora: ['sora-2'],
-  pika: ['pika-1.5', 'pika-1.0'],
-  custom: [],
-};
-
-const VIDEO_PROVIDER_IDS: VideoProviderId[] = ['kling', 'runway', 'vidu', 'sora', 'pika', 'custom'];
+// Video provider IDs are now derived from providerStore.getEndpointsByCategory('video'),
+// which uses PROVIDER_CATEGORY as the single source of truth.
 // NOTE: previously we kept separate LLM/IMAGE/TTS whitelists here and filtered endpoints
 // locally. That diverged from providerStore's own classification and caused false
 // "no provider configured" errors when a user's endpoint matched one list but not the
@@ -76,8 +68,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
     [allEndpoints, getEndpointsByCategory],
   );
   const videoEndpoints = useMemo(
-    () => allEndpoints.filter((e) => e.enabled && (VIDEO_PROVIDER_IDS as string[]).includes(e.provider)),
-    [allEndpoints],
+    () => getEndpointsByCategory('video'),
+    [getEndpointsByCategory],
   );
   const ttsEndpoints = useMemo(
     () => getEndpointsByCategory('tts'),
@@ -97,8 +89,6 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT_EN);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [shotDuration, setShotDuration] = useState<5 | 10>(5);
-  const [selectedEndpointId, setSelectedEndpointId] = useState<string | undefined>(undefined);
-  const [selectedModel, setSelectedModel] = useState<string | undefined>(undefined);
   const [optimizing, setOptimizing] = useState(false);
 
   // 步骤账本预览(指向最近一次 direct 生成的临时 projectId)
@@ -130,28 +120,14 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
     }
   };
 
-  const effectiveEndpointId = selectedEndpointId ?? videoEndpoints[0]?.id;
-  const selectedEndpoint: ApiEndpoint | undefined = useMemo(
-    () => videoEndpoints.find((e) => e.id === effectiveEndpointId),
-    [videoEndpoints, effectiveEndpointId],
-  );
-
-  const availableModels = useMemo(() => {
-    if (!selectedEndpoint) return [] as string[];
-    return VIDEO_PROVIDER_MODELS[selectedEndpoint.provider as VideoProviderId] ?? [];
-  }, [selectedEndpoint]);
-
-  const effectiveModel = selectedModel ?? availableModels[0];
+  // 方案 A:不再在 Modal 内选择 provider/model。所有生成调用直接走 router,
+  // router 自动从 providerStore.config 读 primary + 任务模型。
+  const activeVideoEndpoint = useProviderStore((s) => s.getActiveEndpoint('video'));
 
   const dims: Record<AspectRatio, { w: number; h: number }> = {
     '16:9': { w: 1920, h: 1080 },
     '9:16': { w: 1080, h: 1920 },
     '1:1': { w: 1080, h: 1080 },
-  };
-
-  const handleEndpointChange = (id: string) => {
-    setSelectedEndpointId(id);
-    setSelectedModel(undefined);
   };
 
   const updateOption = (key: keyof PipelineOptions, value: boolean | number) => {
@@ -207,12 +183,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       setDirectError(t('video.direct.errorEmptyPrompt'));
       return;
     }
-    if (!selectedEndpoint) {
+    if (!activeVideoEndpoint) {
       setDirectError(t('video.direct.errorNoProvider'));
-      return;
-    }
-    if (!effectiveModel) {
-      setDirectError(t('video.direct.errorNoModel'));
       return;
     }
     // extract/multishot 模式需要 image provider 才能跑下游
@@ -271,8 +243,6 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           response = await providerRouter.generateVideo({
             taskType: 'clip',
             prompt: trimmed,
-            model: effectiveModel,
-            endpointId: selectedEndpoint.id,
             width: w,
             height: h,
             durationSeconds: shotDuration,
@@ -322,8 +292,6 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
             fps: 24,
             videoTier: 'value',
           },
-          endpointId: selectedEndpoint.id,
-          model: effectiveModel,
           sceneSource: 'direct',
           sourceMode: mode,
         },
@@ -607,35 +575,12 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           </Form.Item>
         )}
 
-        {/* Provider/Model/Aspect/Duration */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-          <Form.Item label={t('video.direct.endpoint')} style={{ flex: 1.4, marginBottom: 0 }}>
-            <Select
-              value={effectiveEndpointId}
-              onChange={handleEndpointChange}
-              disabled={generating || videoEndpoints.length === 0}
-              style={{ width: '100%' }}
-              placeholder={t('video.direct.endpointPlaceholder')}
-              options={videoEndpoints.map((ep) => ({
-                value: ep.id,
-                label: `${ep.name} (${t(`provider.provider.${ep.provider}` as const, { defaultValue: ep.provider })})`,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item label={t('video.direct.model')} style={{ flex: 1, marginBottom: 0 }}>
-            <Select
-              value={effectiveModel}
-              onChange={(v) => setSelectedModel(v)}
-              disabled={generating || !selectedEndpoint}
-              style={{ width: '100%' }}
-              placeholder={t('video.direct.modelPlaceholder')}
-              mode={availableModels.length === 0 ? 'tags' : undefined}
-              options={availableModels.map((m) => ({ value: m, label: m }))}
-              allowClear
-            />
-          </Form.Item>
+        {/* 本次将使用的 provider/model(只读,在设置页修改) */}
+        <div style={{ marginBottom: 8 }}>
+          <ProviderModelsSummary categories={mode === 'pure' ? ['video'] : ['video', 'image', 'llm']} />
         </div>
 
+        {/* Aspect/Duration */}
         <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
           <Form.Item label={t('video.direct.aspectRatio')} style={{ flex: 1, marginBottom: 0 }}>
             <Select
@@ -775,7 +720,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               type="primary"
               icon={<VideoCameraOutlined />}
               loading={generating}
-              disabled={!hasVideoProvider || !prompt.trim() || !effectiveModel || (showAdvanced && !hasImageProvider)}
+              disabled={!hasVideoProvider || !prompt.trim() || (showAdvanced && !hasImageProvider)}
               onClick={handleGenerate}
             >
               {generating ? t('video.direct.generating') : t('video.direct.generate')}
