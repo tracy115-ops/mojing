@@ -8,7 +8,7 @@
 
 import React, { useState, useMemo } from 'react';
 import {
-  Typography, Tag, Steps, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu, Alert, Popconfirm,
+  Typography, Tag, Steps, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu, Alert, Popconfirm, Tooltip,
 } from 'antd';
 import {
   VideoCameraOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
@@ -20,7 +20,7 @@ import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
 import type { VideoStage, StoryboardShot } from '@/types/video';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
-import StageArtifactsModal from './StageArtifactsModal';
+import StageArtifactsModal, { renderStageContent, Section } from './StageArtifactsModal';
 import ExportVideoModal from './ExportVideoModal';
 
 const { Text, Title } = Typography;
@@ -51,6 +51,16 @@ function getShotStatus(
   if (clip) return 'done';
   if (currentStage === 'video_generation') return 'running';
   return 'pending';
+}
+
+function stageStatusColor(s: string): string {
+  switch (s) {
+    case 'completed': return 'success';
+    case 'running': return 'processing';
+    case 'error': return 'error';
+    case 'skipped': return 'default';
+    default: return 'default';
+  }
 }
 
 const ShotRow: React.FC<{
@@ -85,6 +95,8 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const stages = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.stages : undefined));
   const shots = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.shots : undefined));
   const clips = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.clips : undefined));
+  const sceneSpec = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.sceneSpec : undefined));
+  const project = useVideoStore((s) => (pipelineId ? s.projects[pipelineId] : undefined));
   const finalVideoUrl = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.finalVideoUrl : undefined));
   const finalMeta = useVideoStore(useShallow((s) => {
     if (!pipelineId) return { dur: undefined, size: undefined };
@@ -96,6 +108,9 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const setActivePipelineId = useVideoStore((s) => s.setActivePipelineId);
   const [artifactStage, setArtifactStage] = useState<VideoStage | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  // 用户点 Steps 上某个已完成步骤时,切换内联产物视图到该步骤。
+  // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
+  const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
 
   // 如果 pipelineId 关联到小说项目,显示小说标题;否则按 Direct 处理
   const novelTitle = useProjectStore((s) => {
@@ -125,6 +140,8 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const visibleStages = VIDEO_PIPELINE_STAGES.filter((s) => !DEFAULT_SKIPPED_STAGES.has(s));
   const activeStageIdx = currentStage ? VIDEO_PIPELINE_STAGES.indexOf(currentStage) : -1;
 
+  const completedStages = visibleStages.filter((s) => stages[s]?.status === 'completed');
+
   // 整体状态
   const overall: 'idle' | 'running' | 'complete' | 'error' = (() => {
     if (currentStage === 'complete') return 'complete';
@@ -135,7 +152,17 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const statusColor = { idle: 'default', running: 'processing', complete: 'success', error: 'error' }[overall];
   const statusLabel = t(`video.pipeline.status.${overall}`);
 
-  const completedStages = visibleStages.filter((s) => stages[s]?.status === 'completed');
+  // 内联产物展示聚焦的 stage:
+  // - 用户点了 Steps 上某个 stage → 用那个
+  // - 否则:如果当前在运行,聚焦当前 stage(看实时进度)
+  // - 否则:聚焦最近完成的 stage(看上一步产物)
+  // - 都没有:聚焦第一个 visible stage(占位)
+  const inlineStage: VideoStage = focusStage
+    ?? (currentStage && currentStage !== 'complete' && currentStage !== 'error' && currentStage !== 'idle'
+      ? currentStage
+      : null)
+    ?? completedStages[completedStages.length - 1]
+    ?? visibleStages[0];
 
   const sizeLabel = finalMeta.size
     ? `${(finalMeta.size / 1024 / 1024).toFixed(1)} MB`
@@ -249,14 +276,16 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               title: (
                 <span
                   style={completed ? { cursor: 'pointer', color: 'var(--accent-primary)' } : undefined}
-                  onClick={() => completed && setArtifactStage(stage)}
+                  onClick={() => completed && setFocusStage(stage)}
                 >
                   {t(`video.gen.stage.${stage}`)}
                   {completed && (
-                    <EyeOutlined
-                      style={{ marginLeft: 4, fontSize: 11 }}
-                      onClick={(e) => { e.stopPropagation(); setArtifactStage(stage); }}
-                    />
+                    <Tooltip title={t('video.pipeline.clickToView')}>
+                      <EyeOutlined
+                        style={{ marginLeft: 4, fontSize: 11 }}
+                        onClick={(e) => { e.stopPropagation(); setFocusStage(stage); }}
+                      />
+                    </Tooltip>
                   )}
                 </span>
               ),
@@ -291,6 +320,48 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
           <Divider style={{ margin: '12px 0' }} />
         </>
+      )}
+
+      {/* ── 当前步骤产物(内联展示,不再需要点 Modal) ── */}
+      {/* 用户在 Steps 上点击已完成/进行中的步骤可切换 focus;默认跟随当前 stage */}
+      {project && (
+        <Card
+          size="small"
+          style={{ marginBottom: 12 }}
+          title={
+            <Space size={6} wrap>
+              <Text strong>{t('video.pipeline.inlineArtifacts')}</Text>
+              <Tag color="blue">{t(`video.gen.stage.${inlineStage}`)}</Tag>
+              {stages[inlineStage]?.status && (
+                <Tag color={stageStatusColor(stages[inlineStage]!.status!)}>
+                  {t(`video.artifacts.status.${stages[inlineStage]!.status}`)}
+                </Tag>
+              )}
+              {/* 步骤切换器:点击 Steps 上任意完成/进行中的步骤即可切换内联视图 */}
+              {visibleStages
+                .filter((s) => stages[s]?.status === 'completed' || s === currentStage)
+                .map((s) => (
+                  <Tag
+                    key={s}
+                    style={{
+                      cursor: 'pointer',
+                      fontSize: 10,
+                      background: s === inlineStage ? 'var(--accent-primary)' : undefined,
+                      color: s === inlineStage ? '#fff' : undefined,
+                      borderColor: 'transparent',
+                    }}
+                    onClick={() => setFocusStage(s)}
+                  >
+                    {t(`video.gen.stage.${s}`)}
+                  </Tag>
+                ))}
+            </Space>
+          }
+        >
+          <div style={{ maxHeight: 480, overflowY: 'auto', paddingRight: 4 }}>
+            {renderStageContent(inlineStage, project, sceneSpec, t)}
+          </div>
+        </Card>
       )}
 
       {/* Shots list */}

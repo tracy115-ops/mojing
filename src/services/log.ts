@@ -119,6 +119,15 @@ export function installGlobalLogCapture(): void {
         : typeof reason === 'string'
           ? reason
           : JSON.stringify(reason);
+    // 已知噪音:tauri-plugin-http 在连接失败/中止时,内部资源句柄释放会
+    // 产生 "The resource id XXX is invalid" 类型的 rejection。这些不影响
+    // 业务逻辑,但会刷屏,淹没真实错误。这里降级到 debug,默认不写盘。
+    if (/resource id \d+ is invalid/i.test(msg)) {
+      void invokeLog('debug', `[noise] unhandledrejection: ${msg}`, 'window');
+      // 阻止默认处理,避免控制台额外噪音
+      e.preventDefault?.();
+      return;
+    }
     void invokeLog('error', `unhandledrejection: ${msg}`, 'window');
   });
 
@@ -133,11 +142,54 @@ export function installGlobalLogCapture(): void {
   // 启动一行 banner,方便在日志里快速找到"应用启动"边界
   void invokeLog('info', '═══ MoJing session start ═══', 'boot');
 
+  // 诊断:dump 实际生效的 CSP meta tag。Tauri 2 编译期会改写 CSP,
+  // 这条让我们能看到 webview 真正拿到的内容,排查 connect-src 是不是被拦。
+  try {
+    const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+    void invokeLog('info', `[boot] CSP meta: ${meta?.getAttribute('content') ?? '(none)'}`, 'boot');
+  } catch (e) {
+    void invokeLog('warn', `[boot] CSP meta read failed: ${String(e)}`, 'boot');
+  }
+  try {
+    void invokeLog('info', `[boot] location: ${location.href}`, 'boot');
+  } catch {}
+
+  // 诊断:启动后 5 秒,试一下对 klingai.com 的 HEAD 请求。
+  // 这条日志会告诉我们:CSP 是否真在拦这个域,还是别的原因。
+  setTimeout(async () => {
+    const targets = [
+      'https://api-beijing.klingai.com/',
+      'https://api.deepseek.com/',
+      'https://www.baidu.com/',
+    ];
+    for (const url of targets) {
+      const t0 = Date.now();
+      try {
+        const r = await fetch(url, { method: 'GET', mode: 'no-cors' });
+        void invokeLog('info', `[boot] probe ${url} ok ${r.status} ${r.type} ${Date.now() - t0}ms`, 'boot');
+      } catch (e) {
+        const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        void invokeLog('error', `[boot] probe ${url} FAIL ${Date.now() - t0}ms ${msg}`, 'boot');
+      }
+    }
+  }, 5000);
+
   // 启动后 3 秒、10 秒各打一次心跳日志。这两条不依赖任何用户操作,
   // 用于区分"日志路径坏了"还是"用户没操作"。如果这两条没出现,
   // 说明 Tauri invoke 在 banner 之后失效了(很可疑)。
   setTimeout(() => {
     void invokeLog('info', '[boot] heartbeat @3s', 'boot');
+    // 3 秒后 dump 当前 provider config + endpoints,方便排查"用户实际配了什么"。
+    // 这是诊断用户"为什么走了 kling 而不是 agnes"类问题的关键信息。
+    try {
+      const providerState = (window as unknown as { __MOJING_PROVIDER_DUMP__?: () => string }).__MOJING_PROVIDER_DUMP__;
+      if (typeof providerState === 'function') {
+        const dump = providerState();
+        void invokeLog('info', `[boot] provider config: ${dump}`, 'boot');
+      }
+    } catch (e) {
+      void invokeLog('debug', `[boot] provider dump failed: ${String(e)}`, 'boot');
+    }
   }, 3000);
   setTimeout(() => {
     void invokeLog('info', '[boot] heartbeat @10s', 'boot');

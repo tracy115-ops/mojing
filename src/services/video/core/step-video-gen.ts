@@ -118,19 +118,13 @@ function parseResolution(s: string): [number, number] {
 
 /**
  * 根据 tier 选默认模型 ID。
- * Phase 1 只接入了 Kling,后续按 tier 扩展到 Seedance / Veo / Sora。
+ *
+ * **重要**:返回空字符串,让 adapter 内置默认值生效。
+ * 之前硬编码 'kling-v2',导致切到 Agnes Video Provider 后
+ * 仍然传 'kling-v2' → Agnes API `model_not_found` 错误。
+ *
+ * 用户如果需要特定模型,应在「设置 → 任务模型 → 视频」里显式指定。
  */
-export function tierToDefaultModel(tier: VideoSpec['videoTier']): string {
-  switch (tier) {
-    case 'free':
-      return 'kling-v2';
-    case 'value':
-      return 'kling-v2';
-    case 'quality':
-      return 'kling-v2-pro';
-    case 'premium':
-      return 'kling-v2-pro';
-    default:
-      return 'kling-v2';
-  }
+export function tierToDefaultModel(_tier: VideoSpec['videoTier']): string {
+  return '';
 }

@@ -16,10 +16,12 @@ import {
   Divider,
   Steps,
   Alert,
+  AutoComplete,
 } from 'antd';
 import {
   PlusOutlined,
   DeleteOutlined,
+  EditOutlined,
   ApiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -38,6 +40,7 @@ import type {
   VideoProviderId,
   TTSProviderId,
   ApiEndpoint,
+  ProviderConfig,
 } from '@/types/providers';
 
 const LLM_PROVIDER_OPTIONS: { value: LLMProviderId; label: string }[] = [
@@ -57,6 +60,7 @@ const IMAGE_PROVIDER_OPTIONS: { value: ImageProviderId; label: string }[] = [
   { value: 'jimeng', label: 'Jimeng (即梦 / 字节)' },
   { value: 'kling-image', label: 'Kling (可灵)' },
   { value: 'ideogram', label: 'Ideogram' },
+  { value: 'agnes-image', label: 'Agnes Image (免费)' },
   { value: 'stable-diffusion', label: 'Stable Diffusion (本地)' },
   { value: 'flux', label: 'Flux (本地)' },
   { value: 'comfyui', label: 'ComfyUI (本地)' },
@@ -69,6 +73,7 @@ const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
   { value: 'kling', label: 'Kling (可灵)' },
   { value: 'vidu', label: 'Vidu' },
   { value: 'pika', label: 'Pika' },
+  { value: 'agnes-video', label: 'Agnes Video (免费)' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -79,32 +84,6 @@ const TTS_PROVIDER_OPTIONS: { value: TTSProviderId; label: string }[] = [
   { value: 'custom', label: 'Custom (OpenAI-compatible)' },
 ];
 
-const COMMON_LLM_MODELS = [
-  // OpenAI
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-  { value: 'o1', label: 'o1' },
-  { value: 'o3-mini', label: 'o3 Mini' },
-  // Claude
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
-  // DeepSeek
-  { value: 'deepseek-chat', label: 'DeepSeek Chat' },
-  { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
-  // Qwen
-  { value: 'qwen-max', label: 'Qwen Max' },
-  { value: 'qwen-plus', label: 'Qwen Plus' },
-  { value: 'qwen-turbo', label: 'Qwen Turbo' },
-  // Doubao
-  { value: 'doubao-1.5-pro', label: 'Doubao 1.5 Pro' },
-  { value: 'doubao-1.5-lite', label: 'Doubao 1.5 Lite' },
-  // GLM
-  { value: 'glm-4-plus', label: 'GLM-4 Plus' },
-  { value: 'glm-4-flash', label: 'GLM-4 Flash' },
-  { value: 'glm-4-air', label: 'GLM-4 Air' },
-];
 
 const LLM_TASK_MODELS = [
   { key: 'planning', labelKey: 'provider.task.planning' },
@@ -113,6 +92,63 @@ const LLM_TASK_MODELS = [
   { key: 'extraction', labelKey: 'provider.task.extraction' },
   { key: 'translation', labelKey: 'provider.task.translation' },
 ];
+
+const IMAGE_TASK_MODELS = [
+  { key: 'character', labelKey: 'provider.task.character' },
+  { key: 'scene', labelKey: 'provider.task.scene' },
+  { key: 'panel', labelKey: 'provider.task.panel' },
+  { key: 'style-transfer', labelKey: 'provider.task.style-transfer' },
+  { key: 'storyboard', labelKey: 'provider.task.storyboard' },
+];
+
+const VIDEO_TASK_MODELS = [
+  { key: 'clip', labelKey: 'provider.task.clip' },
+  { key: 'transition', labelKey: 'provider.task.transition' },
+  { key: 'full-scene', labelKey: 'provider.task.full-scene' },
+  { key: 'lip-sync', labelKey: 'provider.task.lip-sync' },
+  { key: 'effects', labelKey: 'provider.task.effects' },
+];
+
+// Per-provider suggested models — shown as autocomplete dropdown options.
+// User can still type any model name not in this list (the input is free-form).
+const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
+  // LLM
+  openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
+  claude: ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
+  doubao: ['doubao-1.5-pro', 'doubao-1.5-lite'],
+  glm: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'],
+  // Image
+  dalle: ['dall-e-3', 'dall-e-2'],
+  'kling-image': ['kling-v1', 'kling-v1-5', 'kling-v2'],
+  cogview: ['cogview-3-plus', 'cogview-3-flash'],
+  wanx: ['wanx-v1', 'wanx-2.1'],
+  jimeng: ['doubao-seedream-3-0-t2i-250415', 'doubao-seedream-3-0-i2i-250415'],
+  ideogram: ['V_3', 'V_2'],
+  'agnes-image': ['agnes-image-2.1-flash', 'agnes-image-2.0-flash'],
+  // Video
+  kling: ['kling-v2', 'kling-v2-pro', 'kling-v2-master', 'kling-v1-6'],
+  runway: ['gen4_turbo', 'gen3-alpha'],
+  vidu: ['vidu-1.5', 'vidu-1.0'],
+  pika: ['pika-1.5', 'pika-1.0'],
+  'agnes-video': ['agnes-video-v2.0'],
+  // TTS
+  'openai-tts': ['tts-1', 'tts-1-hd'],
+  'doubao-tts': ['doubao-tts'],
+  'edge-tts': ['edge-tts'],
+};
+
+/** Return the suggestion list for the *primary* provider of a given category.
+ *  This drives the autocomplete dropdown — user can still type anything else. */
+function getModelSuggestions(
+  config: ProviderConfig,
+  category: 'llm' | 'image' | 'video' | 'tts',
+): string[] {
+  const primary = config[category]?.primary;
+  if (!primary) return [];
+  return PROVIDER_MODEL_SUGGESTIONS[primary] ?? [];
+}
 
 type StepKey = 'endpoints' | 'models' | 'tasks';
 
@@ -133,11 +169,13 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   wanx: 'https://dashscope.aliyuncs.com/api/v1',
   jimeng: 'https://ark.cn-beijing.volces.com',
   ideogram: 'https://api.ideogram.ai/v1',
+  'agnes-image': 'https://apihub.agnes-ai.com',
   sora: 'https://api.openai.com/v1',
   runway: 'https://api.runwayml.com',
   kling: 'https://api-beijing.klingai.com',
   vidu: 'https://api.vidu.studio',
   pika: 'https://api.pika.art',
+  'agnes-video': 'https://apihub.agnes-ai.com',
   'openai-tts': 'https://api.openai.com/v1',
   'doubao-tts': 'https://ark.cn-beijing.volces.com/api/v3',
   'edge-tts': 'https://speech.platform.bing.com',
@@ -152,6 +190,7 @@ const ProviderSettings: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<StepKey>('endpoints');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addCategory, setAddCategory] = useState<'llm' | 'image' | 'video' | 'tts'>('llm');
+  const [editingEndpoint, setEditingEndpoint] = useState<ApiEndpoint | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [form] = Form.useForm();
   const watchProvider = Form.useWatch('provider', form);
@@ -162,6 +201,7 @@ const ProviderSettings: React.FC = () => {
   const healthStatus = useProviderStore((s) => s.healthStatus);
   const addEndpoint = useProviderStore((s) => s.addEndpoint);
   const removeEndpoint = useProviderStore((s) => s.removeEndpoint);
+  const updateEndpoint = useProviderStore((s) => s.updateEndpoint);
   const setLLMProvider = useProviderStore((s) => s.setLLMProvider);
   const setImageProvider = useProviderStore((s) => s.setImageProvider);
   const setVideoProvider = useProviderStore((s) => s.setVideoProvider);
@@ -170,6 +210,8 @@ const ProviderSettings: React.FC = () => {
   const setImageFallback = useProviderStore((s) => s.setImageFallback);
   const setVideoFallback = useProviderStore((s) => s.setVideoFallback);
   const setLLMModel = useProviderStore((s) => s.setLLMModel);
+  const setImageModel = useProviderStore((s) => s.setImageModel);
+  const setVideoModel = useProviderStore((s) => s.setVideoModel);
   const checkHealth = useProviderStore((s) => s.checkHealth);
 
   const hasEndpoints = endpoints.length > 0;
@@ -193,6 +235,7 @@ const ProviderSettings: React.FC = () => {
 
   const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
     setAddCategory(category);
+    setEditingEndpoint(null);
     const defaultProvider =
       category === 'llm' ? 'openai'
       : category === 'image' ? 'dalle'
@@ -207,21 +250,43 @@ const ProviderSettings: React.FC = () => {
     setAddModalOpen(true);
   }, [form]);
 
+  const handleEditEndpoint = useCallback((endpoint: ApiEndpoint) => {
+    setAddCategory(PROVIDER_CATEGORY[endpoint.provider] ?? 'llm');
+    setEditingEndpoint(endpoint);
+    form.setFieldsValue({
+      name: endpoint.name,
+      provider: endpoint.provider,
+      baseUrl: endpoint.baseUrl,
+      apiKey: endpoint.apiKey,
+    });
+    setAddModalOpen(true);
+  }, [form]);
+
   const handleSaveEndpoint = useCallback(async () => {
     try {
       const values = await form.validateFields();
-      // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
-      // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
-      // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
-      // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
-      addEndpoint({ ...values, enabled: true, category: addCategory });
+      if (editingEndpoint) {
+        updateEndpoint(editingEndpoint.id, {
+          name: values.name,
+          provider: values.provider,
+          baseUrl: values.baseUrl,
+          apiKey: values.apiKey,
+        });
+      } else {
+        // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
+        // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
+        // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
+        // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
+        addEndpoint({ ...values, enabled: true, category: addCategory });
+      }
       setAddModalOpen(false);
+      setEditingEndpoint(null);
       form.resetFields();
       message.success(t('common.saved'));
     } catch {
       // Validation failed
     }
-  }, [form, addEndpoint, addCategory, t]);
+  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, t]);
 
   const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
@@ -278,17 +343,18 @@ const ProviderSettings: React.FC = () => {
     {
       title: t('common.test' as const),
       key: 'actions',
-      width: 140,
+      width: 180,
       render: (_: unknown, record: ApiEndpoint) => (
         <Space>
           <Button size="small" onClick={() => handleTestConnection(record.id)} loading={testingId === record.id}>
             {t('provider.testConnection')}
           </Button>
+          <Button size="small" icon={<EditOutlined />} onClick={() => handleEditEndpoint(record)} />
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeEndpoint(record.id)} />
         </Space>
       ),
     },
-  ], [t, healthStatus, testingId, handleTestConnection, removeEndpoint]);
+  ], [t, healthStatus, testingId, handleTestConnection, handleEditEndpoint, removeEndpoint]);
 
   const renderStepEndpoints = () => (
     <div>
@@ -507,6 +573,46 @@ const ProviderSettings: React.FC = () => {
 
   // --- Step 3: Task models ---
 
+  /** Render one row of "<label> <AutoComplete model input> [reset]".
+   *  Works for LLM / image / video task models alike. */
+  const renderTaskModelRow = (
+    taskKey: string,
+    labelKey: string,
+    currentValue: string,
+    placeholder: string,
+    suggestions: string[],
+    onCommit: (model: string) => void,
+  ) => {
+    return (
+      <div key={taskKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ width: 120, fontSize: 13, flexShrink: 0 }}>{t(labelKey)}</span>
+        <AutoComplete
+          style={{ flex: 1 }}
+          value={currentValue || undefined}
+          onChange={(v) => onCommit(v)}
+          placeholder={placeholder || t('provider.task.modelPlaceholder')}
+          size="small"
+          allowClear
+          filterOption={(input, option) =>
+            (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+          }
+          options={suggestions.map((m) => ({ value: m, label: m }))}
+          popupMatchSelectWidth={false}
+        />
+        {currentValue && (
+          <Button
+            size="small"
+            type="link"
+            onClick={() => onCommit('')}
+            style={{ flexShrink: 0, padding: '0 4px' }}
+          >
+            {t('common.reset')}
+          </Button>
+        )}
+      </div>
+    );
+  };
+
   const renderStepTasks = () => {
     if (!hasEndpoints) {
       return (
@@ -520,41 +626,63 @@ const ProviderSettings: React.FC = () => {
       );
     }
 
+    const llmSuggestions = getModelSuggestions(config, 'llm');
+    const imageSuggestions = getModelSuggestions(config, 'image');
+    const videoSuggestions = getModelSuggestions(config, 'video');
+
     return (
-      <Card size="small">
-        <div style={{ marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
-          {t('provider.step.tasks.desc')}
-        </div>
-        {LLM_TASK_MODELS.map((task) => {
-          const currentValue = (config.llm.models as Record<string, string>)[task.key] ?? '';
-          return (
-            <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ width: 120, fontSize: 13, flexShrink: 0 }}>{t(task.labelKey)}</span>
-              <Select
-                style={{ flex: 1 }}
-                value={currentValue || undefined}
-                onChange={(v) => setLLMModel(task.key, v)}
-                placeholder={config.llm.defaultModel}
-                size="small"
-                showSearch
-                allowClear
-                options={COMMON_LLM_MODELS}
-                popupMatchSelectWidth={false}
-              />
-              {currentValue && currentValue !== config.llm.defaultModel && (
-                <Button
-                  size="small"
-                  type="link"
-                  onClick={() => setLLMModel(task.key, '')}
-                  style={{ flexShrink: 0, padding: '0 4px' }}
-                >
-                  {t('common.reset')}
-                </Button>
-              )}
-            </div>
-          );
-        })}
-      </Card>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Card size="small" title={t('provider.llm')}>
+          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
+            {t('provider.step.tasks.desc')}
+          </div>
+          {LLM_TASK_MODELS.map((task) => {
+            const currentValue = (config.llm.models as Record<string, string>)[task.key] ?? '';
+            return renderTaskModelRow(
+              task.key,
+              task.labelKey,
+              currentValue,
+              config.llm.defaultModel,
+              llmSuggestions,
+              (v) => setLLMModel(task.key, v),
+            );
+          })}
+        </Card>
+
+        <Card size="small" title={t('provider.image')}>
+          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
+            {t('provider.step.tasks.imageDesc')}
+          </div>
+          {IMAGE_TASK_MODELS.map((task) => {
+            const currentValue = (config.image.models as Record<string, string>)[task.key] ?? '';
+            return renderTaskModelRow(
+              task.key,
+              task.labelKey,
+              currentValue,
+              config.image.defaultModel,
+              imageSuggestions,
+              (v) => setImageModel(task.key, v),
+            );
+          })}
+        </Card>
+
+        <Card size="small" title={t('provider.video')}>
+          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
+            {t('provider.step.tasks.videoDesc')}
+          </div>
+          {VIDEO_TASK_MODELS.map((task) => {
+            const currentValue = (config.video.models as Record<string, string>)[task.key] ?? '';
+            return renderTaskModelRow(
+              task.key,
+              task.labelKey,
+              currentValue,
+              config.video.defaultModel,
+              videoSuggestions,
+              (v) => setVideoModel(task.key, v),
+            );
+          })}
+        </Card>
+      </div>
     );
   };
 
@@ -633,12 +761,12 @@ const ProviderSettings: React.FC = () => {
         </Button>
       </div>
 
-      {/* Add Endpoint Modal */}
+      {/* Add/Edit Endpoint Modal */}
       <Modal
-        title={t('provider.addEndpoint')}
+        title={editingEndpoint ? t('provider.editEndpoint') : t('provider.addEndpoint')}
         open={addModalOpen}
         onOk={handleSaveEndpoint}
-        onCancel={() => { setAddModalOpen(false); form.resetFields(); }}
+        onCancel={() => { setAddModalOpen(false); setEditingEndpoint(null); form.resetFields(); }}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
         destroyOnClose
@@ -649,6 +777,7 @@ const ProviderSettings: React.FC = () => {
           </Form.Item>
           <Form.Item name="provider" label={t('provider.primary')} rules={[{ required: true }]}>
             <Select
+              disabled={!!editingEndpoint}
               options={
                 (addCategory === 'llm' ? LLM_PROVIDER_OPTIONS
                 : addCategory === 'image' ? IMAGE_PROVIDER_OPTIONS

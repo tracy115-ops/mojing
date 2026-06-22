@@ -181,7 +181,7 @@ const InputSection: React.FC<{ stage: VideoStage; project: VideoProjectState }> 
 // 段 2:产物(原有逻辑保留)
 // ============================================================================
 
-function renderStageContent(
+export function renderStageContent(
   stage: VideoStage,
   project: VideoProjectState,
   spec: VideoProjectState['sceneSpec'],
@@ -509,7 +509,7 @@ const InvocationDetail: React.FC<{ inv: StageInvocation }> = ({ inv }) => {
 // Shared helpers
 // ============================================================================
 
-const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+export const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div>
     <Title level={5}>{title}</Title>
     {children}
