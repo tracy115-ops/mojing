@@ -35,6 +35,13 @@
     "process:allow-exit",
     "core:tray:default",
     "core:tray:allow-set-icon",
-    "core:tray:allow-set-tooltip"
+    "core:tray:allow-set-tooltip",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*/" },
+        { "url": "http://*/" }
+      ]
+    }
   ]
 }

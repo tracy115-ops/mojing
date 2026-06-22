@@ -4,6 +4,7 @@ import type {
   ApiEndpoint,
 } from '@/types/providers';
 import { BaseImageProvider } from './base';
+import { fetch as httpFetch } from './fetch-proxy';
 
 // --- DALL-E Adapter ---
 
@@ -27,11 +28,11 @@ export class DALLEProvider extends BaseImageProvider {
       body.style = request.style;
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/images/generations`, {
+    const response = await httpFetch(`${this.endpoint.baseUrl}/images/generations`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
+      signal: this.timeoutSignal(180_000),
     });
 
     if (!response.ok) {
@@ -77,11 +78,11 @@ export class SDWebUIProvider extends BaseImageProvider {
       body.seed = request.seed;
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/sdapi/v1/txt2img`, {
+    const response = await httpFetch(`${this.endpoint.baseUrl}/sdapi/v1/txt2img`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(300_000),
+      signal: this.timeoutSignal(300_000),
     });
 
     if (!response.ok) {
@@ -124,11 +125,11 @@ export class KlingImageProvider extends BaseImageProvider {
       body.image_reference = request.referenceImages[0];
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/v1/images/generations`, {
+    const response = await httpFetch(`${this.endpoint.baseUrl}/v1/images/generations`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
+      signal: this.timeoutSignal(180_000),
     });
 
     if (!response.ok) {
@@ -171,11 +172,11 @@ export class CogViewProvider extends BaseImageProvider {
       size: `${width}x${height}`,
     };
 
-    const response = await fetch(`${this.endpoint.baseUrl}/images/generations`, {
+    const response = await httpFetch(`${this.endpoint.baseUrl}/images/generations`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
+      signal: this.timeoutSignal(180_000),
     });
 
     if (!response.ok) {
@@ -215,7 +216,7 @@ export class WanxProvider extends BaseImageProvider {
     // 通义 size 格式 "1024*1024"
     const size = `${width}*${height}`;
 
-    const submitResponse = await fetch(`${this.endpoint.baseUrl}/services/aigc/text2image/image-synthesis`, {
+    const submitResponse = await httpFetch(`${this.endpoint.baseUrl}/services/aigc/text2image/image-synthesis`, {
       method: 'POST',
       headers: {
         ...this.getHeaders(),
@@ -230,7 +231,7 @@ export class WanxProvider extends BaseImageProvider {
           ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
         },
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: this.timeoutSignal(60_000),
     });
 
     if (!submitResponse.ok) {
@@ -246,10 +247,10 @@ export class WanxProvider extends BaseImageProvider {
     const deadline = startTime + 180_000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 3000));
-      const statusResp = await fetch(`${this.endpoint.baseUrl}/tasks/${taskId}`, {
+      const statusResp = await httpFetch(`${this.endpoint.baseUrl}/tasks/${taskId}`, {
         method: 'GET',
         headers: this.getHeaders(),
-        signal: AbortSignal.timeout(30_000),
+        signal: this.timeoutSignal(30_000),
       });
       if (!statusResp.ok) {
         const text = await statusResp.text().catch(() => '');
@@ -292,7 +293,7 @@ export class JimengProvider extends BaseImageProvider {
     const height = request.height ?? 1024;
     const model = request.model || 'doubao-seedream-3-0-t2i-250415';
 
-    const submitResp = await fetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks`, {
+    const submitResp = await httpFetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({
@@ -309,7 +310,7 @@ export class JimengProvider extends BaseImageProvider {
           ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
         },
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: this.timeoutSignal(60_000),
     });
 
     if (!submitResp.ok) {
@@ -324,10 +325,10 @@ export class JimengProvider extends BaseImageProvider {
     const deadline = startTime + 180_000;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 3000));
-      const resp = await fetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks/${taskId}`, {
+      const resp = await httpFetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks/${taskId}`, {
         method: 'GET',
         headers: this.getHeaders(),
-        signal: AbortSignal.timeout(30_000),
+        signal: this.timeoutSignal(30_000),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
@@ -379,11 +380,11 @@ export class IdeogramProvider extends BaseImageProvider {
       body.negative_prompt = request.negativePrompt;
     }
 
-    const response = await fetch(`${this.endpoint.baseUrl}/ideogram/v1/generate`, {
+    const response = await httpFetch(`${this.endpoint.baseUrl}/ideogram/v1/generate`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
+      signal: this.timeoutSignal(180_000),
     });
 
     if (!response.ok) {
@@ -400,6 +401,69 @@ export class IdeogramProvider extends BaseImageProvider {
       height,
       model,
       provider: 'ideogram',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+}
+
+// --- Agnes Image API (Sapiens AI, OpenAI-compatible) ---
+// 文档: https://agnes-ai.com/doc/agnes-image-21-flash
+// POST {baseUrl}/v1/images/generations  (baseUrl 通常为 https://apihub.agnes-ai.com)
+// 必填: model, prompt, size
+// response_format 必须放在 extra_body 里,否则返回 400
+// 返回 data[0].b64_json 或 data[0].url
+
+export class AgnesImageProvider extends BaseImageProvider {
+  readonly providerId = 'agnes-image';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const model = request.model || 'agnes-image-2.1-flash';
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // 用户填 `https://apihub.agnes-ai.com` 或 `https://apihub.agnes-ai.com/v1` 都兼容
+    const url = /\/v\d+$/.test(baseUrl)
+      ? `${baseUrl}/images/generations`
+      : `${baseUrl}/v1/images/generations`;
+
+    const extraBody: Record<string, unknown> = {
+      response_format: 'b64_json',
+    };
+    // 图生图:referenceImages 走 extra_body.image 数组
+    if (request.referenceImages?.length) {
+      extraBody.image = request.referenceImages.slice(0, 1);
+    }
+
+    const body: Record<string, unknown> = {
+      model,
+      prompt: request.prompt,
+      size: `${width}x${height}`,
+      extra_body: extraBody,
+    };
+
+    const response = await httpFetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(180_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`Agnes Image API error ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    const image = data.data?.[0];
+
+    return {
+      imageData: image?.b64_json ?? image?.url ?? '',
+      width,
+      height,
+      model,
+      provider: 'agnes-image',
       latencyMs: Date.now() - startTime,
     };
   }
@@ -428,6 +492,8 @@ export function createImageProvider(
       return new JimengProvider(endpoint);
     case 'ideogram':
       return new IdeogramProvider(endpoint);
+    case 'agnes-image':
+      return new AgnesImageProvider(endpoint);
     default:
       // Assume OpenAI-compatible image API
       return new DALLEProvider(endpoint);

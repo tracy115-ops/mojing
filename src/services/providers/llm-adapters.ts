@@ -5,6 +5,7 @@ import type {
   ApiEndpoint,
 } from '@/types/providers';
 import { BaseLLMProvider } from './base';
+import { fetch as httpFetch } from './fetch-proxy';
 
 // --- OpenAI-Compatible Adapter ---
 // Works with: OpenAI, DeepSeek, Qwen, GLM, Doubao (via compatible endpoint)
@@ -46,11 +47,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       body.stop = request.stopSequences;
     }
 
-    const response = await fetch(this.getChatUrl(), {
+    const response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: this.timeoutSignal(120_000),
     });
 
     if (!response.ok) {
@@ -86,11 +87,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       stream: true,
     };
 
-    const response = await fetch(this.getChatUrl(), {
+    const response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: this.timeoutSignal(120_000),
     });
 
     if (!response.ok) {
@@ -173,11 +174,11 @@ export class ClaudeProvider extends BaseLLMProvider {
     const base = this.endpoint.baseUrl.replace(/\/+$/, '');
     const messagesUrl = /\/v\d+$/.test(base) ? `${base}/messages` : `${base}/v1/messages`;
 
-    const response = await fetch(messagesUrl, {
+    const response = await httpFetch(messagesUrl, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: this.timeoutSignal(120_000),
     });
 
     if (!response.ok) {
@@ -214,11 +215,11 @@ export class ClaudeProvider extends BaseLLMProvider {
     const base = this.endpoint.baseUrl.replace(/\/+$/, '');
     const messagesUrl = /\/v\d+$/.test(base) ? `${base}/messages` : `${base}/v1/messages`;
 
-    const response = await fetch(messagesUrl, {
+    const response = await httpFetch(messagesUrl, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120_000),
+      signal: this.timeoutSignal(120_000),
     });
 
     if (!response.ok) {

@@ -11,6 +11,29 @@ import type {
   ApiEndpoint,
 } from '@/types/providers';
 
+// --- fetch timeout helper ---
+//
+// AbortSignal.timeout() 在老版 WebView2 上不可用,会同步抛 TypeError,
+// 被 fetch 包装成 "Failed to fetch"——这就是 image/video 在 release build
+// 上 50ms 内同步失败的根因。这里做 polyfill:能用就用,不能用就降级到
+// AbortController + setTimeout。
+export function fetchTimeout(ms: number): AbortSignal | undefined {
+  try {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+      return AbortSignal.timeout(ms);
+    }
+  } catch {
+    // fall through to manual controller
+  }
+  try {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), ms);
+    return controller.signal;
+  } catch {
+    return undefined;
+  }
+}
+
 // --- Base Provider ---
 
 export abstract class BaseLLMProvider {
@@ -31,6 +54,10 @@ export abstract class BaseLLMProvider {
       ...this.endpoint.customHeaders,
     };
   }
+
+  protected timeoutSignal(ms: number): AbortSignal | undefined {
+    return fetchTimeout(ms);
+  }
 }
 
 export abstract class BaseImageProvider {
@@ -49,6 +76,10 @@ export abstract class BaseImageProvider {
       Authorization: `Bearer ${this.endpoint.apiKey}`,
       ...this.endpoint.customHeaders,
     };
+  }
+
+  protected timeoutSignal(ms: number): AbortSignal | undefined {
+    return fetchTimeout(ms);
   }
 }
 
@@ -70,6 +101,10 @@ export abstract class BaseVideoProvider {
       ...this.endpoint.customHeaders,
     };
   }
+
+  protected timeoutSignal(ms: number): AbortSignal | undefined {
+    return fetchTimeout(ms);
+  }
 }
 
 export abstract class BaseTTSProvider {
@@ -88,5 +123,9 @@ export abstract class BaseTTSProvider {
       Authorization: `Bearer ${this.endpoint.apiKey}`,
       ...this.endpoint.customHeaders,
     };
+  }
+
+  protected timeoutSignal(ms: number): AbortSignal | undefined {
+    return fetchTimeout(ms);
   }
 }

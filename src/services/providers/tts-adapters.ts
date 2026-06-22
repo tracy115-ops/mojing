@@ -4,6 +4,7 @@
 
 import type { TTSRequest, TTSResponse, TTSProviderId, ApiEndpoint } from '@/types/providers';
 import { BaseTTSProvider } from './base';
+import { fetch as httpFetch } from './fetch-proxy';
 
 // --- OpenAI TTS Adapter ---
 // API: POST {baseUrl}/audio/speech
@@ -24,7 +25,7 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     // 兼容用户填 https://api.openai.com/v1 或 https://api.openai.com
     const url = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/audio/speech` : `${baseUrl}/v1/audio/speech`;
 
-    const response = await fetch(url, {
+    const response = await httpFetch(url, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify({
@@ -34,7 +35,7 @@ export class OpenAITTSProvider extends BaseTTSProvider {
         response_format: format,
         speed,
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: this.timeoutSignal(60_000),
     });
 
     if (!response.ok) {
