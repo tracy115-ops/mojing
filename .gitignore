@@ -20,6 +20,10 @@ tsconfig.tsbuildinfo
 /prod-build-style.png
 /production-light-theme.png
 /theme-toggle.png
+/test-*.png
+
+# Claude Code local settings
+.claude/settings.local.json
 
 # Playwright
 .playwright-mcp/
