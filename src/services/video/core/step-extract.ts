@@ -139,7 +139,20 @@ const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化
 - 同名角色合并,描述取所有提及的并集
 - 换装场景必须输出 costumeVariants
 - characterIdMap / sceneIdMap 用于回填分镜里的占位 id
-- 道具只提取推动剧情的关键道具,不提取背景物件`;
+- 道具只提取推动剧情的关键道具,不提取背景物件
+
+【appearance 字段必须区分多角色 — 极重要】
+多个角色同时出现时,每个角色的 appearance **必须**写出可识别的、互不重叠的面部特征,
+不能只换衣服或换发型。必须包含:
+1. 脸型 + 五官特征(如:方脸浓眉/圆脸大眼/瘦削高鼻梁/苹果脸颊)
+2. 肤色 + 明显的标记(如:苍白肤色/小麦色皮肤/雀斑/疤痕/痣)
+3. 发色 + 发长 + 发型(如:黑色齐刘海短发/银白色波浪长发/红色扎马尾)
+4. 体型 + 身高(如:瘦高/娇小/健壮)
+5. 年龄感(如:20 岁出头/近 40 岁/少年)
+
+如果原文没明确给出,请根据角色名字、性格、剧情定位**主动补充合理的区分性特征**,
+保证两个角色站在一起时,观众能一眼分辨谁是谁。
+不要写"普通长相""年轻女性"这种泛化描述。`;
 
 function buildUserPrompt(input: ExtractInput): string {
   const shotsHint = input.shots?.length
@@ -222,7 +235,16 @@ function emptyResult(input: ExtractInput): ExtractResult {
 }
 
 function normalizeGender(v: unknown): CharacterAnchor['gender'] {
-  return v === 'male' || v === 'female' ? v : 'unknown';
+  if (typeof v !== 'string') return 'unknown';
+  const s = v.trim().toLowerCase();
+  if (!s) return 'unknown';
+  // 英文
+  if (s === 'male' || s === 'm' || s === 'man' || s === 'boy' || s === 'guy') return 'male';
+  if (s === 'female' || s === 'f' || s === 'woman' || s === 'girl' || s === 'lady') return 'female';
+  // 中文(常见写法)
+  if (s.includes('男')) return 'male';
+  if (s.includes('女')) return 'female';
+  return 'unknown';
 }
 
 function normalizeAgeGroup(v: unknown): CharacterAnchor['ageGroup'] {

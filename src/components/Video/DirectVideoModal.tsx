@@ -77,6 +77,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
   );
 
   const directClips = useVideoStore((s) => s.directClips);
+  const setActivePipelineId = useVideoStore((s) => s.setActivePipelineId);
   const generating = useVideoStore((s) => s.directGenerating);
   const error = useVideoStore((s) => s.directError);
   const setDirectGenerating = useVideoStore((s) => s.setDirectGenerating);
@@ -87,6 +88,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
 
   // 基础字段
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT_EN);
+  const [taskName, setTaskName] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [shotDuration, setShotDuration] = useState<5 | 10>(5);
   const [optimizing, setOptimizing] = useState(false);
@@ -210,6 +212,10 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       // 让"查看步骤账本"入口能读到。
       const directProjectId = `direct_${Date.now()}`;
       setLastDirectProjectId(directProjectId);
+      // 标题:优先用用户填的任务名;没填就用 prompt 前 30 字兜底
+      const trimmedName = taskName.trim();
+      const trimmedPromptForTitle = trimmed.length > 30 ? `${trimmed.slice(0, 30).trim()}…` : trimmed;
+      const taskTitle = trimmedName || trimmedPromptForTitle;
       initProject(directProjectId, [], {
         aspectRatio,
         resolution: `${dims[aspectRatio].w}x${dims[aspectRatio].h}`,
@@ -220,7 +226,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         ttsTier: 'free',
         hardcodeSubtitles: false,
         bgmStyle: 'cinematic',
-      });
+      }, taskTitle);
 
       // 切到主面板的流水线 tab,然后立即关闭 Modal —— 执行过程改由 VideoPipelinePanel 展示。
       useVideoStore.getState().setActivePipelineId(directProjectId);
@@ -269,8 +275,11 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           generatedAt: new Date().toISOString(),
           sceneSource: 'direct',
           sourceMode: 'pure',
+          directProjectId,
         };
         addDirectClip(clip);
+        // 同步写入临时 project,让 VideoPipelinePanel 能看到 clip
+        useVideoStore.getState().addClip(directProjectId, clip);
         return;
       }
 
@@ -300,7 +309,12 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       // 把生成的 clip 转入 directClips
       if (result?.clips.length) {
         for (const clip of result.clips) {
-          addDirectClip({ ...clip, sceneSource: 'direct', sourceMode: mode });
+          addDirectClip({
+            ...clip,
+            sceneSource: 'direct',
+            sourceMode: mode,
+            directProjectId,
+          });
         }
       }
       if (result?.finalVideoUrl && result.clips.length > 1) {
@@ -315,6 +329,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           generatedAt: new Date().toISOString(),
           sceneSource: 'direct',
           sourceMode: 'multishot',
+          directProjectId,
         });
       }
     } catch (err) {
@@ -323,6 +338,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       setDirectError(msg);
     } finally {
       setDirectGenerating(false);
+      setTaskName('');
     }
   };
 
@@ -420,6 +436,28 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       )}
 
       <Form layout="vertical">
+        <Form.Item
+          label={
+            <span>
+              {t('video.direct.taskNameLabel')}
+              <Tooltip title={t('video.direct.taskNameHint')}>
+                <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                  ({t('video.direct.taskNameHint')})
+                </Text>
+              </Tooltip>
+            </span>
+          }
+        >
+          <Input
+            value={taskName}
+            onChange={(e) => setTaskName(e.target.value)}
+            placeholder={t('video.direct.taskNamePlaceholder')}
+            disabled={generating}
+            maxLength={60}
+            allowClear
+          />
+        </Form.Item>
+
         <Form.Item
           label={
             <span>
@@ -745,35 +783,90 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               {t('common.clear')}
             </Button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-            {directClips.map((clip) => (
-              <div
-                key={clip.shotId}
-                style={{
-                  border: '1px solid var(--border-secondary, #d9d9d9)',
-                  borderRadius: 8,
-                  overflow: 'hidden',
-                }}
-              >
-                <video
-                  src={clip.videoUrl}
-                  controls
-                  style={{ width: '100%', display: 'block', background: '#000' }}
-                />
-                <div style={{ padding: 8 }}>
-                  <Tag color="blue">{t(`provider.provider.${clip.provider}` as const, { defaultValue: clip.provider })}</Tag>
-                  <Tag>{clip.model}</Tag>
-                  <Tag>{clip.durationSeconds}s</Tag>
-                  {clip.sourceMode && clip.sourceMode !== 'pure' && (
-                    <Tag color="purple">{t(`video.direct.mode.${clip.sourceMode}` as const)}</Tag>
-                  )}
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
-                    {new Date(clip.generatedAt).toLocaleString()}
-                  </Text>
+          {/* 按 directProjectId 分组展示,让用户清楚哪个产物属于哪次任务。
+              之前是扁平列表,多次任务的产物混在一起。
+              每组顶部带「查看执行过程」按钮,跳到对应 pipeline tab。 */}
+          {(() => {
+            const groups = new Map<string, typeof directClips>();
+            for (const clip of directClips) {
+              const key = clip.directProjectId ?? '_legacy';
+              const arr = groups.get(key) ?? [];
+              arr.push(clip);
+              groups.set(key, arr);
+            }
+            const entries = Array.from(groups.entries()).sort(([a], [b]) => b.localeCompare(a));
+            return entries.map(([pid, clips]) => {
+              const isLegacy = pid === '_legacy';
+              const ts = isLegacy ? NaN : Number(pid.replace(/^direct_/, ''));
+              const timeLabel = Number.isFinite(ts)
+                ? new Date(ts).toLocaleString()
+                : t('video.direct.history');
+              return (
+                <div
+                  key={pid}
+                  style={{
+                    marginBottom: 16,
+                    border: '1px solid var(--border-secondary, #d9d9d9)',
+                    borderRadius: 8,
+                    padding: 8,
+                  }}
+                >
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 8,
+                  }}>
+                    <Text strong style={{ fontSize: 12 }}>
+                      {timeLabel} · {clips.length} 个产物
+                    </Text>
+                    {!isLegacy && (
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<EyeOutlined />}
+                        onClick={() => {
+                          setActivePipelineId(pid);
+                          onClose();
+                        }}
+                      >
+                        {t('video.pipeline.viewExecution')}
+                      </Button>
+                    )}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+                    {clips.map((clip) => (
+                      <div
+                        key={clip.shotId}
+                        style={{
+                          border: '1px solid var(--border-secondary, #d9d9d9)',
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <video
+                          src={clip.videoUrl}
+                          controls
+                          style={{ width: '100%', display: 'block', background: '#000' }}
+                        />
+                        <div style={{ padding: 8 }}>
+                          <Tag color="blue">{t(`provider.provider.${clip.provider}` as const, { defaultValue: clip.provider })}</Tag>
+                          <Tag>{clip.model}</Tag>
+                          <Tag>{clip.durationSeconds}s</Tag>
+                          {clip.sourceMode && clip.sourceMode !== 'pure' && (
+                            <Tag color="purple">{t(`video.direct.mode.${clip.sourceMode}` as const)}</Tag>
+                          )}
+                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 4 }}>
+                            {new Date(clip.generatedAt).toLocaleString()}
+                          </Text>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              );
+            });
+          })()}
         </div>
       )}
     </Modal>

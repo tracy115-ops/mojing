@@ -19,8 +19,9 @@ import type {
   PipelineOptions,
   CharacterAnchor,
 } from '@/types/video';
-import type { NovelChapter } from '@/types';
+import type { NovelChapter, NovelMetadata } from '@/types';
 import { useVideoStore } from '@/stores/videoStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { sliceChapters, type RawShot } from './chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from './storyboard-prompt';
 import { stepExtract } from './core/step-extract';
@@ -59,6 +60,66 @@ export class VideoPipeline {
     this.aborted = true;
   }
 
+  /**
+   * 从 store 里已存在的 project state 重建 VideoPipeline 实例,用于断点续跑。
+   *
+   * 场景:用户失败后点「从失败处重试」,或重启应用后想继续未完成的流水线。
+   * 此时 VideoGeneratorModal 早已关闭,原 pipeline 实例丢失;但 project state
+   * 仍在 videoStore 里(已 persist),我们只需从 projectStore 拉出 novel 元信息
+   * + chapters,重建 PipelineInput 即可。
+   *
+   * 返回 null 表示找不到对应的 novel project(UI 应降级到 fresh start)。
+   *
+   * Direct 通道(`direct_*` 项目 ID):不存在 novel project,但 spec / options /
+   * sceneSpec 都在 videoStore 里。跳过 novel project 查找,直接用 store 状态重建。
+   */
+  static forResume(
+    novelProjectId: string,
+    cb: PipelineCallbacks = {},
+  ): VideoPipeline | null {
+    const videoProject = useVideoStore.getState().getProject(novelProjectId);
+    if (!videoProject) return null;
+
+    // Direct 通道:无 novel project 元信息,跳过查找直接用 store 状态。
+    if (novelProjectId.startsWith('direct_')) {
+      return new VideoPipeline(
+        {
+          novelProjectId,
+          novelTitle: 'Direct',
+          genre: '',
+          style: '',
+          chapters: [],
+          spec: videoProject.spec,
+          options: videoProject.options,
+        },
+        cb,
+      );
+    }
+
+    const novelProject = useProjectStore
+      .getState()
+      .projects.find((p) => p.id === novelProjectId && p.type === 'novel');
+    if (!novelProject) return null;
+    const meta = novelProject.metadata as NovelMetadata;
+
+    const chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = videoProject.selectedChapterIds
+      .map((cid) => meta.chapters.find((c) => c.id === cid))
+      .filter((c): c is NovelChapter => !!c);
+
+    return new VideoPipeline(
+      {
+        novelProjectId,
+        novelTitle: novelProject.title,
+        genre: meta.genre,
+        style: meta.style,
+        chapters,
+        spec: videoProject.spec,
+        options: videoProject.options,
+      },
+      cb,
+    );
+  }
+
   async run(): Promise<VideoProjectState | null> {
     const store = useVideoStore.getState();
     const { novelProjectId, chapters, spec, options } = this.input;
@@ -92,6 +153,114 @@ export class VideoPipeline {
         },
         sceneSource: 'novel',
         sourceMode: 'multishot', // Novel 通道语义上是多镜头
+        novelProjectId,
+      };
+
+      return await runPipeline({
+        novelProjectId,
+        spec: sceneSpec,
+        options: pipelineOptions,
+        callbacks: this.cb,
+        videoGen,
+        shouldAbort: () => this.aborted,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      useVideoStore.getState().setError(novelProjectId, msg);
+      this.cb.onError?.(msg);
+      return null;
+    }
+  }
+
+  /**
+   * 断点续跑:不 initProject(保留已有 stage 状态/产物),直接重跑 pipeline。
+   * - 前 3 步(script_slicing/storyboard/extraction)各自检查 completed,
+   *   完成的直接用现有 shots,不重新跑 LLM。
+   * - core runner 内部对每个 stage 做 live-completed 检查(见 isStageLiveCompleted)。
+   * - 视频生成支持 shot 级增量(runVideoGen 的 preExistingClips)。
+   *
+   * 场景:用户失败后点「从失败处重试」,或重启应用后继续未完成的流水线。
+   */
+  async resume(): Promise<VideoProjectState | null> {
+    const store = useVideoStore.getState();
+    const { novelProjectId, chapters, spec, options } = this.input;
+    const existing = store.getProject(novelProjectId);
+    if (!existing) {
+      // 还没跑过,降级到 run()
+      return this.run();
+    }
+
+    // 用已有 options,但如果本次传入了新 options 则覆盖
+    const pipelineOptions: PipelineOptions = options ?? existing.options ?? specToOptions(spec);
+    store.setPipelineOptions(novelProjectId, pipelineOptions);
+    // 清掉 error 状态,但保留各 stage 状态(让 runPipeline 内部判断)
+    store.setError(novelProjectId, undefined);
+
+    try {
+      // Direct 通道:不走 script_slicing/storyboard/extraction。
+      // sceneSpec 已经在首次跑时写进了 store(DirectVideoModal 调 runPipeline 前
+      // 由 buildSceneFromPrompt 构造,在 runner 里通过 setSceneSpec 持久化)。
+      // 失败重试时直接复用 store 里的 sceneSpec,否则报错提示用户重新建任务。
+      if (novelProjectId.startsWith('direct_')) {
+        if (!existing.sceneSpec) {
+          throw new Error(
+            'Direct 任务缺少 sceneSpec,无法续跑。请关闭后重新生成(可能是早期版本未持久化)。',
+          );
+        }
+        const videoGen: VideoGenOptions = {
+          spec: {
+            resolution: spec.resolution,
+            fps: spec.fps,
+            videoTier: spec.videoTier,
+          },
+          sceneSource: 'direct',
+          sourceMode: 'multishot',
+          novelProjectId,
+        };
+
+        return await runPipeline({
+          novelProjectId,
+          spec: existing.sceneSpec,
+          options: pipelineOptions,
+          callbacks: this.cb,
+          videoGen,
+          shouldAbort: () => this.aborted,
+        });
+      }
+
+      // 前 3 步逻辑(Novel 通道):已完成则直接复用,否则跑一遍。
+      // 跳过条件:script_slicing 必须 completed(否则后面两个 stage 没有 rawShots 输入)。
+      // 如果 script_slicing completed 但 storyboard/extraction 失败,则需要重建 rawShots;
+      // 这种情况比较少见,我们就直接从头重跑前三步。
+      const scriptDone = existing.stages.script_slicing?.status === 'completed' && existing.shots.length > 0;
+      const extractionDone = existing.stages.extraction?.status === 'completed' && !!existing.sceneSpec;
+
+      let sceneSpec: SceneSpec | null = null;
+
+      if (extractionDone) {
+        // 三步都跑过且 sceneSpec 仍在,直接用
+        sceneSpec = existing.sceneSpec!;
+      } else if (scriptDone) {
+        // slicing 跑过但 extraction 没完成 — 前三步整体重跑(无法可靠重建 RawShot)
+        const rawShots = await this.runScriptSlicing();
+        const storyboardShots = await this.runStoryboardPrompt(rawShots);
+        sceneSpec = await this.runExtraction(rawShots, storyboardShots);
+      } else {
+        // 没跑过,从头跑
+        const rawShots = await this.runScriptSlicing();
+        const storyboardShots = await this.runStoryboardPrompt(rawShots);
+        sceneSpec = await this.runExtraction(rawShots, storyboardShots);
+      }
+
+      const videoGen: VideoGenOptions = {
+        spec: {
+          resolution: spec.resolution,
+          fps: spec.fps,
+          videoTier: spec.videoTier,
+        },
+        sceneSource: 'novel',
+        sourceMode: 'multishot',
+        novelProjectId,
       };
 
       return await runPipeline({
@@ -221,7 +390,7 @@ export class VideoPipeline {
       location: s.location,
       mood: s.mood,
       cameraMovement: s.cameraMovement,
-      durationSeconds: (s.durationSeconds === 10 ? 10 : 5) as 5 | 10,
+      durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as number) ? s.durationSeconds : 5) as 3 | 5 | 10 | 18,
     }));
 
     // 步 3 提取:LLM 解析大文本,产出结构化角色/场景/道具

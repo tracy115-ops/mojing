@@ -81,6 +81,23 @@ export abstract class BaseImageProvider {
   protected timeoutSignal(ms: number): AbortSignal | undefined {
     return fetchTimeout(ms);
   }
+
+  /**
+   * 把 provider 返回的字符串归一化成 <img src> 能直接渲染的形式:
+   *   - 完整 URL(http://, https://, data:, file:) → 原样返回
+   *   - 纯 base64 字符串(没有 data: 前缀)→ 补成 data:image/png;base64,...
+   *
+   * OpenAI-style /v1/images/generations 接口在 response_format='b64_json' 时
+   * 只返回原始 base64 字符串,浏览器无法直接渲染 —— 必须加 data URI 前缀。
+   */
+  protected normalizeImageSrc(raw: string | undefined | null): string {
+    if (!raw) return '';
+    const s = raw.trim();
+    if (!s) return '';
+    if (/^(https?:|data:|file:|blob:)/i.test(s)) return s;
+    // 落到这里的几乎都是裸 base64(无 data: 前缀)。
+    return `data:image/png;base64,${s}`;
+  }
 }
 
 export abstract class BaseVideoProvider {
@@ -92,7 +109,7 @@ export abstract class BaseVideoProvider {
   }
 
   abstract generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse>;
-  abstract checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse }>;
+  abstract checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }>;
 
   protected getHeaders(): Record<string, string> {
     return {

@@ -18,6 +18,9 @@
 | [10-phase3-ux.md](./10-phase3-ux.md) | Phase 3 UX 打磨路线图（待实施） |
 | [11-troubleshooting.md](./11-troubleshooting.md) | 常见问题与排查 |
 | [12-dual-channel-unification.md](./12-dual-channel-unification.md) | 14 步完整流程对齐三种模式：Direct/Novel 共享 core（设计中） |
+| [13-single-stage-rerun.md](./13-single-stage-rerun.md) | 单步重跑（runSingleStage / runFromStage）+ 可编辑 stage 输入 |
+| [14-audio-merge-fix.md](./14-audio-merge-fix.md) | 音视合成 + 成片 0 秒不可播的根因与修复（2026-06-29） |
+| [15-doubao-seedance.md](./15-doubao-seedance.md) | Doubao (Seedance 2.0) Video Provider 接入 |
 
 ## 状态速览
 

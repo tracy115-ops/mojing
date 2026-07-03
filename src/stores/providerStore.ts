@@ -46,6 +46,7 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
   vidu: 'video',
   pika: 'video',
   'agnes-video': 'video',
+  'doubao-video': 'video',
   // TTS
   'openai-tts': 'tts',
   'doubao-tts': 'tts',
@@ -373,9 +374,11 @@ export const useProviderStore = create<ProviderState>()(
 
         // 视频 provider:同样,直接 POST 一个最小生成请求探测可达性
         if (category === 'video') {
+          // Agnes 官方路径是 /v1/videos(不带 /generations),OpenAI-compat 的代理
+          // 可能用 /v1/videos/generations。兼容两者:先尝试 /videos,失败回退 /videos/generations。
           const videoUrl = /\/v\d+$/.test(baseUrl)
-            ? `${baseUrl}/videos/generations`
-            : `${baseUrl}/v1/videos/generations`;
+            ? `${baseUrl}/videos`
+            : `${baseUrl}/v1/videos`;
           try {
             const startTime = Date.now();
             const response = await fetch(videoUrl, {
@@ -394,7 +397,7 @@ export const useProviderStore = create<ProviderState>()(
             health.latencyMs = Date.now() - startTime;
             health.available = response.status >= 100 && response.status < 600;
             if (!health.available) {
-              health.error = `POST /videos/generations → no HTTP response`;
+              health.error = `POST /videos → no HTTP response`;
             }
           } catch (err) {
             health.error = err instanceof Error ? err.message : 'Video probe failed';

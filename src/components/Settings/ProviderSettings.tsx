@@ -74,6 +74,7 @@ const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
   { value: 'vidu', label: 'Vidu' },
   { value: 'pika', label: 'Pika' },
   { value: 'agnes-video', label: 'Agnes Video (免费)' },
+  { value: 'doubao-video', label: 'Doubao Video (豆包 Seedance)' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -133,6 +134,10 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   vidu: ['vidu-1.5', 'vidu-1.0'],
   pika: ['pika-1.5', 'pika-1.0'],
   'agnes-video': ['agnes-video-v2.0'],
+  'doubao-video': [
+    'doubao-seedance-2-0-260128',
+    'doubao-seedance-2-0-fast-260128',
+  ],
   // TTS
   'openai-tts': ['tts-1', 'tts-1-hd'],
   'doubao-tts': ['doubao-tts'],
@@ -176,6 +181,7 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   vidu: 'https://api.vidu.studio',
   pika: 'https://api.pika.art',
   'agnes-video': 'https://apihub.agnes-ai.com',
+  'doubao-video': 'https://ark.cn-beijing.volces.com',
   'openai-tts': 'https://api.openai.com/v1',
   'doubao-tts': 'https://ark.cn-beijing.volces.com/api/v3',
   'edge-tts': 'https://speech.platform.bing.com',

@@ -6,14 +6,15 @@
 // DirectVideoModal 启动时写入)。
 // ============================================================================
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Typography, Tag, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu,
-  Alert, Popconfirm, Tooltip,
+  Alert, Popconfirm, Tooltip, Steps,
 } from 'antd';
 import {
-  VideoCameraOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined,
-  LoadingOutlined, EyeOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
+  VideoCameraOutlined, PlayCircleOutlined,
+  LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -21,7 +22,12 @@ import { useProjectStore } from '@/stores/projectStore';
 import type { VideoStage, StoryboardShot } from '@/types/video';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
+import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
+import { VideoPipeline } from '@/services/video/pipeline';
+import { logger } from '@/services/log';
+import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
+import { message } from 'antd';
 
 const { Text, Title } = Typography;
 
@@ -74,6 +80,100 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const resetProject = useVideoStore((s) => s.resetProject);
   const setActivePipelineId = useVideoStore((s) => s.setActivePipelineId);
   const [exportOpen, setExportOpen] = useState(false);
+  /** 断点续跑中标志(禁用重试按钮防重复点击) */
+  const [retrying, setRetrying] = useState(false);
+  /** 当前 pipeline 产物占用(字节数),用于显示「已缓存 X MB」 */
+  const [assetBytes, setAssetBytes] = useState(0);
+  const [cleaningAssets, setCleaningAssets] = useState(false);
+
+  // 拉取产物占用 — pipelineId 变化时拉一次,stage 状态变化时再拉一次
+  // (stage 完成会落新文件,数字要刷新)。不必高频,简单挂在 exists/currentStage 变化上。
+  useEffect(() => {
+    if (!pipelineId) {
+      setAssetBytes(0);
+      return;
+    }
+    let cancelled = false;
+    void getProjectAssetStats(pipelineId).then((s) => {
+      if (!cancelled) setAssetBytes(s.bytes);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelineId, currentStage, exists]);
+
+  const handleCleanAssets = async () => {
+    if (!pipelineId || cleaningAssets) return;
+    setCleaningAssets(true);
+    try {
+      const r = await cleanProjectAssets(pipelineId);
+      setAssetBytes(0);
+      message.success(
+        t('video.pipeline.cleanAssetsDone', {
+          deleted: r.deletedFiles,
+          size: formatBytes(r.deletedBytes),
+        }),
+      );
+    } catch (err) {
+      message.error(`清理失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setCleaningAssets(false);
+    }
+  };
+
+  const handleRetryFromFailure = async () => {
+    if (!pipelineId || retrying) return;
+    const pid = pipelineId;
+    setRetrying(true);
+    void logger.info(`[panel] retry-from-failure pid=${pid}`, 'panel');
+    try {
+      const pipeline = VideoPipeline.forResume(pid);
+      if (!pipeline) {
+        void logger.warn(`[panel] retry: 找不到 novel project ${pid},降级到空状态`, 'panel');
+        message.warning(t('video.pipeline.retryNotFound'));
+        return;
+      }
+      // 在 resume 之前,先把"失败 stage 及其之后"的状态/产物清掉,
+      // 否则 pipeline-runner 的 isStageLiveCompleted 会跳过它们。
+      const proj = useVideoStore.getState().getProject(pid);
+      if (proj) {
+        // 只扫 runtime stages(从 character_anchor 到 composing)。
+        // 不能扫前 4 步(script_slicing/storyboard_prompt/extraction/voice_assignment),
+        // 因为它们在 Direct 模式下可能一直 error/skipped 但不影响后续 —
+        // 扫到它们会让 reset 从头开始,把已完成的角色立绘/场景图都清掉。
+        const runtimeStages = VIDEO_PIPELINE_STAGES.filter(
+          (s) => !DEFAULT_SKIPPED_STAGES.has(s) &&
+            !['script_slicing', 'storyboard_prompt', 'extraction', 'voice_assignment'].includes(s),
+        );
+        // 找失败的 stage:优先扫 stages 里的 error 状态(取最早一个)
+        let failedStage: VideoStage | undefined = undefined;
+        for (const stage of runtimeStages) {
+          if (proj.stages[stage]?.status === 'error') {
+            failedStage = stage;
+            break;
+          }
+        }
+        if (!failedStage) {
+          // runtime stages 都没 error,可能是整体抛错只写了 proj.error。
+          // 退化为第一个非 completed 的 runtime stage。
+          failedStage = runtimeStages.find(
+            (s) => proj.stages[s]?.status !== 'completed',
+          );
+        }
+        if (failedStage) {
+          void logger.info(`[panel] retry: 重置从 ${failedStage} 起的所有 stage`, 'panel');
+          useVideoStore.getState().resetStagesFrom(pid, failedStage);
+        }
+      }
+      await pipeline.resume();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      void logger.error(`[panel] retry threw: ${msg}`, 'panel');
+      message.error(`${t('video.pipeline.retryFailed')}: ${msg}`);
+    } finally {
+      setRetrying(false);
+    }
+  };
   // 用户点 Steps 上某个步骤时,切换产物视图到该步骤。
   // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
@@ -84,13 +184,18 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
     const np = s.projects.find((p) => p.id === pipelineId);
     return np?.title;
   });
+  const directTitle = useVideoStore((s) =>
+    pipelineId && pipelineId.startsWith('direct_') ? s.projects[pipelineId]?.title : undefined,
+  );
 
   const headerLabel = useMemo(() => {
     if (!exists) return '';
-    if (pipelineId?.startsWith('direct_')) return t('video.pipeline.directLabel');
+    if (pipelineId?.startsWith('direct_')) {
+      return directTitle || t('video.pipeline.directLabel');
+    }
     if (novelTitle) return t('video.pipeline.fromNovelLabel', { title: novelTitle });
     return t('video.pipeline.title');
-  }, [exists, pipelineId, novelTitle, t]);
+  }, [exists, pipelineId, novelTitle, directTitle, t]);
 
   if (!pipelineId || !exists || !stages || !shots || !clips) {
     return (
@@ -159,6 +264,25 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               {t('video.export.button')}
             </Button>
           )}
+          {assetBytes > 0 && (
+            <Tooltip title={t('video.pipeline.cleanAssetsConfirm')}>
+              <Popconfirm
+                title={t('video.pipeline.cleanAssetsConfirm')}
+                okText={t('video.pipeline.cleanAssets')}
+                okButtonProps={{ danger: true, loading: cleaningAssets }}
+                cancelText={t('common.cancel')}
+                onConfirm={handleCleanAssets}
+              >
+                <Button
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  loading={cleaningAssets}
+                >
+                  {t('video.pipeline.assetStats', { size: formatBytes(assetBytes) })}
+                </Button>
+              </Popconfirm>
+            </Tooltip>
+          )}
           <Popconfirm
             title={t('video.pipeline.resetConfirm')}
             onConfirm={() => {
@@ -175,88 +299,123 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
 
       {/* ── 主区域:左 Steps + 右产物 ── */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        {/* 左侧 Steps 导航 - 垂直列表,点击切换 */}
+        {/* 左侧 Steps 导航 - Antd Steps 竖向时间轴 */}
         <div style={{
-          width: 200, flexShrink: 0,
+          width: 220, flexShrink: 0,
           borderRight: '1px solid var(--border-secondary)',
-          overflowY: 'auto', padding: '8px 0',
+          overflowY: 'auto', padding: '12px 8px 12px 4px',
           background: 'var(--bg-elevated, transparent)',
         }}>
-          {visibleStages.map((stage) => {
-            const state = stages[stage];
-            const skipped = DEFAULT_SKIPPED_STAGES.has(stage);
-            const completed = state?.status === 'completed';
-            const running = state?.status === 'running';
-            const errored = state?.status === 'error';
-            const isFocused = stage === inlineStage;
-            const clickable = completed || running || errored;
+          <Steps
+            direction="vertical"
+            size="small"
+            current={visibleStages.indexOf(inlineStage)}
+            onChange={(current) => {
+              const stage = visibleStages[current];
+              if (!stage) return;
+              const state = stages[stage];
+              const clickable = state?.status === 'completed' || state?.status === 'running' || state?.status === 'error';
+              if (clickable) setFocusStage(stage);
+            }}
+            items={visibleStages.map((stage) => {
+              const state = stages[stage];
+              const skipped = DEFAULT_SKIPPED_STAGES.has(stage);
+              const completed = state?.status === 'completed';
+              const running = state?.status === 'running';
+              const errored = state?.status === 'error';
+              const isFocused = stage === inlineStage;
 
-            // 进度数字/图标
-            let leftIcon: React.ReactNode;
-            if (skipped) leftIcon = <CloseCircleOutlined style={{ opacity: 0.3 }} />;
-            else if (errored) leftIcon = <CloseCircleOutlined style={{ color: '#ef4444' }} />;
-            else if (running) leftIcon = <LoadingOutlined />;
-            else if (completed) leftIcon = <CheckCircleOutlined style={{ color: '#22c55e' }} />;
-            else leftIcon = <span style={{ fontSize: 11, opacity: 0.5 }}>·</span>;
+              // Antd Steps 的 status: 'finish' | 'process' | 'wait' | 'error'
+              let stepStatus: 'finish' | 'process' | 'wait' | 'error';
+              if (skipped) stepStatus = 'wait';
+              else if (errored) stepStatus = 'error';
+              else if (running) stepStatus = 'process';
+              else if (completed) stepStatus = 'finish';
+              else stepStatus = 'wait';
 
-            return (
-              <div
-                key={stage}
-                onClick={() => clickable && setFocusStage(stage)}
-                style={{
-                  padding: '8px 12px',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  cursor: clickable ? 'pointer' : 'default',
-                  background: isFocused ? 'var(--accent-primary-faded, rgba(0, 100, 255, 0.1))' : 'transparent',
-                  borderLeft: isFocused ? '3px solid var(--accent-primary)' : '3px solid transparent',
-                  opacity: skipped ? 0.4 : 1,
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={(e) => {
-                  if (clickable && !isFocused) {
-                    e.currentTarget.style.background = 'var(--bg-hover, rgba(128,128,128,0.08))';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (clickable && !isFocused) {
-                    e.currentTarget.style.background = 'transparent';
-                  }
-                }}
-              >
-                <span style={{ fontSize: 14, width: 16, textAlign: 'center', flexShrink: 0 }}>
-                  {leftIcon}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 12,
-                    fontWeight: isFocused ? 600 : 400,
-                    color: isFocused ? 'var(--accent-primary)' : 'var(--text-primary)',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {t(`video.gen.stage.${stage}`)}
-                  </div>
-                  {(running || state?.progress) && running && state?.progress !== undefined && state.progress > 0 && (
-                    <div style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
-                      {Math.round(state.progress * 100)}%
-                    </div>
-                  )}
-                  {errored && state?.error && (
+              // 进度条 / 百分比 / 错误描述
+              let description: React.ReactNode = undefined;
+              if (running) {
+                const pct = state?.progress !== undefined && state.progress > 0
+                  ? Math.round(state.progress * 100)
+                  : null;
+                description = (
+                  <div style={{ marginTop: 2 }}>
                     <div style={{
-                      fontSize: 10, color: '#ef4444',
+                      fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3,
+                      display: 'flex', justifyContent: 'space-between',
+                    }}>
+                      <span>{t('video.artifacts.status.running')}</span>
+                      {pct !== null && <span>{pct}%</span>}
+                    </div>
+                    {/* 进度条:有 pct 显示真实进度,否则显示脉冲流动条(表示在干活) */}
+                    <div style={{
+                      height: 3,
+                      borderRadius: 2,
+                      background: 'var(--bg-secondary, rgba(128,128,128,0.15))',
+                      overflow: 'hidden',
+                      position: 'relative',
+                    }}>
+                      {pct !== null ? (
+                        <div style={{
+                          width: `${pct}%`,
+                          height: '100%',
+                          background: 'var(--accent-primary)',
+                          borderRadius: 2,
+                          transition: 'width 0.3s ease',
+                        }} />
+                      ) : (
+                        <div style={{
+                          width: '40%',
+                          height: '100%',
+                          background: 'var(--accent-primary)',
+                          borderRadius: 2,
+                          animation: 'mojing-pipeline-pulse 1.4s ease-in-out infinite',
+                        }} />
+                      )}
+                    </div>
+                  </div>
+                );
+              } else if (errored && state?.error) {
+                description = (
+                  <Tooltip title={state.error}>
+                    <span style={{
+                      fontSize: 10, color: 'var(--accent-danger, #ef4444)',
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      display: 'inline-block', maxWidth: 160,
                     }}>
                       ⚠ {state.error}
-                    </div>
-                  )}
-                </div>
-                {completed && (
-                  <Tooltip title={t('video.pipeline.clickToView')}>
-                    <EyeOutlined style={{ fontSize: 10, color: 'var(--text-tertiary)' }} />
+                    </span>
                   </Tooltip>
-                )}
-              </div>
-            );
-          })}
+                );
+              } else if (skipped) {
+                description = (
+                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)', opacity: 0.6 }}>
+                    {t('video.artifacts.status.skipped')}
+                  </span>
+                );
+              }
+
+              return {
+                status: stepStatus,
+                title: (
+                  <span style={{
+                    fontSize: 12,
+                    fontWeight: isFocused ? 600 : 400,
+                    color: isFocused
+                      ? 'var(--accent-primary)'
+                      : skipped
+                        ? 'var(--text-tertiary)'
+                        : 'var(--text-primary)',
+                  }}>
+                    {t(`video.gen.stage.${stage}`)}
+                  </span>
+                ),
+                description,
+                disabled: !(completed || running || errored),
+              };
+            })}
+          />
         </div>
 
         {/* 右侧产物区:上方产物预览(弹性) + 下方 Shots(固定高度) */}
@@ -274,6 +433,20 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   type="error" showIcon
                   style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}
                   message={errorMsg ?? t('video.pipeline.stageErrorTitle')}
+                  action={
+                    <Tooltip title={t('video.pipeline.retryFromFailureHint')}>
+                      <Button
+                        size="small"
+                        type="primary"
+                        danger
+                        icon={retrying ? <LoadingOutlined /> : <ReloadOutlined />}
+                        disabled={retrying}
+                        onClick={handleRetryFromFailure}
+                      >
+                        {t('video.pipeline.retryFromFailure')}
+                      </Button>
+                    </Tooltip>
+                  }
                   description={
                     errorMsg ? null : (
                       <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
@@ -325,6 +498,9 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   )}
                 </div>
                 {renderStageContent(inlineStage, project, sceneSpec, t)}
+                {/* 单步重跑:输入参数编辑 + 重跑按钮 */}
+                <Divider style={{ margin: '12px 0 8px' }} />
+                <StageInputEditor stage={inlineStage} project={project} />
               </div>
             )}
           </div>
@@ -344,7 +520,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
                 <span>
-                  {t('video.gen.shots')} ({overall === 'complete' ? clips.length : 0}/{shots.length})
+                  {t('video.gen.shots')} ({clips.length}/{shots.length})
                 </span>
                 {overall === 'running' && <Spin size="small" />}
               </div>

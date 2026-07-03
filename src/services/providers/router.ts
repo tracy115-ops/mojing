@@ -21,6 +21,7 @@ import { createTTSProvider } from './tts-adapters';
 import { useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
 import { emitInvocation } from './invocation-context';
+import { isContentPolicyViolation, buildSafetyRewriteChain } from './prompt-safety';
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -30,6 +31,98 @@ function truncatePrompt(prompt: string | undefined, max = 2000): string | undefi
   if (!prompt) return undefined;
   if (prompt.length <= max) return prompt;
   return `${prompt.slice(0, max)}\n…[truncated ${prompt.length - max} chars]`;
+}
+
+/**
+ * 在 provider 调用外包一层"内容审核拦截自动重试"。
+ *
+ * 当 provider 抛 content_policy_violation 时,按 soft → aggressive 顺序
+ * 改写 prompt 重试,直到成功或链路用尽。
+ *
+ * 非内容审核错误(网络、配额、参数等)不重试,原样抛。
+ *
+ * 返回值带 __originalPrompt 字段,调用方可以据此判断是否发生过改写。
+ */
+async function callWithSafetyRetry<T>(
+  originalPrompt: string,
+  attempt: (prompt: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await attempt(originalPrompt);
+  } catch (err) {
+    if (!isContentPolicyViolation(err)) throw err;
+
+    const chain = buildSafetyRewriteChain(originalPrompt);
+    void logger.warn(
+      `[router] content_policy_violation, trying ${chain.length} safety rewrites (prompt length ${originalPrompt.length})`,
+      'router',
+    );
+
+    let lastErr = err;
+    for (let i = 0; i < chain.length; i++) {
+      const rewritten = chain[i];
+      try {
+        const result = await attempt(rewritten);
+        void logger.info(
+          `[router] safety rewrite #${i + 1}/${chain.length} succeeded`,
+          'router',
+        );
+        return result;
+      } catch (e) {
+        lastErr = e;
+        if (!isContentPolicyViolation(e)) throw e;
+        // 仍是 content policy,继续下一档
+      }
+    }
+    // 链路用尽,抛最后的错误(让上层 stage 处理)
+    throw lastErr;
+  }
+}
+
+/** 判断错误是否为「瞬时网络/超时」类(值得重试)。
+ *  - tauri-plugin-http 的 abort: "Request canceled"
+ *  - fetch 标准 timeout: "timed out" / "timeout"
+ *  - Node 网络层: "ETIMEDOUT" / "ECONNRESET" / "ECONNABORTED"
+ *  - 5xx 服务端错误:HTTP 502/503/504(代理后端临时不可用) */
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  if (msg.includes('request canceled')) return true;
+  if (msg.includes('timed out') || msg.includes('timeout')) return true;
+  if (msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('econnaborted')) return true;
+  // HTTP 5xx(从 "API error 503: ..." 这种消息里识别)
+  if (/\b5\d{2}\b/.test(msg) && msg.includes('error')) return true;
+  return false;
+}
+
+/** 对瞬时网络错误自动重试(最多 retries 次,指数退避)。
+ *  非瞬时错误(如 content_policy / 4xx / 逻辑错误)直接抛,不重试。
+ *
+ *  视频生成是长任务(submit 单次最长 5 分钟),重试间隔用 3s/9s/27s
+ *  让代理有时间从拥塞中恢复 — 太快重试容易再撞同一拥塞点。 */
+async function callWithTimeoutRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === retries || !isTransientNetworkError(err)) throw err;
+      // 指数退避:3s, 9s, 27s
+      const delayMs = 3000 * Math.pow(3, attempt);
+      void logger.warn(
+        `[router] 瞬时错误,${delayMs}ms 后重试 (${attempt + 1}/${retries}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        'router',
+      );
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 interface RouterInvocationFields {
@@ -220,21 +313,31 @@ class ProviderRouter {
         baseUrl: endpoint.baseUrl,
       },
       async () => {
-        try {
-          const provider = createImageProvider(config.primary, endpoint);
-          return await provider.generate(requestWithModel);
-        } catch (primaryError) {
-          if (!config.fallback) throw primaryError;
-          const fallbackEndpoint = store.getFallbackEndpoint('image');
-          if (!fallbackEndpoint) throw primaryError;
+        // 内容审核拦截时自动改写 prompt 重试(soft → aggressive),
+        // 每次重试内部都会走完整的 primary → fallback 链路。
+        return callWithSafetyRetry(requestWithModel.prompt, async (prompt) => {
+          const reqWithRewritten = { ...requestWithModel, prompt };
+          // 图像生成也可能因代理转发/网络抖动触发 "Request canceled",
+          // 关键帧/角色立绘/场景图任一步全失败都会让整条流水线断掉。
+          // 这里加 timeout-retry,和 video 路径保持一致的容错策略。
+          return callWithTimeoutRetry(async () => {
+            try {
+              const provider = createImageProvider(config.primary, endpoint);
+              return await provider.generate(reqWithRewritten);
+            } catch (primaryError) {
+              if (!config.fallback) throw primaryError;
+              const fallbackEndpoint = store.getFallbackEndpoint('image');
+              if (!fallbackEndpoint) throw primaryError;
 
-          try {
-            const fallbackProvider = createImageProvider(config.fallback, fallbackEndpoint);
-            return await fallbackProvider.generate(requestWithModel);
-          } catch {
-            throw primaryError;
-          }
-        }
+              try {
+                const fallbackProvider = createImageProvider(config.fallback, fallbackEndpoint);
+                return await fallbackProvider.generate(reqWithRewritten);
+              } catch {
+                throw primaryError;
+              }
+            }
+          });
+        });
       },
     );
   }
@@ -270,26 +373,45 @@ class ProviderRouter {
         baseUrl: endpoint.baseUrl,
       },
       async () => {
-        try {
-          const provider = createVideoProvider(endpointProvider, endpoint);
-          return await provider.generate(requestWithModel);
-        } catch (primaryError) {
-          if (explicitEndpoint || !config.fallback) throw primaryError;
-          const fallbackEndpoint = store.getFallbackEndpoint('video');
-          if (!fallbackEndpoint) throw primaryError;
+        return callWithSafetyRetry(requestWithModel.prompt, async (prompt) => {
+          const reqWithRewritten = { ...requestWithModel, prompt };
+          // 视频生成是长任务(submit + 长轮询),代理转发或网络抖动可能触发
+          // tauri-plugin-http 的 "Request canceled"(单次请求超时)。
+          // 这种瞬时错误值得重试,否则整个 video_generation stage 会失败、
+          // 已经跑好的 6 个 shot 全废。
+          return callWithTimeoutRetry(async () => {
+            try {
+              const provider = createVideoProvider(endpointProvider, endpoint);
+              return await provider.generate(reqWithRewritten);
+            } catch (primaryError) {
+              if (explicitEndpoint || !config.fallback) throw primaryError;
+              const fallbackEndpoint = store.getFallbackEndpoint('video');
+              if (!fallbackEndpoint) throw primaryError;
 
-          try {
-            const fallbackProvider = createVideoProvider(config.fallback, fallbackEndpoint);
-            return await fallbackProvider.generate(requestWithModel);
-          } catch {
-            throw primaryError;
-          }
-        }
+              try {
+                const fallbackProvider = createVideoProvider(config.fallback, fallbackEndpoint);
+                return await fallbackProvider.generate(reqWithRewritten);
+              } catch {
+                throw primaryError;
+              }
+            }
+          });
+        });
       },
     );
   }
 
   // TTS
+
+  /** 返回当前激活的 TTS provider id(供上游 step-voice 按类型选真实音色 ID) */
+  getActiveTTSProviderId(): TTSProviderId | null {
+    const store = useProviderStore.getState();
+    const endpoint = store.getActiveEndpoint('tts');
+    if (!endpoint) return null;
+    // endpoint.provider 是所有 provider id 的联合,这里运行时无 cast 风险
+    // (caller 在 TTS 上下文里调,endpoint 必然是 TTS 类)
+    return endpoint.provider as TTSProviderId;
+  }
 
   async generateTTS(request: TTSRequest): Promise<TTSResponse> {
     const store = useProviderStore.getState();

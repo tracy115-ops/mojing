@@ -5,6 +5,7 @@
 import type { TTSRequest, TTSResponse, TTSProviderId, ApiEndpoint } from '@/types/providers';
 import { BaseTTSProvider } from './base';
 import { fetch as httpFetch } from './fetch-proxy';
+import { logger } from '@/services/log';
 
 // --- OpenAI TTS Adapter ---
 // API: POST {baseUrl}/audio/speech
@@ -72,14 +73,36 @@ export class DoubaoTTSProvider extends BaseTTSProvider {
 
 // --- Edge TTS Adapter (免费,微软官方,无需 API Key) ---
 //
-// 协议:WSS → speech.platform.bing.com
-// 流程:connect → config message → SSML message → 接收 binary mp3 分片 → close
-// 参考:https://github.com/anyantudre/edge-tts-py 的逆向实现
+// 协议(2025+ 更新):WSS → speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1
+// 流程:connect(带 Sec-MS-GEC token) → config message → SSML message → 接收 binary mp3 分片 → close
+// 参考:https://github.com/travisvn/edge-tts-universal 的 TS 实现
 //
-// 注意:浏览器/Tauri webview 内 WebSocket 可直连该 endpoint,无需代理
+// 关键:微软现在要求 Sec-MS-GEC token,缺失/过期会 403。token 算法:
+//   ticks = ((unixSec + 11644473600) // 300) * 1e7  (Windows file time, 100ns 单位,300s 取整)
+//   sha256(ticks + TRUSTED_CLIENT_TOKEN).hex().upper()
+// 有效期 ~5 分钟,每次连接重新生成。
 
-const EDGE_TTS_WSS_URL =
-  'wss://speech.platform.bing.com/speech/synthesis/tts/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const EDGE_TTS_WSS_BASE =
+  'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
+const EDGE_TTS_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const EDGE_TTS_GEC_VERSION = '1-130.0.2849.68';
+
+/** 生成 Sec-MS-GEC token(Windows file time + SHA256)。每次连接重新算。 */
+async function generateSecMsGec(): Promise<string> {
+  const WIN_EPOCH = 11644473600; // 1970-01-01 → 1601-01-01 (Windows epoch)
+  let ticks = Date.now() / 1000;
+  ticks += WIN_EPOCH;
+  ticks -= ticks % 300; // 取整到 5 分钟边界
+  ticks *= 1e7; // sec → 100ns ticks (1e9 / 100)
+  const strToHash = `${ticks.toFixed(0)}${EDGE_TTS_TOKEN}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(strToHash);
+  // Web Crypto SHA-256
+  const cryptoObj = globalThis.crypto || (window as unknown as { crypto: Crypto }).crypto;
+  const hashBuffer = await cryptoObj.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
 
 // 默认音色 - 中文女声/男声 (用户可在请求里指定其他)
 const EDGE_DEFAULT_VOICE_ZH_FEMALE = 'zh-CN-XiaoxiaoNeural';
@@ -123,8 +146,23 @@ export class EdgeTTSProvider extends BaseTTSProvider {
 
     // 通过 WebSocket 收发
     const audioChunks: Uint8Array[] = [];
-    await new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(EDGE_TTS_WSS_URL);
+    await new Promise<void>(async (resolve, reject) => {
+      // 每次连接生成新的 Sec-MS-GEC token(有效期 5 分钟)和 ConnectionId
+      const secMsGec = await generateSecMsGec();
+      const connectionId = uuidV4();
+      const wsUrl =
+        `${EDGE_TTS_WSS_BASE}?TrustedClientToken=${EDGE_TTS_TOKEN}` +
+        `&ConnectionId=${connectionId}` +
+        `&Sec-MS-GEC=${secMsGec}` +
+        `&Sec-MS-GEC-Version=${EDGE_TTS_GEC_VERSION}`;
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (err) {
+        reject(new Error(`Edge TTS WebSocket 构造失败: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
       ws.binaryType = 'arraybuffer';
 
       const timeout = setTimeout(() => {
@@ -146,9 +184,9 @@ export class EdgeTTSProvider extends BaseTTSProvider {
             },
           }),
         );
-        // 2) SSML message
+        // 2) SSML message — X-RequestId 必须和 connectionId 一致(微软要求)
         ws.send(
-          `X-RequestId:${uuidV4()}\r\n` +
+          `X-RequestId:${connectionId}\r\n` +
           `Content-Type:application/ssml+xml\r\n` +
           `X-Timestamp:${new Date().toISOString()}Z\r\n` +
           `Path:ssml\r\n\r\n` +
@@ -175,15 +213,21 @@ export class EdgeTTSProvider extends BaseTTSProvider {
         }
       };
 
-      ws.onerror = (err) => {
-        clearTimeout(timeout);
-        reject(new Error(`Edge TTS WebSocket error: ${err instanceof Error ? err.message : 'unknown'}`));
+      ws.onerror = () => {
+        // 浏览器/Tauri webview 的 error event 是 Event 不是 Error,
+        // 真正的错误细节在随后的 close event 里(code + reason)。
+        // 这里不立即 reject,让 onclose 处理,避免双重 reject + 错误消息含糊。
+        void logger.warn('[edge-tts] WebSocket onerror triggered, waiting for onclose', 'tts');
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         clearTimeout(timeout);
         if (audioChunks.length === 0) {
-          reject(new Error('Edge TTS connection closed before any audio received'));
+          const reason = ev.reason || `(code=${ev.code}, no reason)`;
+          reject(new Error(
+            `Edge TTS 连接关闭,未收到任何音频。close code=${ev.code} reason=${reason}. ` +
+            `常见原因:1) Tauri webview CSP 阻塞 wss; 2) 网络代理拦截 wss; 3) voice 名称错误。`,
+          ));
           return;
         }
         resolve();

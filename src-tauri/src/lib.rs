@@ -5,8 +5,10 @@ use tauri::Emitter;
 
 mod ffmpeg;
 mod logging;
+mod asset;
 pub use ffmpeg::{ffmpeg_probe, ffmpeg_download_clip, ffmpeg_compose_clips, ffmpeg_merge_audio, ffmpeg_write_data_uri, ffmpeg_export};
 pub use logging::{log_write, log_path};
+pub use asset::{asset_stats_project, asset_clean_project, asset_clean_all, asset_read_as_data_uri, asset_stat_path};
 
 #[tauri::command]
 async fn write_export_file(path: String, content: String) -> Result<(), String> {
@@ -30,7 +32,12 @@ pub fn run() {
             ffmpeg_write_data_uri,
             ffmpeg_export,
             log_write,
-            log_path
+            log_path,
+            asset_stats_project,
+            asset_clean_project,
+            asset_clean_all,
+            asset_read_as_data_uri,
+            asset_stat_path
         ])
         .setup(|app| {
             // System tray

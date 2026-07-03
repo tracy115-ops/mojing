@@ -16,7 +16,7 @@ import { stepExtract } from './core/step-extract';
 
 export interface DirectBuildContext {
   aspectRatio: AspectRatio;
-  defaultShotDuration: 5 | 10;
+  defaultShotDuration: 3 | 5 | 10 | 18;
   style?: string;
 }
 

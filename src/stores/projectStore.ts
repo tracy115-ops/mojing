@@ -23,7 +23,7 @@ function createDefaultMetadata(type: CreativeProjectType): NovelMetadata | Comic
     case 'comic':
       return { style: 'manga', panelLayout: 'grid', pageCount: 0, characters: [] };
     case 'video':
-      return { duration: 0, resolution: '1920x1080', style: 'cinematic', scenes: [], aspectRatio: '16:9', fps: 24 };
+      return { duration: 0, resolution: '1920x1080', style: 'cinematic', aspectRatio: '16:9', fps: 24 };
   }
 }
 
@@ -60,11 +60,6 @@ interface ProjectState {
   addComicCharacter: (projectId: string, character: Omit<import('@/types').ComicCharacter, 'id'>) => void;
   deleteComicCharacter: (projectId: string, characterId: string) => void;
   updateComicCharacter: (projectId: string, characterId: string, updates: Partial<import('@/types').ComicCharacter>) => void;
-
-  // Video-specific
-  addScene: (projectId: string) => void;
-  deleteScene: (projectId: string, sceneId: string) => void;
-  updateScene: (projectId: string, sceneId: string, updates: Partial<import('@/types').VideoScene>) => void;
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -114,10 +109,19 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       deleteProject: (id) => {
+        const target = get().projects.find((p) => p.id === id);
         set((s) => ({
           projects: s.projects.filter((p) => p.id !== id),
           activeProjectId: s.activeProjectId === id ? null : s.activeProjectId,
         }));
+        // 级联清理 video 产物文件(只在 novel 类型时落盘,其他类型跳过)
+        if (target?.type === 'novel') {
+          void import('../services/video/asset-store')
+            .then(({ cleanProjectAssets }) => cleanProjectAssets(id))
+            .catch(() => {
+              // 清理失败不影响项目删除本身
+            });
+        }
       },
 
       setActiveProject: (id) => set({ activeProjectId: id }),
@@ -459,69 +463,7 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       // --- Video ---
-
-      addScene: (projectId) => {
-        set((s) => ({
-          projects: s.projects.map((p) => {
-            if (p.id !== projectId || p.type !== 'video') return p;
-            const meta = p.metadata as VideoMetadata;
-            const newScene: import('@/types').VideoScene = {
-              id: generateId(),
-              title: `Scene ${meta.scenes.length + 1}`,
-              description: '',
-              duration: 5,
-              order: meta.scenes.length,
-              status: 'scripted',
-            };
-            return {
-              ...p,
-              metadata: {
-                ...meta,
-                scenes: [...meta.scenes, newScene],
-                duration: meta.duration + 5,
-              },
-              updatedAt: new Date().toISOString(),
-            };
-          }),
-        }));
-      },
-
-      deleteScene: (projectId, sceneId) => {
-        set((s) => ({
-          projects: s.projects.map((p) => {
-            if (p.id !== projectId || p.type !== 'video') return p;
-            const meta = p.metadata as VideoMetadata;
-            const scene = meta.scenes.find((s) => s.id === sceneId);
-            return {
-              ...p,
-              metadata: {
-                ...meta,
-                scenes: meta.scenes.filter((s) => s.id !== sceneId),
-                duration: meta.duration - (scene?.duration ?? 0),
-              },
-              updatedAt: new Date().toISOString(),
-            };
-          }),
-        }));
-      },
-
-      updateScene: (projectId, sceneId, updates) => {
-        set((s) => ({
-          projects: s.projects.map((p) => {
-            if (p.id !== projectId || p.type !== 'video') return p;
-            const meta = p.metadata as VideoMetadata;
-            const updatedScenes = meta.scenes.map((sc) =>
-              sc.id === sceneId ? { ...sc, ...updates } : sc,
-            );
-            const duration = updatedScenes.reduce((sum, sc) => sum + sc.duration, 0);
-            return {
-              ...p,
-              metadata: { ...meta, scenes: updatedScenes, duration },
-              updatedAt: new Date().toISOString(),
-            };
-          }),
-        }));
-      },
+      // (legacy manual Scenes editor removed — pipeline handles sceneSpec internally)
     }),
     {
       name: 'mojing-projects',

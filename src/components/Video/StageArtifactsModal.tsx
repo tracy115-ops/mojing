@@ -10,7 +10,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Modal, Empty, Image, Typography, Tag, Space, Card, Divider, Alert, Spin,
-  Collapse, Tooltip, Statistic, Row, Col,
+  Collapse, Tooltip, Statistic, Row, Col, Tabs,
 } from 'antd';
 import {
   ClockCircleOutlined, ApiOutlined, ReloadOutlined,
@@ -293,16 +293,66 @@ export function renderStageContent(
         </Section>
       );
 
-    case 'character_anchor':
+    case 'character_anchor': {
       if (!spec?.characters?.length) return <Empty />;
+      const hasTurnaround = spec.characters.some((c) => !!c.turnaroundImage);
+      const portraitItems = spec.characters.map((c) => ({
+        key: c.id,
+        label: c.name,
+        src: c.portraitImage,
+      }));
+      const turnaroundItems = spec.characters.map((c) => ({
+        key: c.id,
+        label: c.name,
+        src: c.turnaroundImage,
+      }));
       return (
         <Section title={t('video.artifacts.characterPortraits')}>
-          <ImageGrid
-            items={spec.characters.map((c) => ({ key: c.id, label: c.name, src: c.portraitImage }))}
-            emptyText={t('video.artifacts.noPortraits')}
-          />
+          {hasTurnaround && (
+            <Tabs
+              size="small"
+              defaultActiveKey="portrait"
+              style={{ marginBottom: 8 }}
+              items={[
+                {
+                  key: 'portrait',
+                  label: t('video.artifacts.portraitTab'),
+                  children: (
+                    <ImageGrid
+                      items={portraitItems}
+                      emptyText={t('video.artifacts.noPortraits')}
+                    />
+                  ),
+                },
+                {
+                  key: 'turnaround',
+                  label: t('video.artifacts.turnaroundTab'),
+                  children: (
+                    <ImageGrid
+                      items={turnaroundItems}
+                      emptyText={t('video.artifacts.noTurnaround')}
+                    />
+                  ),
+                },
+              ]}
+            />
+          )}
+          {!hasTurnaround && (
+            <ImageGrid
+              items={portraitItems}
+              emptyText={t('video.artifacts.noPortraits')}
+            />
+          )}
+          {hasTurnaround && (
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                {t('video.artifacts.turnaroundHint')}
+              </Text>
+            </div>
+          )}
         </Section>
       );
+    }
 
     case 'scene_image':
       if (!spec?.scenes?.length) return <Empty />;
@@ -318,43 +368,54 @@ export function renderStageContent(
     case 'tts':
       return (
         <Section title={t('video.artifacts.tts')}>
-          {project.clips.filter((c) => c.audioTrack).length === 0 ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.noAudio')} />
-          ) : (
-            project.clips.filter((c) => c.audioTrack).map((c) => {
-              const shot = project.shots.find((s) => s.id === c.shotId);
+          {(() => {
+            // TTS 产物(step-tts)写在 ShotSpec.audioTrack,而不是 clip.audioTrack。
+            // 之前从 project.clips 里找,导致永远显示"尚未生成配音"。
+            // 改成从 spec.shots(当前 workingSpec)和 project.shots(占位)双读。
+            const shots = spec?.shots ?? [];
+            const withAudio = shots.filter((s) => !!s.audioTrack);
+            if (withAudio.length === 0) {
+              return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.noAudio')} />;
+            }
+            return withAudio.map((s) => {
+              const shot = project.shots.find((p) => p.id === s.id);
               return (
-                <Card key={c.shotId} size="small" style={{ marginBottom: 6 }}>
+                <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
                   <Space direction="vertical" style={{ width: '100%' }} size="small">
                     <Space>
                       <Tag color="blue">{t('video.gen.shot')} {(shot?.index ?? 0) + 1}</Tag>
                       <Text type="secondary" style={{ fontSize: 11 }}>{(shot?.narration || '').slice(0, 80)}</Text>
                     </Space>
-                    <audio src={c.audioTrack} controls style={{ width: '100%', height: 32 }} />
+                    <audio src={s.audioTrack} controls style={{ width: '100%', height: 32 }} />
                   </Space>
                 </Card>
               );
-            })
-          )}
+            });
+          })()}
         </Section>
       );
 
-    case 'keyframe_image':
+    case 'keyframe_image': {
+      // 优先从 sceneSpec.shots 读(ShotSpec 上有 keyframeImage 字段);
+      // project.shots 是 StoryboardShot,没有该字段,只用来回退 id/index。
+      const shots = spec?.shots ?? [];
       return (
         <Section title={t('video.artifacts.keyframes')}>
-          <ImageGrid
-            items={project.clips.map((c) => {
-              const shot = project.shots.find((s) => s.id === c.shotId);
-              return {
-                key: c.shotId,
-                label: `${t('video.gen.shot')} ${(shot?.index ?? 0) + 1}`,
-                src: c.keyframeImage,
-              };
-            })}
-            emptyText={t('video.artifacts.noKeyframes')}
-          />
+          {shots.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.noKeyframes')} />
+          ) : (
+            <ImageGrid
+              items={shots.map((s) => ({
+                key: s.id,
+                label: `${t('video.gen.shot')} ${(s.index ?? 0) + 1}`,
+                src: s.keyframeImage,
+              }))}
+              emptyText={t('video.artifacts.noKeyframes')}
+            />
+          )}
         </Section>
       );
+    }
 
     case 'video_generation':
     case 'audio_merge':

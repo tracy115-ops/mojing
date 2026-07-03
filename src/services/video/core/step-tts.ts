@@ -7,6 +7,7 @@
 
 import { providerRouter } from '@/services/providers';
 import type { ShotSpec, CharacterAnchor } from '@/types/video';
+import { saveAsset } from '../asset-store';
 
 export interface TTSResult {
   shots: ShotSpec[];
@@ -17,7 +18,7 @@ export interface TTSResult {
 export async function runTTS(
   shots: ShotSpec[],
   characters: CharacterAnchor[],
-  _ctx: { ttsTier: string },
+  ctx: { ttsTier: string; novelProjectId: string },
   onProgress?: (done: number, total: number) => void,
 ): Promise<TTSResult> {
   const total = shots.length;
@@ -49,7 +50,12 @@ export async function runTTS(
         text,
         voice,
       });
-      result[i].audioTrack = response.audioData;
+      result[i].audioTrack = await saveAsset(
+        ctx.novelProjectId,
+        'audio',
+        response.audioData,
+        `tts_shot_${i + 1}`,
+      );
       okCount++;
     } catch (err) {
       console.warn(`tts: failed for shot ${shot.id}`, err);
@@ -63,6 +69,12 @@ export async function runTTS(
   if (attempted > 0 && okCount === 0) {
     const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
     throw new Error(`所有 ${attempted} 次配音调用都失败。最近一次错误:${reason}`);
+  }
+
+  if (attempted === 0) {
+    // 所有镜头都没有 narration 字段 → 一个 TTS 都没尝试。
+    // 不抛错(避免阻塞后续阶段),但要让用户知道"没活可干"。
+    console.warn('[tts] 所有镜头都没有 narration 字段,跳过 TTS 阶段');
   }
 
   return { shots: result, failedShotIds };

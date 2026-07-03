@@ -218,6 +218,12 @@
   50% { opacity: 0.3; }
 }
 
+/* 视频流水线:执行中但无具体进度时,进度条的滑动动画(假装在干活) */
+@keyframes mojing-pipeline-pulse {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
 /* Narrative Workbench Tabs — height chain so charts inside get a definite size */
 .narrative-workbench-tabs {
   display: flex;

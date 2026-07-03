@@ -27,7 +27,7 @@ export interface StoryboardContext {
   style: string;
   /** 视频规格：宽高比、镜头时长 */
   aspectRatio: '16:9' | '9:16' | '1:1';
-  defaultShotDuration: 5 | 10;
+  defaultShotDuration: 3 | 5 | 10 | 18;
 }
 
 /**
@@ -94,7 +94,7 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 - "imagePrompt": 英文 prompt，30-60 词，描述这个镜头的关键帧画面（Phase 2 用，可空字符串）
 - "narration": 中文旁白，30-80 字，用于 TTS 配音。原文已是叙述则压缩改写；原文是对话则改成第三人称描述。
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
-- "durationSeconds": ${ctx.defaultShotDuration} 或 10（动作戏可加倍）
+- "durationSeconds": one of [3, 5, 10, 18] (默认 ${ctx.defaultShotDuration},动作戏或长镜头可用 10 或 18)
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 
 【质量要求】
@@ -168,10 +168,13 @@ function defaultCamera(raw: RawShot): string {
   return 'dolly_in';
 }
 
-function clampDuration(v: unknown, def: 5 | 10): 5 | 10 {
+function clampDuration(v: unknown, def: 3 | 5 | 10 | 18): 3 | 5 | 10 | 18 {
   const n = Number(v);
-  if (n >= 10) return 10;
-  if (n >= 5) return 5;
+  // 落到 3 / 5 / 10 / 18 四个标准档位(Agnes V2.0 num_frames 81/121/241/441)
+  if (n >= 15) return 18;
+  if (n >= 8) return 10;
+  if (n >= 4) return 5;
+  if (n >= 1) return 3;
   return def;
 }
 

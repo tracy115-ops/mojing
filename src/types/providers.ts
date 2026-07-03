@@ -34,6 +34,7 @@ export type VideoProviderId =
   | 'vidu'
   | 'pika'
   | 'agnes-video'
+  | 'doubao-video'
   | 'custom';
 
 export type TTSProviderId =

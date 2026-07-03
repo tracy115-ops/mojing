@@ -44,7 +44,7 @@ export class DALLEProvider extends BaseImageProvider {
     const image = data.data?.[0];
 
     return {
-      imageData: image?.b64_json ?? image?.url ?? '',
+      imageData: this.normalizeImageSrc(image?.b64_json ?? image?.url ?? ''),
       width: request.width ?? 1024,
       height: request.height ?? 1024,
       model,
@@ -93,7 +93,7 @@ export class SDWebUIProvider extends BaseImageProvider {
     const data = await response.json();
 
     return {
-      imageData: data.images?.[0] ?? '',
+      imageData: this.normalizeImageSrc(data.images?.[0] ?? ''),
       width,
       height,
       model: request.model || 'stable-diffusion',
@@ -141,7 +141,7 @@ export class KlingImageProvider extends BaseImageProvider {
     const image = data.data?.[0];
 
     return {
-      imageData: image?.url ?? image?.b64_json ?? '',
+      imageData: this.normalizeImageSrc(image?.url ?? image?.b64_json ?? ''),
       width,
       height,
       model: request.model || 'kling-v1',
@@ -188,7 +188,7 @@ export class CogViewProvider extends BaseImageProvider {
     const image = data.data?.[0];
 
     return {
-      imageData: image?.url ?? image?.b64_json ?? '',
+      imageData: this.normalizeImageSrc(image?.url ?? image?.b64_json ?? ''),
       width,
       height,
       model,
@@ -261,7 +261,7 @@ export class WanxProvider extends BaseImageProvider {
       if (status === 'SUCCEEDED') {
         const url = statusData.output?.results?.[0]?.url ?? '';
         return {
-          imageData: url,
+          imageData: this.normalizeImageSrc(url),
           width,
           height,
           model,
@@ -339,7 +339,7 @@ export class JimengProvider extends BaseImageProvider {
       if (status === 'succeeded') {
         const url = data.content?.image_url ?? data.output?.image_url ?? '';
         return {
-          imageData: url,
+          imageData: this.normalizeImageSrc(url),
           width,
           height,
           model,
@@ -396,7 +396,7 @@ export class IdeogramProvider extends BaseImageProvider {
     const image = data.data?.[0];
 
     return {
-      imageData: image?.url ?? '',
+      imageData: this.normalizeImageSrc(image?.url ?? ''),
       width,
       height,
       model,
@@ -431,9 +431,20 @@ export class AgnesImageProvider extends BaseImageProvider {
     const extraBody: Record<string, unknown> = {
       response_format: 'b64_json',
     };
-    // 图生图:referenceImages 走 extra_body.image 数组
+    // 图生图:Agnes 文档明确要求 image 数组里的元素是 "public URL 或 Data URI Base64"。
+    // Data URI 必须保留 `data:image/...;base64,` 前缀(剥掉会触发 'invalid input image')。
+    // 本地 webview URL(http://asset.localhost/...)Agnes 后端拉不到,必须转成 data URI。
+    // 多张参考图全部传给 Agnes(场景背景 + 角色立绘),让 provider 同时看到两者。
     if (request.referenceImages?.length) {
-      extraBody.image = request.referenceImages.slice(0, 1);
+      const cleaned = request.referenceImages
+        .map((r) => normalizeForAgnes(r))
+        .filter((r): r is string => !!r);
+      if (cleaned.length === 0) {
+        throw new Error(
+          'Agnes Image: 引用图格式不支持。Agnes 只接受完整 data URI 或公网 URL,本地文件请先转成 data URI。',
+        );
+      }
+      extraBody.image = cleaned;
     }
 
     const body: Record<string, unknown> = {
@@ -459,7 +470,7 @@ export class AgnesImageProvider extends BaseImageProvider {
     const image = data.data?.[0];
 
     return {
-      imageData: image?.b64_json ?? image?.url ?? '',
+      imageData: this.normalizeImageSrc(image?.b64_json ?? image?.url ?? ''),
       width,
       height,
       model,
@@ -498,4 +509,35 @@ export function createImageProvider(
       // Assume OpenAI-compatible image API
       return new DALLEProvider(endpoint);
   }
+}
+
+/**
+ * Agnes Image 的引用图归一化。
+ *
+ * Agnes 文档明确要求 `image` 数组元素是「公网 URL 或 Data URI Base64」,
+ * 且 Data URI 必须保留 `data:image/...;base64,` 前缀 —— 剥掉前缀会触发 400 'invalid input image'。
+ *
+ * - 完整 data URI(`data:image/png;base64,XXX`):原样返回,保留前缀
+ * - 公网 https URL:原样返回
+ * - 本地 URL(asset.localhost / blob: / file: / 绝对路径 / webview URL):返回 null,由调用方抛错
+ *   因为 Agnes 后端拉不到本地 webview URL,必须先在调用方转成 data URI。
+ */
+function normalizeForAgnes(s: string | undefined | null): string | null {
+  if (!s) return null;
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+
+  // 完整 data URI —— 保留前缀(Agnes 的硬性要求)
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  // 公网 http(s) URL —— 原样返回
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  // 其它都视为本地不可访问的引用(asset.localhost / blob: / file: / 绝对路径 / 纯 base64 无前缀)
+  // 纯 base64 没有 data URI 前缀的也拒绝 —— Agnes 要求带前缀,调用方负责转成 data URI
+  return null;
 }

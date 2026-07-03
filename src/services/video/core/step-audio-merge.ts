@@ -11,6 +11,7 @@
 // 单镜失败不阻塞。FFmpeg 不可用时整步跳过。
 
 import { probeFFmpeg, downloadClip, mergeAudio, writeDataUri } from '../ffmpeg-bridge';
+import { resolveLocalPath, isRemoteUrl } from '../asset-store';
 import type { ShotSpec, GeneratedClip } from '@/types/video';
 
 export interface AudioMergeResult {
@@ -80,9 +81,14 @@ export async function runAudioMerge(
   return { shots: result, mergedShotIds, failedShotIds };
 }
 
-/** 把 videoUrl 落地为本地文件:远程下载 / data URI 解码 / 本地路径直用 */
+/** 把 videoUrl 落地为本地文件:webview URL 反解 / 远程下载 / data URI 解码 / 本地路径直用 */
 async function materializeVideo(url: string, workDir: string, name: string): Promise<string> {
-  if (/^https?:\/\//.test(url)) {
+  // webview URL(http://asset.localhost/...) → 反解出本地路径,直接用
+  const localPath = resolveLocalPath(url);
+  if (localPath !== url) {
+    return localPath;
+  }
+  if (isRemoteUrl(url)) {
     const ext = guessExt(url) || '.mp4';
     const downloaded = await downloadClip(url, workDir, `${name}${ext}`);
     return downloaded.savedPath;
@@ -97,15 +103,20 @@ async function materializeVideo(url: string, workDir: string, name: string): Pro
   return url;
 }
 
-/** 把 audioTrack(base64 data URI)落地为本地文件 */
-async function materializeAudio(dataUri: string, workDir: string, name: string): Promise<string> {
-  if (!dataUri.startsWith('data:')) {
-    // 已经是本地路径
-    return dataUri;
+/** 把 audioTrack(base64 data URI / webview URL / 本地路径)落地为本地文件 */
+async function materializeAudio(input: string, workDir: string, name: string): Promise<string> {
+  // webview URL 或本地路径 → 直接用
+  const localPath = resolveLocalPath(input);
+  if (localPath !== input) {
+    return localPath;
   }
-  const ext = guessDataExt(dataUri) || '.mp3';
+  if (!input.startsWith('data:')) {
+    // 已经是本地路径
+    return input;
+  }
+  const ext = guessDataExt(input) || '.mp3';
   const path = `${workDir}/${name}${ext}`;
-  await writeDataUriToFile(dataUri, path);
+  await writeDataUriToFile(input, path);
   return path;
 }
 

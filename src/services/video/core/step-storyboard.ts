@@ -8,7 +8,7 @@ import type { ShotSpec, AspectRatio } from '@/types/video';
 
 export interface StoryboardContext {
   aspectRatio: AspectRatio;
-  defaultShotDuration: 5 | 10;
+  defaultShotDuration: 3 | 5 | 10 | 18;
   style?: string;
 }
 
@@ -111,9 +111,11 @@ function fallbackStoryboard(rawPrompt: string, ctx: StoryboardContext): Storyboa
   };
 }
 
-function clampDuration(v: unknown, def: 5 | 10): 5 | 10 {
+function clampDuration(v: unknown, def: 3 | 5 | 10 | 18): 3 | 5 | 10 | 18 {
   const n = Number(v);
-  if (n >= 10) return 10;
-  if (n >= 5) return 5;
+  if (n >= 15) return 18;
+  if (n >= 8) return 10;
+  if (n >= 4) return 5;
+  if (n >= 1) return 3;
   return def;
 }

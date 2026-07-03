@@ -62,6 +62,8 @@ export interface VideoStageState {
   totals?: StageTotals;
   /** 该步骤输入摘要(章节字数 / 上一步产物数 / spec 字段),UI 第一段展示。 */
   inputSummary?: StageInputSummary;
+  /** 用户可编辑的输入参数(单步重跑时用)。 */
+  input?: StageInput;
 }
 
 /** 单次 provider 调用的明细记录。 */
@@ -137,8 +139,13 @@ export interface CharacterAnchor {
   ageGroup?: 'child' | 'teen' | 'young' | 'middle' | 'elder' | 'unknown';
   costumeVariants?: CostumeVariant[];
   voiceRef?: string;             // 步 4 产物:音色 ID
-  portraitImage?: string;        // 步 6 产物:default 立绘 base64
+  portraitImage?: string;        // 步 6 产物:default 立绘(单图正面) base64
   firstAppearShotIndex: number;
+  /** 步 6 额外产物:三视图(正/侧/背并排,横向尺寸)。
+   *  仅当用户选了三视图模式时才会生成,**不会**覆盖 portraitImage。
+   *  keyframe 步优先用 turnaroundImage(裁中间 1/3 正视图)做 reference,
+   *  没有则回退到 portraitImage。 */
+  turnaroundImage?: string;
 }
 
 /** 步 3 提取的场景 */
@@ -184,7 +191,7 @@ export interface ShotSpec {
   location?: string;
   mood?: string;
   cameraMovement?: string;
-  durationSeconds: 5 | 10;
+  durationSeconds: 3 | 5 | 10 | 18;
   /** 步 8 产物:TTS 音频路径/URL */
   audioTrack?: string;
 }
@@ -203,7 +210,7 @@ export interface SceneSpec {
     style?: string;
     genre?: string;
     aspectRatio: AspectRatio;
-    defaultShotDuration: 5 | 10;
+    defaultShotDuration: 3 | 5 | 10 | 18;
     /** 来源模式(Novel 通道填 'multishot' 语义;Direct 按用户选择) */
     sourceMode: DirectSourceMode;
     /** 'novel' | 'direct' */
@@ -307,6 +314,12 @@ export interface GeneratedClip {
   sceneSource?: 'novel' | 'direct';
   /** Direct 模式标记 */
   sourceMode?: DirectSourceMode;
+  /**
+   * Direct 任务的项目 ID(`direct_<timestamp>`)。
+   * 用于在 directClips 列表里按任务分组,以及从产物跳回执行过程。
+   * Novel 通道的 clip 不写这个字段(Novel 用 novelProjectId 关联)。
+   */
+  directProjectId?: string;
 }
 
 export interface GeneratedAudio {
@@ -330,6 +343,8 @@ export interface AnchorImage {
 
 export interface VideoProjectState {
   novelProjectId: string;
+  /** 可读标题(Direct 模式取 prompt 前 N 字;Novel 模式可留空,header 用 novel project title) */
+  title?: string;
   selectedChapterIds: string[];
   spec: VideoSpec;
   /** 用户选择的步骤开关 */
@@ -389,3 +404,81 @@ export const VIDEO_PIPELINE_STAGES: VideoStage[] = [
 
 /** 步骤默认跳过集合(无对应 provider 时) */
 export const DEFAULT_SKIPPED_STAGES: ReadonlySet<VideoStage> = new Set<VideoStage>([]);
+
+// --- 单步重跑:可编辑输入参数 ---
+
+/** 某个 stage 用户可编辑的输入参数(通用集合,各 stage 用到的字段不同)。 */
+export interface StageInput {
+  /** 文本类 prompt(storyboard/keyframe/video_generation 的提示词) */
+  prompt?: string;
+  /** 随机种子(image/video 生成时复现或换图用) */
+  seed?: number;
+  /** 负面提示词 */
+  negativePrompt?: string;
+  /** video_generation:分辨率 "1920x1080" */
+  resolution?: string;
+  /** video_generation:帧率 */
+  fps?: number;
+  /** video_generation:单镜头时长(秒) */
+  durationSeconds?: number;
+  /** tts:音色 ID */
+  voiceId?: string;
+  /** tts:语速 */
+  speed?: number;
+  /** character_anchor / scene_image:风格 */
+  style?: string;
+  /** character_anchor:立绘模式 — 'single'(单图正面) | 'turnaround'(三视图正/侧/背) */
+  anchorMode?: 'single' | 'turnaround';
+}
+
+/** 输入字段定义 — 驱动 UI 表单渲染。 */
+export interface StageInputFieldDef {
+  key: keyof StageInput;
+  label: string;       // i18n key,如 'video.pipeline.field.prompt'
+  type: 'text' | 'textarea' | 'number' | 'radio';
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** 只读展示(改了不会应用到重跑,仅作为「step 实际使用的参数」参考)。
+   *  用于 prompt 这种 step 内部 build 出来的字段。 */
+  readOnly?: boolean;
+  /** type='radio' 时的可选项 */
+  options?: { value: string; labelKey: string }[];
+}
+
+/** 各 stage 可编辑的字段配置。空数组 = 该 stage 暂不支持改输入(只能纯重跑)。
+ *  字段 label 走 i18n,key 格式 'video.pipeline.field.<key>'。 */
+export const STAGE_INPUT_FIELDS: Partial<Record<VideoStage, StageInputFieldDef[]>> = {
+  storyboard_prompt: [
+    { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
+  ],
+  character_anchor: [
+    {
+      key: 'anchorMode', label: 'video.pipeline.field.anchorMode', type: 'radio',
+      options: [
+        { value: 'single', labelKey: 'video.pipeline.field.anchorModeSingle' },
+        { value: 'turnaround', labelKey: 'video.pipeline.field.anchorModeTurnaround' },
+      ],
+    },
+    { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
+    { key: 'style', label: 'video.pipeline.field.style', type: 'text' },
+    { key: 'seed', label: 'video.pipeline.field.seed', type: 'number', min: 0 },
+  ],
+  scene_image: [
+    { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea', readOnly: true },
+    { key: 'style', label: 'video.pipeline.field.style', type: 'text' },
+    { key: 'seed', label: 'video.pipeline.field.seed', type: 'number', min: 0 },
+  ],
+  keyframe_image: [
+    { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
+    { key: 'seed', label: 'video.pipeline.field.seed', type: 'number', min: 0 },
+  ],
+  video_generation: [
+    { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
+    { key: 'seed', label: 'video.pipeline.field.seed', type: 'number', min: 0 },
+    { key: 'resolution', label: 'video.pipeline.field.resolution', type: 'text' },
+    { key: 'fps', label: 'video.pipeline.field.fps', type: 'number', min: 1, max: 60, step: 1 },
+    { key: 'durationSeconds', label: 'video.pipeline.field.duration', type: 'number', min: 1, max: 60, step: 1 },
+  ],
+};

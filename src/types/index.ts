@@ -207,21 +207,8 @@ export interface VideoMetadata {
   duration: number;
   resolution: string;
   style: string;
-  scenes: VideoScene[];
   aspectRatio: string;
   fps: number;
-}
-
-export interface VideoScene {
-  id: string;
-  title: string;
-  description: string;
-  duration: number;
-  order: number;
-  imageData?: string;
-  videoUrl?: string;
-  status: 'scripted' | 'storyboarded' | 'generated' | 'complete';
-  transition?: string;
 }
 
 // ============================================================================

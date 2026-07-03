@@ -3,6 +3,7 @@
 
 import { providerRouter } from '@/services/providers';
 import type { SceneAnchor, AspectRatio, ModelTier } from '@/types/video';
+import { saveAsset } from '../asset-store';
 
 export interface SceneImageResult {
   scenes: SceneAnchor[];
@@ -11,7 +12,7 @@ export interface SceneImageResult {
 
 export async function runSceneImage(
   scenes: SceneAnchor[],
-  ctx: { aspectRatio: AspectRatio; style?: string; imageTier: ModelTier },
+  ctx: { aspectRatio: AspectRatio; style?: string; imageTier: ModelTier; novelProjectId: string },
   onProgress?: (done: number, total: number) => void,
 ): Promise<SceneImageResult> {
   if (!scenes.length) return { scenes, failed: [] };
@@ -34,7 +35,12 @@ export async function runSceneImage(
         height: dims.h,
         style: ctx.style,
       });
-      result[i].backgroundImage = img.imageData;
+      result[i].backgroundImage = await saveAsset(
+        ctx.novelProjectId,
+        'background',
+        img.imageData,
+        `scene_${sanitizeFileName(s.name)}`,
+      );
       okCount++;
     } catch (err) {
       console.warn(`scene_image: failed for ${s.name}`, err);
@@ -51,6 +57,10 @@ export async function runSceneImage(
   }
 
   return { scenes: result, failed };
+}
+
+function sanitizeFileName(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 }
 
 function buildScenePrompt(s: SceneAnchor, style?: string): string {

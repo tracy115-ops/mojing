@@ -6,7 +6,6 @@
 
 import { useVideoStore } from '@/stores/videoStore';
 import { logger } from '@/services/log';
-import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
 import type {
   SceneSpec,
   PipelineOptions,
@@ -16,61 +15,13 @@ import type {
   GeneratedClip,
 } from '@/types/video';
 import type { PipelineCallbacks } from './types';
-import type { StageInputSummary } from '@/types/video';
-
-/** 把"进入 stage → 跑 fn → 退出"包成一层,自动压/弹 stage context 给 router 上报账本用。 */
-async function withStageContext<T>(
-  novelProjectId: string,
-  stage: VideoStage,
-  fn: () => Promise<T>,
-): Promise<T> {
-  pushStageContext({ novelProjectId, stage });
-  try {
-    return await fn();
-  } finally {
-    popStageContext();
-  }
-}
-
-/**
- * 安全跑一个 stage:任何异常都会被捕获并写入 stage 的 error 字段,
- * 状态置为 'error',返回 null —— 避免单步失败拖垮整条 pipeline,
- * 同时让面板能直接显示错误。
- */
-async function safeRunStage<T>(
-  novelProjectId: string,
-  stage: VideoStage,
-  fn: () => Promise<T>,
-): Promise<T | null> {
-  void logger.info(`[pipeline] ${stage} enter`, 'pipeline');
-  const t0 = performance.now();
-  try {
-    const r = await fn();
-    void logger.info(`[pipeline] ${stage} ok (${Math.round(performance.now() - t0)}ms)`, 'pipeline');
-    return r;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    void logger.error(`[pipeline] ${stage} FAIL (${Math.round(performance.now() - t0)}ms): ${msg}`, 'pipeline');
-    useVideoStore.getState().setStageStatus(novelProjectId, stage, 'error', { error: msg });
-    return null;
-  }
-}
-
-function setInputSummary(
-  novelProjectId: string,
-  stage: VideoStage,
-  summary: StageInputSummary,
-): void {
-  useVideoStore.getState().setStageInputSummary(novelProjectId, stage, summary);
-}
-import { stepVoice } from './step-voice';
-import { runCharacterAnchor } from './step-character-anchor';
-import { runSceneImage } from './step-scene-image';
-import { runTTS } from './step-tts';
-import { runKeyframe } from './step-keyframe';
-import { runVideoGen, type VideoGenOptions } from './step-video-gen';
-import { runAudioMerge } from './step-audio-merge';
-import { runCompose } from './step-compose';
+import {
+  RUNTIME_STAGE_ORDER,
+  STAGE_HANDLERS,
+  isStageEnabled,
+  applyStageInput,
+} from './stage-handlers';
+import type { VideoGenOptions } from './step-video-gen';
 
 export interface RunPipelineArgs {
   novelProjectId: string;
@@ -92,269 +43,97 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
   void logger.info(`[pipeline] RUN start pid=${novelProjectId} shots=${spec.shots.length} chars=${spec.characters?.length ?? 0} scenes=${spec.scenes?.length}`, 'pipeline');
   const store = useVideoStore.getState();
 
-  // 工作副本
+  // 合并持久化状态:如果 store 里已经有该项目(从上次运行恢复),优先用
+  // 持久化的 workingSpec —— 它带有已经跑完的 stage 产物(立绘/场景图/关键帧)。
+  // 入参 spec 里的 meta/style/option 等配置类字段仍然以本次传入为准。
+  const existingProj = store.getProject(novelProjectId);
+  const persistedSceneSpec = existingProj?.sceneSpec;
+  const persistedShots = persistedSceneSpec?.shots ?? [];
+  const persistedCharacters = persistedSceneSpec?.characters ?? [];
+  const persistedScenes = persistedSceneSpec?.scenes ?? [];
+
+  // 工作副本:优先复用持久化产物,否则用入参 spec 的拷贝。
+  // 检测「持久化的 shots 是否仍然有效」:长度一致且每个 shot 有 id 匹配。
+  const shotsMatchPersisted =
+    persistedShots.length > 0 &&
+    persistedShots.length === spec.shots.length &&
+    spec.shots.every((s, i) => s.id === persistedShots[i].id);
+
   let workingSpec: SceneSpec = {
     ...spec,
-    characters: spec.characters?.map((c) => ({ ...c, costumeVariants: c.costumeVariants?.map((v) => ({ ...v })) })),
-    scenes: spec.scenes?.map((s) => ({ ...s })),
-    shots: spec.shots.map((s) => ({ ...s, characterIds: [...s.characterIds] })),
+    characters: (persistedCharacters.length && charactersMatch(persistedCharacters, spec.characters ?? []))
+      ? deepCloneCharacters(persistedCharacters)
+      : spec.characters?.map((c) => ({ ...c, costumeVariants: c.costumeVariants?.map((v) => ({ ...v })) })),
+    scenes: (persistedScenes.length && scenesMatch(persistedScenes, spec.scenes ?? []))
+      ? persistedScenes.map((s) => ({ ...s }))
+      : spec.scenes?.map((s) => ({ ...s })),
+    shots: shotsMatchPersisted
+      ? persistedShots.map((s) => ({ ...s, characterIds: [...s.characterIds] }))
+      : spec.shots.map((s) => ({ ...s, characterIds: [...s.characterIds] })),
   };
 
-  // 步 6:角色立绘
-  if (!shouldAbort?.() && options.enableCharacterAnchor && workingSpec.characters?.length) {
-    callbacks?.onStageChange?.('character_anchor');
-    store.advanceToStage(novelProjectId, 'character_anchor');
-    store.setStageStatus(novelProjectId, 'character_anchor', 'running');
-    setInputSummary(novelProjectId, 'character_anchor', {
-      headline: `${workingSpec.characters.length} 个角色,limit=${options.characterAnchorLimit}`,
-      details: workingSpec.characters.slice(0, 10).map((c) => `${c.name} · ${c.appearance.slice(0, 40)}`),
-    });
+  void logger.info(
+    `[pipeline] resume check: persisted=${!!persistedSceneSpec} shotsMatch=${shotsMatchPersisted} ` +
+      `stages=${summarizeStageStatuses(existingProj)}`,
+    'pipeline',
+  );
 
-    const anchorChars = workingSpec.characters;
-    const result = await safeRunStage(novelProjectId, 'character_anchor', () =>
-      withStageContext(novelProjectId, 'character_anchor', () =>
-        runCharacterAnchor(
-          anchorChars,
-          {
-            style: workingSpec.meta.style,
-            imageTier: 'value',
-            limit: options.characterAnchorLimit,
-          },
-          (done, total) => {
-            store.setStageStatus(novelProjectId, 'character_anchor', 'running', { progress: done / total });
-            callbacks?.onStageProgress?.('character_anchor', done / total);
-          },
-        ),
-      ),
-    );
-    if (result) {
-      workingSpec = { ...workingSpec, characters: result.characters };
-      store.setStageStatus(novelProjectId, 'character_anchor', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'character_anchor', callbacks);
-  }
+  // 先把初始 SceneSpec 落进 store,让 UI 能在 character_anchor 完成前
+  // 就看到"提取"出的角色/场景/道具数据(否则面板会显示 Empty)。
+  store.setSceneSpec(novelProjectId, workingSpec);
 
-  // 步 4:分配音色(在角色立绘之后,以便按角色选音色)
-  if (!shouldAbort?.() && options.enableTTS && workingSpec.characters?.length) {
-    callbacks?.onStageChange?.('voice_assignment');
-    store.advanceToStage(novelProjectId, 'voice_assignment');
-    store.setStageStatus(novelProjectId, 'voice_assignment', 'running');
-    const voiceChars = workingSpec.characters;
-    setInputSummary(novelProjectId, 'voice_assignment', {
-      headline: `${voiceChars.length} 个角色待分配音色`,
-    });
-
-    const voiceResult = await safeRunStage(novelProjectId, 'voice_assignment', () =>
-      withStageContext(novelProjectId, 'voice_assignment', () => stepVoice(voiceChars)),
-    );
-    if (voiceResult) {
-      workingSpec = { ...workingSpec, characters: voiceResult.characters };
-      store.setStageStatus(novelProjectId, 'voice_assignment', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'voice_assignment', callbacks);
-  }
-
-  // 步 7:场景图
-  if (!shouldAbort?.() && options.enableSceneImage && workingSpec.scenes?.length) {
-    callbacks?.onStageChange?.('scene_image');
-    store.advanceToStage(novelProjectId, 'scene_image');
-    store.setStageStatus(novelProjectId, 'scene_image', 'running');
-    setInputSummary(novelProjectId, 'scene_image', {
-      headline: `${workingSpec.scenes.length} 个场景`,
-      details: workingSpec.scenes.slice(0, 10).map((s) => `${s.name} · ${s.description.slice(0, 40)}`),
-    });
-
-    const result = await safeRunStage(novelProjectId, 'scene_image', () =>
-      withStageContext(novelProjectId, 'scene_image', () =>
-        runSceneImage(
-          workingSpec.scenes!,
-          {
-            aspectRatio: workingSpec.meta.aspectRatio,
-            style: workingSpec.meta.style,
-            imageTier: 'value',
-          },
-          (done, total) => {
-            store.setStageStatus(novelProjectId, 'scene_image', 'running', { progress: done / total });
-            callbacks?.onStageProgress?.('scene_image', done / total);
-          },
-        ),
-      ),
-    );
-    if (result) {
-      workingSpec = { ...workingSpec, scenes: result.scenes };
-      store.setStageStatus(novelProjectId, 'scene_image', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'scene_image', callbacks);
-  }
-
-  // 步 8:TTS
-  if (!shouldAbort?.() && options.enableTTS && workingSpec.shots.some((s) => s.narration)) {
-    callbacks?.onStageChange?.('tts');
-    store.advanceToStage(novelProjectId, 'tts');
-    store.setStageStatus(novelProjectId, 'tts', 'running');
-    const narrationShots = workingSpec.shots.filter((s) => s.narration);
-    setInputSummary(novelProjectId, 'tts', {
-      headline: `${narrationShots.length} 个镜头有旁白`,
-      details: narrationShots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${(s.narration ?? '').slice(0, 40)}`),
-    });
-
-    const ttsResult = await safeRunStage(novelProjectId, 'tts', () =>
-      withStageContext(novelProjectId, 'tts', () =>
-        runTTS(
-          workingSpec.shots,
-          workingSpec.characters ?? [],
-          { ttsTier: 'free' },
-          (done, total) => {
-            store.setStageStatus(novelProjectId, 'tts', 'running', { progress: done / total });
-            callbacks?.onStageProgress?.('tts', done / total);
-          },
-        ),
-      ),
-    );
-    if (ttsResult) {
-      workingSpec = { ...workingSpec, shots: ttsResult.shots };
-      store.setStageStatus(novelProjectId, 'tts', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'tts', callbacks);
-  }
-
-  // 步 9:镜头关键帧
-  if (!shouldAbort?.() && options.enableKeyframe) {
-    callbacks?.onStageChange?.('keyframe_image');
-    store.advanceToStage(novelProjectId, 'keyframe_image');
-    store.setStageStatus(novelProjectId, 'keyframe_image', 'running');
-    setInputSummary(novelProjectId, 'keyframe_image', {
-      headline: `${workingSpec.shots.length} 个镜头`,
-      details: workingSpec.shots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${(s.videoPrompt || '').slice(0, 40)}`),
-    });
-
-    const result = await safeRunStage(novelProjectId, 'keyframe_image', () =>
-      withStageContext(novelProjectId, 'keyframe_image', () =>
-        runKeyframe(
-          workingSpec.shots,
-          {
-            characters: workingSpec.characters ?? [],
-            scenes: workingSpec.scenes ?? [],
-            aspectRatio: workingSpec.meta.aspectRatio,
-            style: workingSpec.meta.style,
-            imageTier: 'value',
-          },
-          (done, total) => {
-            store.setStageStatus(novelProjectId, 'keyframe_image', 'running', { progress: done / total });
-            callbacks?.onStageProgress?.('keyframe_image', done / total);
-            callbacks?.onShotProgress?.(done, total);
-          },
-        ),
-      ),
-    );
-    if (result) {
-      workingSpec = { ...workingSpec, shots: result.shots };
-      store.setStageStatus(novelProjectId, 'keyframe_image', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'keyframe_image', callbacks);
-  }
-
-  // 步 10:视频生成
+  // 循环调度 8 个 runtime stage。每个 stage 的执行逻辑抽到了 stage-handlers.ts,
+  // 这里只负责「跳过 / 跑 / 失败降级」的决策。
   let clips: GeneratedClip[] = [];
-  if (!shouldAbort?.()) {
-    callbacks?.onStageChange?.('video_generation');
-    store.advanceToStage(novelProjectId, 'video_generation');
-    store.setStageStatus(novelProjectId, 'video_generation', 'running');
-    setInputSummary(novelProjectId, 'video_generation', {
-      headline: `${workingSpec.shots.length} 个镜头 · ${options.enableI2V ? 'I2V' : 'T2V'} 模式`,
-      details: workingSpec.shots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${s.durationSeconds}s`),
-    });
 
-    const result = await safeRunStage(novelProjectId, 'video_generation', () =>
-      withStageContext(novelProjectId, 'video_generation', () =>
-        runVideoGen(
-          workingSpec.shots,
-          videoGen,
-          options.enableI2V,
-          (done, total) => {
-            store.setStageStatus(novelProjectId, 'video_generation', 'running', { progress: done / total });
-            callbacks?.onStageProgress?.('video_generation', done / total);
-            callbacks?.onShotProgress?.(done, total);
-          },
-          shouldAbort,
-        ),
-      ),
-    );
+  for (const stage of RUNTIME_STAGE_ORDER) {
+    if (shouldAbort?.()) break;
+
+    // composing 需要 clips 非空
+    if (stage === 'composing' && clips.length === 0) {
+      void logger.info('[pipeline] composing: 无 clips,跳过', 'pipeline');
+      skipStage(store, novelProjectId, stage, callbacks);
+      continue;
+    }
+
+    const enabled = isStageEnabled(stage, options, workingSpec);
+    if (!enabled) {
+      skipStage(store, novelProjectId, stage, callbacks);
+      continue;
+    }
+
+    // 已完成且产物仍在 → 跳过(断点续跑的核心)
+    if (existingProj && isStageLiveCompleted(existingProj, stage)) {
+      // video_generation 跳过时要从持久化拿 clips,供后续 audio_merge/composing 用
+      if (stage === 'video_generation') {
+        clips = [...existingProj.clips];
+        callbacks?.onShotProgress?.(clips.length, workingSpec.shots.length);
+      }
+      void logger.info(`[pipeline] ${stage}: 已完成且产物仍在,跳过`, 'pipeline');
+      callbacks?.onStageProgress?.(stage, 1);
+      continue;
+    }
+
+    const handler = STAGE_HANDLERS[stage];
+    if (!handler) {
+      void logger.warn(`[pipeline] ${stage}: 无 handler,跳过`, 'pipeline');
+      skipStage(store, novelProjectId, stage, callbacks);
+      continue;
+    }
+
+    const result = await handler({
+      pid: novelProjectId,
+      workingSpec,
+      options,
+      videoGen,
+      callbacks,
+      shouldAbort,
+      // video_generation 用 preExistingClips 做增量;auido_merge/composing 用累积 clips
+      clips: stage === 'video_generation' ? (existingProj?.clips ?? []) : clips,
+    });
     if (result) {
-      clips = result.clips;
-      for (const clip of clips) {
-        store.addClip(novelProjectId, clip);
-      }
-      store.setStageStatus(novelProjectId, 'video_generation', 'completed', { progress: 1 });
-    }
-  }
-
-  // 步 11:音视合并
-  if (!shouldAbort?.() && options.enableAudioMerge && workingSpec.shots.some((s) => s.audioTrack)) {
-    callbacks?.onStageChange?.('audio_merge');
-    store.advanceToStage(novelProjectId, 'audio_merge');
-    store.setStageStatus(novelProjectId, 'audio_merge', 'running');
-    const mergeShots = workingSpec.shots.filter((s) => s.audioTrack);
-    setInputSummary(novelProjectId, 'audio_merge', {
-      headline: `${mergeShots.length} 个镜头需合并音轨`,
-    });
-
-    const mergeResult = await safeRunStage(novelProjectId, 'audio_merge', () =>
-      runAudioMerge(
-        workingSpec.shots,
-        { novelProjectId, clips },
-        (done, total) => {
-          store.setStageStatus(novelProjectId, 'audio_merge', 'running', { progress: done / total });
-          callbacks?.onStageProgress?.('audio_merge', done / total);
-        },
-      ),
-    );
-    if (mergeResult) {
-      workingSpec = { ...workingSpec, shots: mergeResult.shots };
-      // 把合并后的产物同步回 clips(覆盖 videoUrl 指向带音轨的文件)
-      if (mergeResult.mergedShotIds.length) {
-        const shotToMerged = new Map(mergeResult.shots.map((s) => [s.id, s.audioTrack]));
-        for (const clip of clips) {
-          const mergedPath = shotToMerged.get(clip.shotId);
-          if (mergedPath && !mergedPath.startsWith('data:')) {
-            clip.videoUrl = mergedPath;
-            clip.hasAudio = true;
-          }
-        }
-      }
-      store.setStageStatus(novelProjectId, 'audio_merge', 'completed', { progress: 1 });
-    }
-  } else {
-    skipStage(store, novelProjectId, 'audio_merge', callbacks);
-  }
-
-  // 步 12-14:拼接 + 字幕 + 导出
-  if (!shouldAbort?.() && clips.length > 0) {
-    callbacks?.onStageChange?.('composing');
-    store.advanceToStage(novelProjectId, 'composing');
-    store.setStageStatus(novelProjectId, 'composing', 'running');
-
-    try {
-      const result = await runCompose({
-        novelProjectId,
-        clips,
-        shots: workingSpec.shots,
-        hardcodeSubtitles: options.enableSubtitles,
-      });
-      store.setFinalVideo(novelProjectId, result.finalVideoUrl, {
-        durationSeconds: result.durationSeconds,
-        sizeBytes: result.sizeBytes,
-      });
-      store.setStageStatus(novelProjectId, 'composing', 'completed', { progress: 1 });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      store.setStageStatus(novelProjectId, 'composing', 'error', { error: msg });
-      callbacks?.onError?.(msg);
+      workingSpec = result.spec;
+      if (result.clips) clips = result.clips;
     }
   }
 
@@ -374,5 +153,245 @@ function skipStage(
   store.setStageStatus(novelProjectId, stage, 'skipped', { progress: 0 });
 }
 
+/**
+ * 判断某 stage 是否「已完成且产物仍在」— 这种情况可以跳过重跑。
+ *
+ * 判断标准:
+ * 1. stage 状态 === 'completed'
+ * 2. 该 stage 对应的产物字段在 project 上仍然非空(重启后 blob: 失效会被
+ *    videoStore.purgeDeadAssets 清空,这种 completed 就变成"假完成"需要重跑)
+ *
+ * 对不同 stage 检查不同字段:
+ *  - character_anchor: anchorImages 中至少 1 个有 imageUrl
+ *  - scene_image: sceneSpec.scenes 中至少 1 个有 imageUrl
+ *  - keyframe_image: shots 中至少 1 个有 keyframeImage
+ *  - video_generation: clips 中至少 1 个有 videoUrl,且数量 == shots.length
+ *  - tts: audios 非空
+ *  - 其他(voice_assignment/script_slicing 等):只要 status === 'completed' 即可
+ */
+function isStageLiveCompleted(proj: VideoProjectState, stage: VideoStage): boolean {
+  const st = proj.stages[stage];
+  if (!st || st.status !== 'completed') return false;
+  switch (stage) {
+    case 'character_anchor':
+      return proj.anchorImages.some((a) => !!a.imageUrl);
+    case 'scene_image':
+      return (proj.sceneSpec?.scenes ?? []).some((s) => !!s.backgroundImage);
+    case 'keyframe_image':
+      return (proj.sceneSpec?.shots ?? []).some((s) => !!s.keyframeImage);
+    case 'video_generation':
+      // 完整性的判据:每个 shot 都有对应 clip 且 videoUrl 非空
+      return (
+        proj.shots.length > 0 &&
+        proj.clips.length >= proj.shots.length &&
+        proj.clips.every((c) => !!c.videoUrl)
+      );
+    case 'tts':
+      return proj.audios.length > 0;
+    case 'audio_merge':
+      // 至少一个 clip 标记为 hasAudio 且 videoUrl 仍在
+      return proj.clips.some((c) => c.hasAudio && !!c.videoUrl);
+    case 'composing':
+      return !!proj.finalVideoUrl;
+    default:
+      return true;
+  }
+}
+
 // Re-export step-video-gen's options type for callers
 export type { VideoGenOptions, ShotSpec };
+
+// --- resume helpers ---
+
+function charactersMatch(
+  persisted: NonNullable<SceneSpec['characters']>,
+  incoming: NonNullable<SceneSpec['characters']>,
+): boolean {
+  if (persisted.length !== incoming.length) return false;
+  return incoming.every((c, i) => c.id === persisted[i].id);
+}
+
+function scenesMatch(
+  persisted: NonNullable<SceneSpec['scenes']>,
+  incoming: NonNullable<SceneSpec['scenes']>,
+): boolean {
+  if (persisted.length !== incoming.length) return false;
+  return incoming.every((s, i) => s.id === persisted[i].id);
+}
+
+function deepCloneCharacters(
+  chars: NonNullable<SceneSpec['characters']>,
+): NonNullable<SceneSpec['characters']> {
+  return chars.map((c) => ({
+    ...c,
+    costumeVariants: c.costumeVariants?.map((v) => ({ ...v })),
+  }));
+}
+
+function summarizeStageStatuses(proj: VideoProjectState | undefined): string {
+  if (!proj) return '(no existing project)';
+  const stages = Object.values(proj.stages);
+  const completed = stages.filter((s) => s.status === 'completed').length;
+  const errored = stages.filter((s) => s.status === 'error').length;
+  const skipped = stages.filter((s) => s.status === 'skipped').length;
+  return `${completed}c/${errored}e/${skipped}s`;
+}
+
+// ============================================================================
+// 单步重跑 API
+// ============================================================================
+
+/** 从 store 重建 StageContext(单步重跑用)。
+ *  和 runPipeline 的初始化不同:这里完全信任 store 里的 sceneSpec,
+ *  因为单步重跑的前提是「前面步骤都已经跑过,产物在 store 里」。 */
+function buildContextFromStore(pid: string): {
+  ctx: import('./stage-handlers').StageContext;
+  proj: VideoProjectState;
+} | null {
+  const store = useVideoStore.getState();
+  const proj = store.getProject(pid);
+  if (!proj || !proj.sceneSpec) return null;
+  return {
+    proj,
+    ctx: {
+      pid,
+      workingSpec: proj.sceneSpec,
+      options: proj.options ?? {
+        enableCharacterAnchor: true,
+        enableSceneImage: true,
+        enableTTS: true,
+        enableKeyframe: true,
+        enableI2V: true,
+        enableAudioMerge: true,
+        enableSubtitles: false,
+        characterAnchorLimit: 5,
+      },
+      videoGen: {
+        spec: {
+          resolution: proj.spec.resolution,
+          fps: proj.spec.fps,
+          videoTier: proj.spec.videoTier,
+        },
+        novelProjectId: pid,
+      },
+      clips: [...proj.clips],
+    },
+  };
+}
+
+/**
+ * 单步重跑:只跑指定 stage,不推进 currentStage,不动后续 stage。
+ *
+ * 行为:
+ * - 从 store 读 sceneSpec / options / videoGen 重建 context
+ * - 调用该 stage 的 handler
+ * - 产物写回 store(handler 内部做)
+ * - 后续 stage 产物保持不变(用户明确只重跑这一步)
+ *
+ * 返回 true = 成功,false = 失败(项目不存在 / handler 失败 / 无 handler)。
+ */
+export async function runSingleStage(pid: string, stage: VideoStage): Promise<boolean> {
+  void logger.info(`[pipeline] runSingleStage pid=${pid} stage=${stage}`, 'pipeline');
+  const built = buildContextFromStore(pid);
+  if (!built) {
+    void logger.warn(`[pipeline] runSingleStage: 项目不存在或无 sceneSpec pid=${pid}`, 'pipeline');
+    return false;
+  }
+  const handler = STAGE_HANDLERS[stage];
+  if (!handler) {
+    void logger.warn(`[pipeline] runSingleStage: stage ${stage} 无 handler`, 'pipeline');
+    return false;
+  }
+  // 应用用户改过的 input(prompt/seed/resolution 等)到 workingSpec/videoGen
+  const ctx = applyStageInput(built.ctx, stage);
+  const result = await handler(ctx);
+  if (!result) {
+    void logger.warn(`[pipeline] runSingleStage: stage ${stage} 执行失败`, 'pipeline');
+    return false;
+  }
+  // 单步重跑时也要把更新后的 spec 落盘
+  useVideoStore.getState().setSceneSpec(pid, result.spec);
+  return true;
+}
+
+/**
+ * 从指定 stage 跑到结尾(含该 stage)。
+ *
+ * 行为:
+ * - 先 resetStagesFrom(pid, stage) 清掉该 stage 及后续的产物
+ * - 从该 stage 开始循环跑 RUNTIME_STAGE_ORDER
+ * - 保留该 stage 之前的所有产物
+ *
+ * 返回 true = 全部成功,false = 中途有失败。
+ */
+export async function runFromStage(pid: string, stage: VideoStage): Promise<boolean> {
+  void logger.info(`[pipeline] runFromStage pid=${pid} stage=${stage}`, 'pipeline');
+  const built = buildContextFromStore(pid);
+  if (!built) {
+    void logger.warn(`[pipeline] runFromStage: 项目不存在或无 sceneSpec pid=${pid}`, 'pipeline');
+    return false;
+  }
+
+  const store = useVideoStore.getState();
+  // 清掉从 stage 起的所有 stage 状态 + 产物
+  store.resetStagesFrom(pid, stage);
+
+  // 重新读 proj(reset 后 sceneSpec 可能被改 — keyframe/tts 会清对应字段)
+  const freshProj = store.getProject(pid);
+  if (!freshProj || !freshProj.sceneSpec) return false;
+
+  let workingSpec = freshProj.sceneSpec;
+  let clips = [...freshProj.clips];
+
+  const startIdx = RUNTIME_STAGE_ORDER.indexOf(stage);
+  if (startIdx < 0) {
+    void logger.warn(`[pipeline] runFromStage: stage ${stage} 不在 RUNTIME_STAGE_ORDER`, 'pipeline');
+    return false;
+  }
+
+  let allOk = true;
+  for (let i = startIdx; i < RUNTIME_STAGE_ORDER.length; i++) {
+    const s = RUNTIME_STAGE_ORDER[i];
+
+    // composing 需要 clips 非空
+    if (s === 'composing' && clips.length === 0) {
+      store.setStageStatus(pid, s, 'skipped', { progress: 0 });
+      continue;
+    }
+
+    const enabled = isStageEnabled(s, built.ctx.options, workingSpec);
+    if (!enabled) {
+      store.setStageStatus(pid, s, 'skipped', { progress: 0 });
+      continue;
+    }
+
+    const handler = STAGE_HANDLERS[s];
+    if (!handler) continue;
+
+    // 应用用户改过的 input(prompt/seed/resolution 等)到 workingSpec/videoGen
+    const stageCtx = applyStageInput(
+      {
+        pid,
+        workingSpec,
+        options: built.ctx.options,
+        videoGen: built.ctx.videoGen,
+        clips,
+      },
+      s,
+    );
+    // applyStageInput 可能改了 workingSpec,同步给循环外层变量
+    workingSpec = stageCtx.workingSpec;
+
+    const result = await handler(stageCtx);
+    if (result) {
+      workingSpec = result.spec;
+      if (result.clips) clips = result.clips;
+    } else {
+      allOk = false;
+      // 单步失败不中断,继续跑后续(handler 内部已标 error)
+    }
+  }
+
+  store.setSceneSpec(pid, workingSpec);
+  return allOk;
+}

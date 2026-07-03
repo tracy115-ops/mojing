@@ -6,6 +6,58 @@ import type {
 import { BaseVideoProvider } from './base';
 import { fetch as httpFetch } from './fetch-proxy';
 
+/**
+ * 把 data URI 形式的图片字符串剥成纯 base64。
+ *  - 输入 `data:image/png;base64,xxxx` → 返回 `xxxx`(纯 base64)
+ *  - 输入纯 base64(没有前缀) → 原样返回
+ *  - 输入 http(s):// / tauri:// / 文件路径 → 返回 null
+ *    (Agnes Python 后端 b64decode 无法处理 URL,调用方必须先转成 base64)
+ *
+ * 返回 null 时调用方应该抛清晰错误,而不是把 URL 喂给后端触发
+ * 含糊的 "Incorrect padding"。
+ */
+function stripDataUriPrefix(s: string | undefined | null): string | null {
+  if (!s) return null;
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  // URL 形式 — 后端拉不到
+  if (/^(https?:|tauri:|blob:|file:|\/|[a-zA-Z]:[\\/])/.test(trimmed)) return null;
+  // data URI — 剥前缀
+  const m = trimmed.match(/^data:[^;]+;base64,(.*)$/);
+  if (m) return m[1];
+  // 已经是纯 base64 — 校验下长度
+  // Python b64decode 严格要求 len % 4 == 0(尾部 = 填充除外)
+  if (!/^[A-Za-z0-9+/\s]+=*$/.test(trimmed)) return null;
+  return trimmed.replace(/\s/g, '');
+}
+
+/**
+ * 把用户想要的视频时长(秒)映射到 Agnes V2.0 支持的标准帧数档位。
+ *
+ * Agnes V2.0 通过 num_frames + frame_rate 控制时长,只接受固定档位:
+ *   num_frames=81,  frame_rate=24 → ~3.4s
+ *   num_frames=121, frame_rate=24 → ~5.0s
+ *   num_frames=241, frame_rate=24 → ~10.0s
+ *   num_frames=441, frame_rate=24 → ~18.4s
+ *
+ * 不在档位上的时长向下取整到最近的档位;超过 18s 的截到 441;不传默认 5s(121)。
+ */
+function pickAgnesFramesTier(durationSeconds?: number): { numFrames: number; frameRate: number } {
+  const TIERS = [
+    { numFrames: 81, frameRate: 24, seconds: 81 / 24 }, // 3.375
+    { numFrames: 121, frameRate: 24, seconds: 121 / 24 }, // 5.042
+    { numFrames: 241, frameRate: 24, seconds: 241 / 24 }, // 10.042
+    { numFrames: 441, frameRate: 24, seconds: 441 / 24 }, // 18.375
+  ];
+  if (!durationSeconds || durationSeconds <= 0) return TIERS[1]; // 默认 5s
+  // 找"时长不超过用户请求"的最大档位(向下取整)
+  let picked = TIERS[0];
+  for (const t of TIERS) {
+    if (t.seconds <= durationSeconds + 0.5) picked = t;
+  }
+  return picked;
+}
+
 // --- Kling Video Adapter ---
 //
 // Kling 官方文档路径(https://doc.shuyanai.com/doc-9001142):
@@ -87,7 +139,8 @@ export class KlingVideoProvider extends BaseVideoProvider {
     const response = await httpFetch(statusUrl, {
       method: 'GET',
       headers: this.getHeaders(),
-      signal: this.timeoutSignal(30_000),
+      // 30s 在代理转发场景下偏紧,tauri-plugin-http 会抛 "Request canceled"
+      signal: this.timeoutSignal(90_000),
     });
 
     if (!response.ok) {
@@ -324,7 +377,7 @@ export class ViduProvider extends BaseVideoProvider {
 
 // --- Agnes Video API (Sapiens AI) ---
 // 文档: https://agnes-ai.com/doc/agnes-video-v20
-// POST {baseUrl}/v1/videos/generations  (baseUrl 通常为 https://apihub.agnes-ai.com)
+// POST {baseUrl}/v1/videos        (baseUrl 通常为 https://apihub.agnes-ai.com)
 // 文生视频: model, prompt 必填
 // 图生视频: 增加 image (URL 或 data URI)
 // 异步任务:响应里拿 task_id 或 video_id,轮询 GET {baseUrl}/v1/videos/{id}
@@ -333,33 +386,77 @@ export class ViduProvider extends BaseVideoProvider {
 export class AgnesVideoProvider extends BaseVideoProvider {
   readonly providerId = 'agnes-video';
 
+  /** 记住上次提交用的 model,checkStatus 时拼到 query 里(Agnes API 要求非默认模型必填) */
+  private lastModel: string = 'agnes-video-v2.0';
+
+  /**
+   * 记住上次提交拿到的查询键 + 类型。
+   *
+   * Agnes V2.0 创建任务响应同时返回 task_id(`task_xxx` 前缀)和 video_id
+   * (`video_xxx` 前缀),两者不能混用:
+   *   - 用 video_id 查询 → 必须走推荐接口 `/agnesapi?video_id=<VIDEO_ID>`
+   *   - 用 task_id 查询 → 必须走兼容接口 `/v1/videos/<TASK_ID>`
+   *
+   * 混用会返回 400 `{"code":"task_not_exist"}`。之前代码把 video_id 喂进
+   * `/v1/videos/{id}` 就是踩了这个坑。
+   */
+  private lastQueryId: string = '';
+  private lastQueryKind: 'video_id' | 'task_id' = 'task_id';
+
+  /** 记住用户提交时想要的时长(秒),checkStatus 完成时回算成实际时长 */
+  private requestedDurationSeconds: number | undefined;
+
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
     const model = request.model || 'agnes-video-v2.0';
+    this.lastModel = model;
+    this.requestedDurationSeconds = request.durationSeconds;
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // baseUrl 可能是 https://apihub.agnes-ai.com 或 https://apihub.agnes-ai.com/v1
     const submitUrl = /\/v\d+$/.test(baseUrl)
-      ? `${baseUrl}/videos/generations`
-      : `${baseUrl}/v1/videos/generations`;
+      ? `${baseUrl}/videos`
+      : `${baseUrl}/v1/videos`;
 
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
     };
 
-    if (request.durationSeconds) {
-      body.duration = `${request.durationSeconds}s`;
-    }
+    // 时长:Agnes V2.0 通过 num_frames + frame_rate 控制时长(参考官方文档)。
+    //   num_frames=81,  frame_rate=24 → ~3.4s
+    //   num_frames=121, frame_rate=24 → ~5.0s
+    //   num_frames=241, frame_rate=24 → ~10.0s
+    //   num_frames=441, frame_rate=24 → ~18.4s
+    // 用户传的 durationSeconds 落到最接近的标准档位;不传默认 5s(121/24)。
+    const tier = pickAgnesFramesTier(request.durationSeconds);
+    body.num_frames = tier.numFrames;
+    body.frame_rate = tier.frameRate;
 
     if (request.referenceImages?.length) {
-      body.image = request.referenceImages[0];
+      // Agnes 后端用 Python base64.b64decode(image) 严格校验:
+      //   - 不能带 `data:image/...;base64,` 前缀(非 base64 字符 → Incorrect padding)
+      //   - 不能传 URL(本地 webview URL 后端拉不到,且 `:` 不是 base64 字符)
+      // 这里做规范化:剥前缀、校验长度;URL 形式的直接抛清晰错误。
+      const raw = request.referenceImages[0];
+      const cleaned = stripDataUriPrefix(raw);
+      if (!cleaned) {
+        throw new Error(
+          'Agnes Video: 关键帧是本地文件 URL,Agnes 后端无法读取。请在「设置 → 视频」关闭 I2V,或换用支持 URL 引用的 provider。',
+        );
+      }
+      body.image = cleaned;
     }
 
     const submitResp = await httpFetch(submitUrl, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(60_000),
+      // Agnes video submit 在代理转发 / 高峰期可能要 2-3 分钟才回响应。
+      // 之前 120s 经常触发 "Request canceled"(实测日志:每对 shot 间隔 2 分钟整,
+      // 正好是 120s 超时的特征)。调到 5 分钟,给代理足够时间。
+      // 上层 router.callWithTimeoutRetry 还会再重试 2 次作为兜底。
+      signal: this.timeoutSignal(300_000),
     });
 
     if (!submitResp.ok) {
@@ -368,31 +465,62 @@ export class AgnesVideoProvider extends BaseVideoProvider {
     }
 
     const submitData = await submitResp.json();
-    // 文档里 task_id / video_id / id 三种字段都可能返回,优先取 video_id(推荐查询键)
-    const taskId =
-      submitData.video_id ?? submitData.task_id ?? submitData.id ?? submitData.data?.video_id;
-    if (!taskId) {
-      throw new Error('Agnes Video: no task_id returned');
+    // 官方文档明确:响应同时返回 task_id 和 video_id,推荐用 video_id 查询。
+    // 这里优先用 video_id + 推荐接口;如果某些代理只返回 task_id,降级到兼容接口。
+    const videoId = submitData.video_id ?? submitData.data?.video_id;
+    const taskId = submitData.task_id ?? submitData.id;
+
+    if (videoId) {
+      this.lastQueryId = videoId;
+      this.lastQueryKind = 'video_id';
+    } else if (taskId) {
+      this.lastQueryId = taskId;
+      this.lastQueryKind = 'task_id';
+    } else {
+      throw new Error('Agnes Video: no task_id or video_id returned');
     }
 
     // 轮询
-    return this.pollUntilComplete(taskId, startTime);
+    return this.pollUntilComplete(startTime);
   }
 
-  async checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse }> {
+  async checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }> {
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
-    const statusUrl = /\/v\d+$/.test(baseUrl)
-      ? `${baseUrl}/videos/${taskId}`
-      : `${baseUrl}/v1/videos/${taskId}`;
+    const model = this.lastModel || 'agnes-video-v2.0';
+    const modelNameParam = `model_name=${encodeURIComponent(model)}`;
+
+    // 按 lastQueryKind 选对 endpoint。外部直接调 checkStatus(比如 UI 单独刷新)
+    // 时没经过 generate,此时 taskId 参数是上次的 id,我们根据前缀猜类型:
+    //   - `video_` 开头 → video_id → 走推荐接口
+    //   - `task_` 开头或别的 → task_id → 走兼容接口
+    const kind: 'video_id' | 'task_id' =
+      this.lastQueryKind ?? (taskId.startsWith('video_') ? 'video_id' : 'task_id');
+
+    let statusUrl: string;
+    if (kind === 'video_id') {
+      // 推荐:GET /agnesapi?video_id=<VIDEO_ID>&model_name=<MODEL>
+      // 注意:这个路径不带 /v1 前缀,直接挂在根域名下。
+      const rootBase = baseUrl.replace(/\/v\d+$/, '');
+      statusUrl = `${rootBase}/agnesapi?video_id=${encodeURIComponent(taskId)}&${modelNameParam}`;
+    } else {
+      // 兼容:GET /v1/videos/<TASK_ID>?model_name=<MODEL>(query 参数对旧接口可选)
+      const pathBase = /\/v\d+$/.test(baseUrl) ? baseUrl : `${baseUrl}/v1`;
+      statusUrl = `${pathBase}/videos/${encodeURIComponent(taskId)}?${modelNameParam}`;
+    }
 
     const resp = await httpFetch(statusUrl, {
       method: 'GET',
       headers: this.getHeaders(),
-      signal: this.timeoutSignal(30_000),
+      // ⚠️ 之前是 30_000(30s),但 tauri-plugin-http 把 AbortSignal.timeout
+      // 到期统一抛 "Request canceled"(不像浏览器抛 TimeoutError)。
+      // Agnes 代理转发有时慢,30s 不够,改成 90s。
+      signal: this.timeoutSignal(90_000),
     });
 
     if (!resp.ok) {
-      throw new Error(`Agnes Video status error ${resp.status}`);
+      // 之前没读 body,导致 400 的真实原因看不到。这里把响应文本拼进错误消息。
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Agnes Video status error ${resp.status}: ${text.slice(0, 500)}`);
     }
 
     const data = await resp.json();
@@ -400,7 +528,16 @@ export class AgnesVideoProvider extends BaseVideoProvider {
     const state = (data.state ?? data.status ?? data.task_status ?? '').toLowerCase();
 
     if (state === 'success' || state === 'succeeded' || state === 'completed') {
-      const videoUrl = data.video_url ?? data.output?.video_url ?? data.data?.video_url ?? '';
+      // 文档规定最终视频 URL 在 `remixed_from_video_id` 字段(不是 video_url)。
+      // 兼容老字段名 video_url / output.video_url 以防代理站改写。
+      const videoUrl =
+        data.remixed_from_video_id ??
+        data.video_url ??
+        data.output?.video_url ??
+        data.data?.video_url ??
+        '';
+      // 用提交时的档位算实际时长(更准)。兜底 5s。
+      const tier = pickAgnesFramesTier(this.requestedDurationSeconds);
       return {
         status: 'completed',
         progress: 1,
@@ -408,7 +545,7 @@ export class AgnesVideoProvider extends BaseVideoProvider {
           videoData: videoUrl,
           width: 1920,
           height: 1080,
-          durationSeconds: 5,
+          durationSeconds: tier.numFrames / tier.frameRate,
           model: 'agnes-video-v2.0',
           provider: 'agnes-video',
           latencyMs: 0,
@@ -417,13 +554,22 @@ export class AgnesVideoProvider extends BaseVideoProvider {
     }
 
     if (state === 'failed' || state === 'error') {
-      return { status: 'failed', progress: 0 };
+      // 把原始响应里的失败原因带出来 — Agnes 通常用 error.message / fail_reason /
+      // data.error 字段。没有就给个原始 JSON 片段,避免吞错。
+      const reason =
+        (typeof data.error === 'string' && data.error) ||
+        data.error?.message ||
+        data.fail_reason ||
+        data.failure_reason ||
+        data.data?.error?.message ||
+        JSON.stringify(data).slice(0, 300);
+      return { status: 'failed', progress: 0, failReason: reason };
     }
 
     return { status: 'processing', progress: typeof data.progress === 'number' ? data.progress : 0.3 };
   }
 
-  private async pollUntilComplete(taskId: string, startTime: number): Promise<VideoGenerateResponse> {
+  private async pollUntilComplete(startTime: number): Promise<VideoGenerateResponse> {
     const maxPolls = 120; // 10 分钟 (5s × 120)
     const maxConsecutiveErrors = 3; // 连续 3 次轮询失败才放弃
     let consecutiveErrors = 0;
@@ -433,19 +579,35 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       await new Promise((r) => setTimeout(r, 5000));
 
       try {
-        const status = await this.checkStatus(taskId);
+        const status = await this.checkStatus(this.lastQueryId);
         consecutiveErrors = 0; // 成功一次就清零
 
         if (status.status === 'completed' && status.result) {
           return { ...status.result, latencyMs: Date.now() - startTime };
         }
         if (status.status === 'failed') {
-          throw new Error('Agnes Video generation failed');
+          const reason = status.failReason ?? '(provider 没有给出具体原因)';
+          throw new Error(`Agnes Video generation failed: ${reason}`);
         }
       } catch (err) {
         // 如果是 "generation failed" 这种明确的失败状态,直接冒泡
-        if (err instanceof Error && err.message.includes('generation failed')) {
+        if (err instanceof Error && err.message.includes('Agnes Video generation failed')) {
           throw err;
+        }
+        // tauri-plugin-http 在 AbortSignal 到期时抛 "Request canceled",
+        // 这是单次请求超时,属于网络抖动类,应该重试而不是直接放弃。
+        // 把它翻译成可读的错误消息。
+        if (err instanceof Error && err.message.includes('Request canceled')) {
+          lastPollError = new Error(
+            `Agnes Video 轮询单次请求超时(90s,可能是网络或代理转发慢),将重试`,
+          );
+          consecutiveErrors++;
+          if (consecutiveErrors >= maxConsecutiveErrors) {
+            throw new Error(
+              `Agnes Video polling failed after ${consecutiveErrors} consecutive timeouts: ${lastPollError.message}`,
+            );
+          }
+          continue;
         }
         // 否则视为轮询错误(网络抖动 / 临时 5xx),记录后继续
         consecutiveErrors++;
@@ -458,6 +620,236 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       }
     }
     throw new Error('Agnes Video generation timed out');
+  }
+}
+
+// --- Doubao / Volcano Ark Video Adapter (Seedance 2.0) ---
+//
+// 官方文档(火山方舟):
+//   创建:POST {baseUrl}/api/v3/contents/generations/tasks
+//   轮询:GET  {BaseUrl}/api/v3/contents/generations/tasks/{id}
+//
+// 文生 / 图生 / 多模态共用同一个创建端点,通过 content 数组里的 role 区分:
+//   - 文生:1 个 text
+//   - 图生(首帧):1 个 text(可选)+ 1 个 image_url(role=first_frame)
+//   - 多模态:text + 0-9 个 image_url(role=reference_image)
+//
+// 响应:`{id: "cgt-..."}`,轮询拿到 `{status, content: {video_url}}`。
+// 模型名:`doubao-seedance-2-0-260128`(标准,1080p)、
+//        `doubao-seedance-2-0-fast-260128`(极速,720p)。
+//
+// 视频自身会带音频(人声/音效/配乐)—— 我们项目走自己的 TTS pipeline,
+// 这里默认 generate_audio=false,避免后面 audio_merge 又要混合两套音频。
+
+export class DoubaoVideoProvider extends BaseVideoProvider {
+  readonly providerId = 'doubao-video';
+
+  /** 把任意图片引用规范化成 Seedance 能接受的字符串:
+   *  - http(s) URL / data:image/...;base64,... / asset:// → 原样返回
+   *  - 裸 base64 → 补 data:image/png;base64, 前缀(Seedance 要求带前缀)
+   *  - 本地 tauri:// / 文件路径 → 抛清晰错误,让上层关闭 I2V 或换 provider */
+  private normalizeImageRef(raw: string): string {
+    const s = raw.trim();
+    if (!s) throw new Error('Doubao Video: empty reference image');
+    // 公网 URL / data URI / 火山素材 ID — 直接接受
+    if (/^(https?:|data:|asset:)/i.test(s)) return s;
+    // 裸 base64(Seedance 文档明确支持 base64,但要求带 data: 前缀)
+    if (/^[A-Za-z0-9+/\s]+=*$/.test(s) && s.length > 100) {
+      return `data:image/png;base64,${s.replace(/\s/g, '')}`;
+    }
+    // tauri://... / 盘符路径 / 相对路径 — 火山后端拉不到本地文件
+    throw new Error(
+      'Doubao Video: 关键帧是本地文件 URL,Seedance 后端无法读取。请改用支持 URL 引用的 provider,或在「设置 → 视频」关闭 I2V。',
+    );
+  }
+
+  /** 把 (width, height) 映射到 Seedance 支持的 ratio 字符串。
+   *  Seedance 接受 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive。
+   *  对不上就 adaptive,让模型按 prompt 自行决定。 */
+  private pickRatio(width?: number, height?: number): string {
+    if (!width || !height) return '16:9';
+    const ratio = width / height;
+    // 容差 5%
+    const TOLERANCE = 0.05;
+    const TABLE: Array<[number, string]> = [
+      [16 / 9, '16:9'],
+      [4 / 3, '4:3'],
+      [1, '1:1'],
+      [3 / 4, '3:4'],
+      [9 / 16, '9:16'],
+      [21 / 9, '21:9'],
+    ];
+    for (const [r, label] of TABLE) {
+      if (Math.abs(ratio - r) / r < TOLERANCE) return label;
+    }
+    return 'adaptive';
+  }
+
+  /** 时长 4-15 整数秒,默认 5。超范围截到边界。 */
+  private clampDuration(seconds?: number): number {
+    if (!seconds || !Number.isFinite(seconds)) return 5;
+    const n = Math.round(seconds);
+    if (n < 4) return 4;
+    if (n > 15) return 15;
+    return n;
+  }
+
+  async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
+    const startTime = Date.now();
+    const model = request.model || 'doubao-seedance-2-0-260128';
+
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // 用户可能填了完整 baseUrl (https://ark.cn-beijing.volces.com) 或带 /api
+    // 统一拼成 {baseUrl}/api/v3/contents/generations/tasks
+    const submitUrl = /\/api\/v\d+$/.test(baseUrl)
+      ? `${baseUrl}/contents/generations/tasks`
+      : `${baseUrl}/api/v3/contents/generations/tasks`;
+
+    // content 数组:text + 可选 image_url(first_frame 模式)
+    const content: Array<Record<string, unknown>> = [];
+    if (request.prompt) {
+      content.push({ type: 'text', text: request.prompt });
+    }
+    const isI2V = !!request.referenceImages?.length;
+    if (isI2V) {
+      const imgRef = this.normalizeImageRef(request.referenceImages![0]);
+      content.push({
+        type: 'image_url',
+        image_url: { url: imgRef },
+        role: 'first_frame',
+      });
+    }
+
+    const body: Record<string, unknown> = {
+      model,
+      content,
+      // 时长(秒,4-15)
+      duration: this.clampDuration(request.durationSeconds),
+      // 比例:按请求宽高推导,推不出就走 adaptive
+      ratio: this.pickRatio(request.width, request.height),
+      // 默认关声音:本项目走自己的 TTS pipeline,不需要 Seedance 自带的 BGM/音效
+      generate_audio: false,
+      // 默认加水印按 false(测试期不希望被强制加水印)
+      watermark: false,
+    };
+
+    // 分辨率:fast 模型只支持到 720p,标准模型可到 1080p
+    // 这里按 width 粗判:≥1920 → 1080p,≥1280 → 720p,否则 480p
+    if (request.width && request.height) {
+      const pixels = request.width * request.height;
+      if (model.includes('fast')) {
+        body.resolution = '720p';
+      } else if (pixels >= 1920 * 1080) {
+        body.resolution = '1080p';
+      } else if (pixels >= 1280 * 720) {
+        body.resolution = '720p';
+      } else {
+        body.resolution = '480p';
+      }
+    }
+
+    const submitResp = await httpFetch(submitUrl, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(60_000),
+    });
+
+    if (!submitResp.ok) {
+      const text = await submitResp.text().catch(() => '');
+      throw new Error(`Doubao Video API error ${submitResp.status}: ${text.slice(0, 500)}`);
+    }
+
+    const submitData = await submitResp.json();
+    const taskId = submitData.id;
+    if (!taskId) {
+      throw new Error(`Doubao Video: no task id returned (got ${JSON.stringify(submitData).slice(0, 200)})`);
+    }
+
+    return this.pollUntilComplete(taskId, startTime);
+  }
+
+  async checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }> {
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    const statusUrl = /\/api\/v\d+$/.test(baseUrl)
+      ? `${baseUrl}/contents/generations/tasks/${encodeURIComponent(taskId)}`
+      : `${baseUrl}/api/v3/contents/generations/tasks/${encodeURIComponent(taskId)}`;
+
+    const resp = await httpFetch(statusUrl, {
+      method: 'GET',
+      headers: this.getHeaders(),
+      signal: this.timeoutSignal(90_000),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Doubao Video status error ${resp.status}: ${text.slice(0, 500)}`);
+    }
+
+    const data = await resp.json();
+    const state = String(data.status ?? '').toLowerCase();
+
+    if (state === 'succeeded' || state === 'success') {
+      const videoUrl = data.content?.video_url ?? data.content?.url ?? '';
+      return {
+        status: 'completed',
+        progress: 1,
+        result: {
+          videoData: videoUrl,
+          width: 1920,
+          height: 1080,
+          durationSeconds: typeof data.duration === 'number' ? data.duration : 5,
+          model: data.model ?? 'doubao-seedance-2-0-260128',
+          provider: 'doubao-video',
+          latencyMs: 0,
+        },
+      };
+    }
+
+    if (state === 'failed' || state === 'error' || state === 'cancelled') {
+      const reason =
+        data.error?.message ||
+        data.error?.code ||
+        data.fail_reason ||
+        JSON.stringify(data).slice(0, 300);
+      return { status: 'failed', progress: 0, failReason: reason };
+    }
+
+    // queued / running / processing
+    return { status: 'processing', progress: typeof data.progress === 'number' ? data.progress : 0.3 };
+  }
+
+  private async pollUntilComplete(taskId: string, startTime: number): Promise<VideoGenerateResponse> {
+    const maxPolls = 120; // 10 分钟
+    const maxConsecutiveErrors = 3;
+    let consecutiveErrors = 0;
+    let lastPollError: Error | null = null;
+
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const status = await this.checkStatus(taskId);
+        consecutiveErrors = 0;
+        if (status.status === 'completed' && status.result) {
+          return { ...status.result, latencyMs: Date.now() - startTime };
+        }
+        if (status.status === 'failed') {
+          throw new Error(`Doubao Video generation failed: ${status.failReason ?? '(no reason)'}`);
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message.includes('generation failed')) {
+          throw err;
+        }
+        consecutiveErrors++;
+        lastPollError = err instanceof Error ? err : new Error(String(err));
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          throw new Error(
+            `Doubao Video polling failed after ${consecutiveErrors} consecutive errors: ${lastPollError.message}`,
+          );
+        }
+      }
+    }
+    throw new Error('Doubao Video generation timed out (10 min)');
   }
 }
 
@@ -476,6 +868,8 @@ export function createVideoProvider(
       return new ViduProvider(endpoint);
     case 'agnes-video':
       return new AgnesVideoProvider(endpoint);
+    case 'doubao-video':
+      return new DoubaoVideoProvider(endpoint);
     default:
       // Default to Kling-compatible API
       return new KlingVideoProvider(endpoint);

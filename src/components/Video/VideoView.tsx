@@ -1,15 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Typography, message, Button, Tooltip, Tabs } from 'antd';
-import { VideoCameraOutlined, ThunderboltOutlined, FormOutlined, LineChartOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Tooltip } from 'antd';
+import { VideoCameraOutlined, ThunderboltOutlined, FormOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
 import type { VideoMetadata } from '@/types';
 import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal from './CreateVideoModal';
-import VideoWorkspace from './VideoWorkspace';
 import VideoGeneratorModal from './VideoGeneratorModal';
 import DirectVideoModal from './DirectVideoModal';
+import DirectTaskList from './DirectTaskList';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 
@@ -28,12 +28,6 @@ const VideoView: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
   const [directOpen, setDirectOpen] = useState(false);
-  const [tabKey, setTabKey] = useState<'scenes' | 'pipeline'>('scenes');
-
-  // Auto-switch to pipeline tab when a pipeline starts running
-  useEffect(() => {
-    if (activePipelineId) setTabKey('pipeline');
-  }, [activePipelineId]);
 
   // Listen for global "new project" event from titlebar
   useEffect(() => {
@@ -46,7 +40,6 @@ const VideoView: React.FC = () => {
   }, []);
 
   const videoProjects = useMemo(() => projects.filter((p) => p.type === 'video'), [projects]);
-  const activeProject = projects.find((p) => p.id === activeProjectId && p.type === 'video');
 
   const handleCreate = (values: { title: string; description: string; style: string; resolution: string; aspectRatio: string; fps: number }) => {
     const project = useProjectStore.getState().createProject('video', values.title, values.description, {
@@ -63,15 +56,20 @@ const VideoView: React.FC = () => {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <div style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ProjectList
-          projects={videoProjects}
-          type="video"
-          activeId={activeProjectId}
-          onSelect={setActiveProject}
-          onDelete={deleteProject}
-          onToggleFavorite={toggleFavorite}
-          onCreate={() => setCreateOpen(true)}
-        />
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <ProjectList
+            projects={videoProjects}
+            type="video"
+            activeId={activeProjectId}
+            onSelect={setActiveProject}
+            onDelete={deleteProject}
+            onToggleFavorite={toggleFavorite}
+            onCreate={() => setCreateOpen(true)}
+          />
+        </div>
+        {/* Direct 任务列表:跟 Novel 项目并列,但来自 videoStore(不在 projectStore)。
+            点任一项 = 切 activePipelineId → VideoPipelinePanel 切到对应执行过程。 */}
+        <DirectTaskList />
       </div>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* Top toolbar — two entries */}
@@ -101,56 +99,15 @@ const VideoView: React.FC = () => {
           </Text>
         </div>
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {activeProject || activePipelineId ? (
-            <Tabs
-              activeKey={tabKey}
-              onChange={(k) => setTabKey(k as 'scenes' | 'pipeline')}
-              size="small"
-              className="video-view-tabs"
-              style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-              tabBarStyle={{ padding: '0 12px', margin: 0, flexShrink: 0 }}
-              items={[
-                {
-                  key: 'scenes',
-                  label: (
-                    <span>
-                      <VideoCameraOutlined /> {t('video.pipeline.tab.scenes')}
-                    </span>
-                  ),
-                  children: activeProject ? (
-                    <VideoWorkspace projectId={activeProject.id} />
-                  ) : (
-                    <div style={{ padding: 24, textAlign: 'center' }}>
-                      <Text type="secondary">{t('video.pipeline.empty')}</Text>
-                    </div>
-                  ),
-                  forceRender: true,
-                },
-                {
-                  key: 'pipeline',
-                  label: (
-                    <span>
-                      <LineChartOutlined /> {t('video.pipeline.tab.pipeline')}
-                      {activePipelineId && (
-                        <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--accent-primary)' }}>●</span>
-                      )}
-                    </span>
-                  ),
-                  children: (
-                    <VideoPipelineErrorBoundary
-                      onReset={() => {
-                        if (activePipelineId) {
-                          useVideoStore.getState().resetProject(activePipelineId);
-                        }
-                        useVideoStore.getState().setActivePipelineId(undefined);
-                      }}
-                    >
-                      <VideoPipelinePanel pipelineId={activePipelineId ?? null} />
-                    </VideoPipelineErrorBoundary>
-                  ),
-                },
-              ]}
-            />
+          {activePipelineId ? (
+            <VideoPipelineErrorBoundary
+              onReset={() => {
+                useVideoStore.getState().resetProject(activePipelineId);
+                useVideoStore.getState().setActivePipelineId(undefined);
+              }}
+            >
+              <VideoPipelinePanel pipelineId={activePipelineId} />
+            </VideoPipelineErrorBoundary>
           ) : (
             <div style={{
               height: '100%',

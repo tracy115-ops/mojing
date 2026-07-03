@@ -12,11 +12,19 @@ import type {
   AspectRatio,
   ModelTier,
 } from '@/types/video';
+import { saveAsset, readAsDataUri } from '../asset-store';
 
 export interface KeyframeResult {
   shots: ShotSpec[];
   /** 生成失败的 shotId 列表,UI 用于标黄 */
   failedShotIds: string[];
+}
+
+interface CollectedRef {
+  /** 原始 URL/data URI */
+  url: string;
+  /** 三视图立绘:需要裁出中间 1/3 作为 reference */
+  cropMiddleThird?: boolean;
 }
 
 export async function runKeyframe(
@@ -27,6 +35,7 @@ export async function runKeyframe(
     aspectRatio: AspectRatio;
     style?: string;
     imageTier: ModelTier;
+    novelProjectId: string;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<KeyframeResult> {
@@ -45,22 +54,61 @@ export async function runKeyframe(
 
   for (let i = 0; i < shots.length; i++) {
     const shot = shots[i];
-    const referenceImages: string[] = [];
+    const charRefs: CollectedRef[] = [];
+    const sceneRefs: CollectedRef[] = [];
 
-    // 收集在场角色立绘
+    // 收集在场角色立绘。
+    // 三视图策略:
+    //   - 完整三视图(model sheet)→ 让 provider 看到角色正/侧/背全貌
+    //   - 裁好的正面图(中间 1/3)→ 精准锚定正脸
+    //   - 单图立绘(无三视图时)→ 直接用作正面 reference
+    // variant 立绘永远是单图,不走裁剪。
     for (const charId of shot.characterIds) {
       const c = charById.get(charId);
       if (!c) continue;
       const variantId = shot.costumeVariantRefs?.[charId];
       const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-      const img = variant?.portraitImage ?? c.portraitImage;
-      if (img) referenceImages.push(img);
+      if (variant) {
+        if (variant.portraitImage) {
+          charRefs.push({ url: variant.portraitImage });
+        }
+      } else if (c.turnaroundImage) {
+        // 完整三视图先 push(作 model sheet 参考)
+        charRefs.push({ url: c.turnaroundImage });
+        // 再 push 裁好的正面图(精准锚定)— 同一张图会被读两次但内容不同
+        charRefs.push({ url: c.turnaroundImage, cropMiddleThird: true });
+      } else if (c.portraitImage) {
+        charRefs.push({ url: c.portraitImage });
+      }
     }
 
     // 场景背景图
     if (shot.sceneId) {
       const sc = sceneById.get(shot.sceneId);
-      if (sc?.backgroundImage) referenceImages.push(sc.backgroundImage);
+      if (sc?.backgroundImage) sceneRefs.push({ url: sc.backgroundImage });
+    }
+
+    // 顺序:场景背景优先(provider 通常只取 referenceImages[0]),
+    // 角色立绘跟在后面 — 角色外貌靠 prompt 里的描述锁定,
+    // 场景构图靠第一张参考图定调。Agnes 等支持多图的 provider 会拿到完整数组。
+    const rawReferences: CollectedRef[] = [...sceneRefs, ...charRefs];
+
+    // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
+    // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。
+    // 这里统一读盘转成 data URI — 已经是 data URI 的会原样返回。
+    // 三视图立绘先转 data URI,再裁出中间 1/3 作为 reference(让 provider 拿到正视图)。
+    const referenceImages: string[] = [];
+    for (const ref of rawReferences) {
+      const dataUri = await readAsDataUri(ref.url);
+      if (ref.cropMiddleThird) {
+        const cropped = await cropMiddleThird(dataUri).catch((err) => {
+          console.warn('keyframe: cropMiddleThird failed, fallback to full image', err);
+          return dataUri;
+        });
+        referenceImages.push(cropped);
+      } else {
+        referenceImages.push(dataUri);
+      }
     }
 
     try {
@@ -72,7 +120,12 @@ export async function runKeyframe(
         height: dims.h,
         style: ctx.style,
       });
-      result[i].keyframeImage = img.imageData;
+      result[i].keyframeImage = await saveAsset(
+        ctx.novelProjectId,
+        'keyframe',
+        img.imageData,
+        `keyframe_shot_${i + 1}`,
+      );
       okCount++;
     } catch (err) {
       console.warn(`keyframe: failed for shot ${shot.id}`, err);
@@ -113,11 +166,18 @@ function buildKeyframePrompt(
         .join('\n')
     : '';
 
+  // 如果有角色带了三视图,显式提示 provider 怎么用这些参考图
+  const hasTurnaround = presentChars.some((c) => c.turnaroundImage);
+  const turnaroundHint = hasTurnaround
+    ? '\nReference image guide: the wide image with three views is a character model sheet (front/side/back); the single front-view image is the same character\'s face reference. Use them together to preserve identity.'
+    : '';
+
   // 把未生成立绘的角色(超出 limit)的外貌塞进 prompt 兜底
   return [
     'cinematic keyframe for a video shot',
     shot.videoPrompt,
     charBlock ? `\nCharacters in frame (use provided reference images; preserve face and costume exactly):\n${charBlock}` : '',
+    turnaroundHint,
     shot.location ? `Location: ${shot.location}` : '',
     shot.mood ? `Mood: ${shot.mood}` : '',
     shot.cameraMovement ? `Camera: ${shot.cameraMovement}` : '',
@@ -137,4 +197,34 @@ function aspectRatioToDims(ar: AspectRatio): { w: number; h: number } {
     case '1:1':
       return { w: 1024, h: 1024 };
   }
+}
+
+/**
+ * 三视图立绘(横向 1536×1024,正/侧/背 三视图并排)裁出中间 1/3(正视图)。
+ * 输入必须是 data URI(`data:image/...;base64,...`)。
+ *
+ * 用 webview 里的 Image + Canvas API 完成,失败抛错(调用方有 fallback)。
+ */
+async function cropMiddleThird(dataUri: string): Promise<string> {
+  const img = await loadImage(dataUri);
+  const sw = Math.floor(img.width / 3);
+  const sh = img.height;
+  const sx = sw; // 中间 1/3 的 x 起点
+  const canvas = document.createElement('canvas');
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx2d = canvas.getContext('2d');
+  if (!ctx2d) throw new Error('canvas 2d context unavailable');
+  ctx2d.drawImage(img, sx, 0, sw, sh, 0, 0, sw, sh);
+  // PNG 无损,避免 JPEG 压缩损失 reference 细节
+  return canvas.toDataURL('image/png');
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(new Error(`image load failed: ${String(e)}`));
+    img.src = src;
+  });
 }
