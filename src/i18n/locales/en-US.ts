@@ -225,6 +225,9 @@ const enUS: typeof zhCN = {
   'comic.theme': 'Theme / Text',
   'comic.themePlaceholder': 'Enter a story theme, or paste chapter text (will be split into panels)',
   'comic.importNovel': 'Import from Novel',
+  'comic.importChapter': 'Select chapter',
+  'comic.importNovelEmpty': 'No novel projects yet',
+  'comic.importedCharacters': 'Imported characters',
   'comic.character': 'Character',
   'comic.addCharacterInline': 'Add character (optional)',
 

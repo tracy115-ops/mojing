@@ -62,6 +62,8 @@ export interface CreateComicInput {
   title: string;
   sourceMode: ComicSourceMode;
   sourceText?: string;
+  /** novel 模式:关联的小说项目 ID */
+  novelProjectId?: string;
   style: string;
   aspectRatio: AspectRatio;
   panelLayout: ComicSceneSpec['meta']['panelLayout'];
@@ -166,6 +168,7 @@ export const useComicStore = create<ComicStoreState>()(
         }));
         const project: ComicPipelineProject = {
           id,
+          novelProjectId: input.novelProjectId,
           title: input.title,
           sourceMode: input.sourceMode,
           sourceText: input.sourceText,
@@ -182,7 +185,7 @@ export const useComicStore = create<ComicStoreState>()(
               aspectRatio: input.aspectRatio,
               panelLayout: input.panelLayout,
               sourceMode: input.sourceMode,
-              channel: 'direct',
+              channel: input.novelProjectId ? 'novel' : 'direct',
             },
           },
           options,

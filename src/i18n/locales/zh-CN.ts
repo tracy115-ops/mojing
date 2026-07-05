@@ -223,6 +223,9 @@ const zhCN: Record<string, string> = {
   'comic.theme': '主题/文本',
   'comic.themePlaceholder': '输入故事主题，或粘贴章节文本（将自动拆分为分镜）',
   'comic.importNovel': '从小说导入',
+  'comic.importChapter': '选择章节',
+  'comic.importNovelEmpty': '还没有小说项目',
+  'comic.importedCharacters': '导入角色',
   'comic.character': '角色',
   'comic.addCharacterInline': '添加角色（可选）',
 
