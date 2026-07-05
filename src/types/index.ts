@@ -5,6 +5,8 @@
 export * from './providers';
 export * from './narrative';
 export * from './pipeline';
+export * from './video';
+export * from './comic';
 
 // ============================================================================
 // Settings Types

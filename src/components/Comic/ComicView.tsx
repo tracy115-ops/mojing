@@ -1,25 +1,22 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Typography, message } from 'antd';
+import { Typography, message, Button, List, Tag, Empty } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
-import { useProjectStore } from '@/stores/projectStore';
-import type { ComicMetadata } from '@/types';
-import ProjectList from '@/components/Common/ProjectList';
+import { useComicStore } from '@/stores/comicStore';
 import CreateComicModal from './CreateComicModal';
-import ComicWorkspace from './ComicWorkspace';
+import ComicPipelinePanel from './ComicPipelinePanel';
 
 const { Text } = Typography;
 
 const ComicView: React.FC = () => {
   const { t } = useTranslation();
-  const projects = useProjectStore((s) => s.projects);
-  const activeProjectId = useProjectStore((s) => s.activeProjectId);
-  const setActiveProject = useProjectStore((s) => s.setActiveProject);
-  const deleteProject = useProjectStore((s) => s.deleteProject);
-  const toggleFavorite = useProjectStore((s) => s.toggleFavorite);
+  const projectsMap = useComicStore((s) => s.projects);
+  const activeProjectId = useComicStore((s) => s.activeProjectId);
+  const setActiveProjectId = useComicStore((s) => s.setActiveProjectId);
+  const deleteProject = useComicStore((s) => s.deleteProject);
 
   const [createOpen, setCreateOpen] = useState(false);
 
-  // Listen for global "new project" event from titlebar
   useEffect(() => {
     const handler = (e: Event) => {
       const { type } = (e as CustomEvent).detail;
@@ -29,42 +26,126 @@ const ComicView: React.FC = () => {
     return () => window.removeEventListener('mojing:create-project', handler);
   }, []);
 
-  const comicProjects = useMemo(() => projects.filter((p) => p.type === 'comic'), [projects]);
-  const activeProject = projects.find((p) => p.id === activeProjectId && p.type === 'comic');
-
-  const handleCreate = (values: { title: string; description: string; style: string; panelLayout: string }) => {
-    const project = useProjectStore.getState().createProject('comic', values.title, values.description, {
-      style: values.style,
-      panelLayout: values.panelLayout,
-    } as Partial<ComicMetadata>);
-    setActiveProject(project.id);
-    setCreateOpen(false);
-    message.success(t('common.success'));
-  };
+  const projects = useMemo(
+    () =>
+      Object.values(projectsMap).sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      ),
+    [projectsMap],
+  );
+  const activeProject = activeProjectId ? projectsMap[activeProjectId] : undefined;
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
-      <div style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <ProjectList
-          projects={comicProjects}
-          type="comic"
-          activeId={activeProjectId}
-          onSelect={setActiveProject}
-          onDelete={deleteProject}
-          onToggleFavorite={toggleFavorite}
-          onCreate={() => setCreateOpen(true)}
-        />
+      {/* 项目列表 */}
+      <div
+        style={{
+          width: 220,
+          borderRight: '1px solid var(--border-secondary)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            padding: '8px 12px',
+            borderBottom: '1px solid var(--border-secondary)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <Text strong style={{ fontSize: 13 }}>
+            {t('comic.title')}
+          </Text>
+          <Button
+            size="small"
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setCreateOpen(true)}
+          >
+            {t('comic.newProject')}
+          </Button>
+        </div>
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          {projects.length === 0 ? (
+            <div style={{ padding: 24 }}>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={t('comic.empty')}
+              />
+            </div>
+          ) : (
+            <List
+              size="small"
+              dataSource={projects}
+              renderItem={(p) => (
+                <List.Item
+                  onClick={() => setActiveProjectId(p.id)}
+                  style={{
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    background:
+                      activeProjectId === p.id
+                        ? 'var(--bg-active, rgba(59,130,246,0.08))'
+                        : 'transparent',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                      width: '100%',
+                    }}
+                  >
+                    <Text ellipsis strong style={{ fontSize: 12 }}>
+                      {p.title}
+                    </Text>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px' }}>
+                        {t(`comic.sourceMode.${p.sourceMode === 'novel' ? 'novel' : 'theme'}`)}
+                      </Tag>
+                      <Tag style={{ fontSize: 10, margin: 0, padding: '0 4px' }}>
+                        {p.spec.panels.length}/{p.panelCount}
+                      </Tag>
+                    </div>
+                  </div>
+                </List.Item>
+              )}
+            />
+          )}
+        </div>
       </div>
+
+      {/* 主区域 */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {activeProject ? (
-          <ComicWorkspace projectId={activeProject.id} />
+          <ComicPipelinePanel projectId={activeProject.id} />
         ) : (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div
+            style={{
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
             <Text type="secondary">{t('comic.empty')}</Text>
           </div>
         )}
       </div>
-      <CreateComicModal open={createOpen} onOk={handleCreate} onCancel={() => setCreateOpen(false)} />
+
+      <CreateComicModal
+        open={createOpen}
+        onOk={(id) => {
+          setActiveProjectId(id);
+          setCreateOpen(false);
+          message.success(t('common.success'));
+        }}
+        onCancel={() => setCreateOpen(false)}
+      />
     </div>
   );
 };
