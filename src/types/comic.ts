@@ -28,6 +28,7 @@ export type ComicStage =
   | 'character_anchor'   // 步 1:角色立绘(可选)
   | 'panel_script'       // 步 2:LLM 拆分镜
   | 'panel_image'        // 步 3:每镜出图
+  | 'dialogue_burn'      // 步 4:对白气泡烧录(可选)
   | 'complete'
   | 'error';
 
@@ -75,6 +76,10 @@ export interface ComicStageInput {
   panelCount?: number;
   /** character_anchor:立绘模式 */
   anchorMode?: 'single' | 'turnaround';
+  /** dialogue_burn:气泡形状 */
+  bubbleShape?: 'oval' | 'rect' | 'narration';
+  /** dialogue_burn:气泡字体大小(像素,基于 1024 宽) */
+  bubbleFontSize?: number;
 }
 
 // --- Core: ComicSceneSpec ---
@@ -165,6 +170,7 @@ export const COMIC_PIPELINE_STAGES: ComicTrackedStage[] = [
   'character_anchor',
   'panel_script',
   'panel_image',
+  'dialogue_burn',
 ];
 
 // --- Project ---
@@ -243,5 +249,24 @@ export const COMIC_STAGE_INPUT_FIELDS: Partial<
   panel_image: [
     { key: 'style', label: 'comic.pipeline.field.style', type: 'text' },
     { key: 'seed', label: 'comic.pipeline.field.seed', type: 'number', min: 0 },
+  ],
+  dialogue_burn: [
+    {
+      key: 'bubbleShape',
+      label: 'comic.pipeline.field.bubbleShape',
+      type: 'radio',
+      options: [
+        { value: 'oval', labelKey: 'comic.pipeline.field.bubbleShapeOval' },
+        { value: 'rect', labelKey: 'comic.pipeline.field.bubbleShapeRect' },
+        { value: 'narration', labelKey: 'comic.pipeline.field.bubbleShapeNarration' },
+      ],
+    },
+    {
+      key: 'bubbleFontSize',
+      label: 'comic.pipeline.field.bubbleFontSize',
+      type: 'number',
+      min: 16,
+      max: 96,
+    },
   ],
 };

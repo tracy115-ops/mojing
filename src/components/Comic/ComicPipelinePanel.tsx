@@ -19,6 +19,7 @@ const STAGE_LABEL_KEYS: Record<ComicTrackedStage, string> = {
   character_anchor: 'comic.pipeline.character_anchor',
   panel_script: 'comic.pipeline.panel_script',
   panel_image: 'comic.pipeline.panel_image',
+  dialogue_burn: 'comic.pipeline.dialogue_burn',
 };
 
 const ComicPipelinePanel: React.FC<ComicPipelinePanelProps> = ({ projectId }) => {
@@ -356,7 +357,7 @@ const StageArtifacts: React.FC<StageArtifactsProps> = ({ stage, project }) => {
     );
   }
 
-  // panel_image
+  // panel_image / dialogue_burn:都显示分镜图(dialogue_burn 烧录后 imageUrl 已替换)
   const panels = project.spec.panels;
   return (
     <Card size="small" title={t('comic.pipeline.panels')}>

@@ -16,6 +16,7 @@ import type {
 } from '@/types/comic';
 import { runPanelScript } from './step-panel-script';
 import { runPanelImage } from './step-panel-image';
+import { runDialogueBurn } from './step-dialogue-burn';
 import { runCharacterAnchor } from '@/services/video/core/step-character-anchor';
 
 // --- Stage 执行上下文 ---
@@ -120,6 +121,10 @@ export function populateStageInput(pid: string, stage: ComicTrackedStage, ctx: S
       break;
     case 'panel_image':
       if (existing.style === undefined) patch.style = ctx.style || 'manga';
+      break;
+    case 'dialogue_burn':
+      if (existing.bubbleShape === undefined) patch.bubbleShape = 'oval';
+      if (existing.bubbleFontSize === undefined) patch.bubbleFontSize = 36;
       break;
   }
 
@@ -392,6 +397,79 @@ export async function executePanelImage(
   return { spec: { ...workingSpec, panels: result.panels }, panels: result.panels };
 }
 
+/** 步 4:对白气泡烧录(dialogue_burn)— 在 panel.imageUrl 上画气泡 */
+export async function executeDialogueBurn(
+  ctx: StageContext,
+): Promise<StageResult | null> {
+  const { pid, workingSpec, callbacks } = ctx;
+  const store = useComicStore.getState();
+  callbacks?.onStageChange?.('dialogue_burn');
+  store.advanceToStage(pid, 'dialogue_burn');
+  store.setStageStatus(pid, 'dialogue_burn', 'running');
+  populateStageInput(pid, 'dialogue_burn', ctx);
+
+  const panelsToBurn = workingSpec.panels.filter(
+    (p) => p.imageUrl && p.dialogue && p.dialogue.trim(),
+  );
+  const total = workingSpec.panels.length;
+  if (panelsToBurn.length === 0) {
+    store.setStageStatus(pid, 'dialogue_burn', 'skipped');
+    return { spec: workingSpec };
+  }
+
+  store.setStageInputSummary(pid, 'dialogue_burn', {
+    headline: `${panelsToBurn.length}/${total} 个分镜将对白烧录`,
+  });
+
+  // 用户改过的 bubbleShape / bubbleFontSize
+  const proj0 = useComicStore.getState().getProject(pid);
+  const input = proj0?.stages['dialogue_burn']?.input;
+
+  const result = await safeRunStage(pid, 'dialogue_burn', () =>
+    withStageContext(pid, 'dialogue_burn', () =>
+      runDialogueBurn(
+        workingSpec.panels,
+        {
+          novelProjectId: pid,
+          bubbleShape: input?.bubbleShape,
+          bubbleFontSize: input?.bubbleFontSize,
+        },
+        (done, all) => {
+          store.setStageStatus(pid, 'dialogue_burn', 'running', {
+            progress: all > 0 ? done / all : 0,
+          });
+          callbacks?.onStageProgress?.('dialogue_burn', all > 0 ? done / all : 0);
+        },
+        (panel) => store.upsertPanel(pid, panel),
+      ),
+    ),
+  );
+  if (!result) return null;
+
+  // 烧录产物替换 imageUrl,setFinalPages 让 currentStage → 'complete'
+  const finalUrls = result.panels
+    .map((p) => p.imageUrl)
+    .filter((u): u is string => !!u);
+  store.setFinalPages(pid, finalUrls);
+
+  const burnedCount = result.panels.filter(
+    (p) => p.dialogue && p.dialogue.trim(),
+  ).length;
+  const skippedCount = result.skippedPanelIds.length;
+  const errMsg =
+    skippedCount > 0 ? `${skippedCount} 个分镜烧录失败` : undefined;
+  store.setStageStatus(pid, 'dialogue_burn', 'completed', {
+    progress: 1,
+    error: errMsg,
+  });
+  void logger.info(
+    `[comic/pipeline] dialogue_burn: burned=${burnedCount} skipped=${skippedCount}`,
+    'comic',
+  );
+
+  return { spec: { ...workingSpec, panels: result.panels }, panels: result.panels };
+}
+
 // --- handler 注册表 ---
 
 /** pipeline 处理的 stage 顺序 */
@@ -399,6 +477,7 @@ export const RUNTIME_STAGE_ORDER: ComicTrackedStage[] = [
   'character_anchor',
   'panel_script',
   'panel_image',
+  'dialogue_burn',
 ];
 
 export const STAGE_HANDLERS: Partial<
@@ -407,6 +486,7 @@ export const STAGE_HANDLERS: Partial<
   character_anchor: executeCharacterAnchor,
   panel_script: executePanelScript,
   panel_image: executePanelImage,
+  dialogue_burn: executeDialogueBurn,
 };
 
 /** stage → 是否启用 */
@@ -422,6 +502,10 @@ export function isStageEnabled(
       return true;
     case 'panel_image':
       return spec.panels.length > 0;
+    case 'dialogue_burn':
+      // 至少一个 panel 有对白 + 至少一个 panel 有图
+      return spec.panels.some((p) => p.dialogue && p.dialogue.trim()) &&
+        spec.panels.some((p) => p.imageUrl);
     default:
       return false;
   }
@@ -451,6 +535,9 @@ export function isStageLiveCompleted(
   }
   if (stage === 'panel_image') {
     return proj.spec.panels.some((p) => p.imageUrl);
+  }
+  if (stage === 'dialogue_burn') {
+    return proj.stages['dialogue_burn']?.status === 'completed';
   }
   return false;
 }

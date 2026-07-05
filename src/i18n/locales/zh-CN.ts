@@ -234,6 +234,7 @@ const zhCN: Record<string, string> = {
   'comic.pipeline.character_anchor': '角色锚定',
   'comic.pipeline.panel_script': '分镜脚本',
   'comic.pipeline.panel_image': '分镜出图',
+  'comic.pipeline.dialogue_burn': '对白烧录',
   'comic.pipeline.run': '生成',
   'comic.pipeline.rerunAll': '重新生成',
   'comic.pipeline.runFailed': '生成失败',
@@ -265,6 +266,11 @@ const zhCN: Record<string, string> = {
   'comic.pipeline.field.seed': '随机种子',
   'comic.pipeline.field.theme': '主题文本',
   'comic.pipeline.field.panelCount': '分镜数',
+  'comic.pipeline.field.bubbleShape': '气泡形状',
+  'comic.pipeline.field.bubbleShapeOval': '椭圆(角色)',
+  'comic.pipeline.field.bubbleShapeRect': '方框(配角)',
+  'comic.pipeline.field.bubbleShapeNarration': '旁白(黄色矩形)',
+  'comic.pipeline.field.bubbleFontSize': '气泡字号',
 
   // ── Video ─────────────────────────────────
   'video.title': '视频工坊',

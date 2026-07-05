@@ -235,6 +235,7 @@ const enUS: typeof zhCN = {
   'comic.pipeline.character_anchor': 'Character Anchor',
   'comic.pipeline.panel_script': 'Panel Script',
   'comic.pipeline.panel_image': 'Panel Image',
+  'comic.pipeline.dialogue_burn': 'Dialogue Burn',
   'comic.pipeline.run': 'Generate',
   'comic.pipeline.rerunAll': 'Regenerate',
   'comic.pipeline.runFailed': 'Generation failed',
@@ -266,6 +267,11 @@ const enUS: typeof zhCN = {
   'comic.pipeline.field.seed': 'Seed',
   'comic.pipeline.field.theme': 'Theme text',
   'comic.pipeline.field.panelCount': 'Panel count',
+  'comic.pipeline.field.bubbleShape': 'Bubble shape',
+  'comic.pipeline.field.bubbleShapeOval': 'Oval (character)',
+  'comic.pipeline.field.bubbleShapeRect': 'Rectangle (supporting)',
+  'comic.pipeline.field.bubbleShapeNarration': 'Narration (yellow box)',
+  'comic.pipeline.field.bubbleFontSize': 'Bubble font size',
 
   // ── Video ─────────────────────────────────
   'video.title': 'Video Studio',
