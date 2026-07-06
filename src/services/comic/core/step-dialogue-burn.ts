@@ -258,7 +258,8 @@ function wrapAndDrawText(
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    // 注:src 已是 data URI(readAsDataUri 返回),无需 crossOrigin
+    // 强行设 'anonymous' 会触发额外 CORS 校验,在 Tauri webview 里反而把 canvas 染污
     img.onload = () => resolve(img);
     img.onerror = (e) => reject(new Error(`loadImage failed: ${String(e)}`));
     img.src = src;

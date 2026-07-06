@@ -390,12 +390,19 @@ export const useComicStore = create<ComicStoreState>()(
             // 清 pages(dialogue_burn 也失效)
             newSpec.pages = undefined;
           } else if (fromStage === 'dialogue_burn') {
-            // dialogue_burn 烧录产物 = pages[].imageUrl 或 panels[].imageUrl
-            if (proj.spec.pages && proj.spec.pages.length > 0) {
-              newSpec.pages = proj.spec.pages.map((pg) => ({ ...pg, imageUrl: undefined }));
-            } else {
-              newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
-            }
+            // dialogue_burn 把气泡烧进 panel.imageUrl(覆盖原值,无法恢复),
+            // 同时 page_compose 是下游也会失效。
+            // 因此:清 pages(强制 page_compose 重跑),
+            //      并把 panel_image 状态退回 pending(强制重出干净底图)
+            newSpec.pages = undefined;
+            newStages.panel_image = {
+              stage: 'panel_image',
+              status: 'pending',
+              progress: 0,
+              input: newStages.panel_image?.input,
+              inputSummary: newStages.panel_image?.inputSummary,
+            };
+            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
           }
           return {
             projects: {

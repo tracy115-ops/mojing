@@ -54,7 +54,15 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
   // 懒回填:对已经跑过的 stage,如果 input 字段为空,主动调 populateStageInput
   // 让 UI 显示真实参数
   const backfillRan = useRef(false);
+  const prevStageRef = useRef(stage);
+  const prevPidRef = useRef(project.id);
   useEffect(() => {
+    // stage 或 project 切换 → 重置 ref,允许新 stage 触发回填
+    if (prevStageRef.current !== stage || prevPidRef.current !== project.id) {
+      backfillRan.current = false;
+      prevStageRef.current = stage;
+      prevPidRef.current = project.id;
+    }
     if (backfillRan.current) return;
     if (fields.length === 0) return;
     const status = project.stages[stage]?.status;
