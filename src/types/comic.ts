@@ -28,7 +28,8 @@ export type ComicStage =
   | 'character_anchor'   // 步 1:角色立绘(可选)
   | 'panel_script'       // 步 2:LLM 拆分镜
   | 'panel_image'        // 步 3:每镜出图
-  | 'dialogue_burn'      // 步 4:对白气泡烧录(可选)
+  | 'page_compose'       // 步 4:多镜拼页(可选,single 模式跳过)
+  | 'dialogue_burn'      // 步 5:对白气泡烧录(可选)
   | 'complete'
   | 'error';
 
@@ -80,6 +81,8 @@ export interface ComicStageInput {
   bubbleShape?: 'oval' | 'rect' | 'narration';
   /** dialogue_burn:气泡字体大小(像素,基于 1024 宽) */
   bubbleFontSize?: number;
+  /** page_compose:格子间距(像素,基于 1024 宽) */
+  pagePadding?: number;
 }
 
 // --- Core: ComicSceneSpec ---
@@ -128,10 +131,23 @@ export interface ComicPanelSpec {
   seed?: number;
 }
 
+/** 单个拼好的漫画页(page_compose 产物) */
+export interface ComicPageSpec {
+  id: string;
+  /** 页码,从 1 开始 */
+  pageNumber: number;
+  /** 该页包含的 panel ID 列表(按 panels[] 顺序) */
+  panelIds: string[];
+  /** 拼好的整页图 URL(page_compose 产物) */
+  imageUrl?: string;
+}
+
 /** 跨 stage 共享的剧本表示(类似 video SceneSpec) */
 export interface ComicSceneSpec {
   characters: ComicCharacterAnchor[];
   panels: ComicPanelSpec[];
+  /** page_compose 产物:single 模式为空,其他模式按布局切分 */
+  pages?: ComicPageSpec[];
   meta: {
     title?: string;
     /** 画风:'manga' | 'western' | 'watercolor' | 'pixel' | 自定义 */
@@ -165,12 +181,15 @@ export const COMIC_DEFAULT_OPTIONS: ComicPipelineOptions = {
 /** Pipeline 实际跟踪状态的 stage(idle/complete/error 是哨兵,不入表) */
 export type ComicTrackedStage = Exclude<ComicStage, 'idle' | 'complete' | 'error'>;
 
-/** Pipeline 处理的 stage 顺序(不含 idle/complete/error) */
+/** Pipeline 处理的 stage 顺序(不含 idle/complete/error)
+ *  注:dialogue_burn 在 page_compose 之前 — 气泡烧到 panel.imageUrl,
+ *  然后 page_compose 把含气泡的 panel 拼成 page。 */
 export const COMIC_PIPELINE_STAGES: ComicTrackedStage[] = [
   'character_anchor',
   'panel_script',
   'panel_image',
   'dialogue_burn',
+  'page_compose',
 ];
 
 // --- Project ---
@@ -249,6 +268,15 @@ export const COMIC_STAGE_INPUT_FIELDS: Partial<
   panel_image: [
     { key: 'style', label: 'comic.pipeline.field.style', type: 'text' },
     { key: 'seed', label: 'comic.pipeline.field.seed', type: 'number', min: 0 },
+  ],
+  page_compose: [
+    {
+      key: 'pagePadding',
+      label: 'comic.pipeline.field.pagePadding',
+      type: 'number',
+      min: 0,
+      max: 64,
+    },
   ],
   dialogue_burn: [
     {

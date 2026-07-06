@@ -11,11 +11,13 @@ import type {
   ComicTrackedStage,
   ComicSceneSpec,
   ComicPanelSpec,
+  ComicPageSpec,
   ComicCharacterAnchor,
   ComicStageInput,
 } from '@/types/comic';
 import { runPanelScript } from './step-panel-script';
 import { runPanelImage } from './step-panel-image';
+import { runPageCompose } from './step-page-compose';
 import { runDialogueBurn } from './step-dialogue-burn';
 import { runCharacterAnchor } from '@/services/video/core/step-character-anchor';
 
@@ -34,6 +36,7 @@ export interface StageContext {
   /** style / aspectRatio / panelLayout(从 meta 派生,handler 内用) */
   style: string;
   aspectRatio: ComicSceneSpec['meta']['aspectRatio'];
+  panelLayout: ComicSceneSpec['meta']['panelLayout'];
   callbacks?: PipelineCallbacks;
   shouldAbort?: () => boolean;
 }
@@ -125,6 +128,9 @@ export function populateStageInput(pid: string, stage: ComicTrackedStage, ctx: S
     case 'dialogue_burn':
       if (existing.bubbleShape === undefined) patch.bubbleShape = 'oval';
       if (existing.bubbleFontSize === undefined) patch.bubbleFontSize = 36;
+      break;
+    case 'page_compose':
+      if (existing.pagePadding === undefined) patch.pagePadding = 16;
       break;
   }
 
@@ -397,7 +403,61 @@ export async function executePanelImage(
   return { spec: { ...workingSpec, panels: result.panels }, panels: result.panels };
 }
 
-/** 步 4:对白气泡烧录(dialogue_burn)— 在 panel.imageUrl 上画气泡 */
+/** 步 4:多镜拼页(page_compose)— 把 panels 按 panelLayout 拼成 pages */
+export async function executePageCompose(
+  ctx: StageContext,
+): Promise<StageResult | null> {
+  const { pid, workingSpec, panelLayout, callbacks } = ctx;
+  const store = useComicStore.getState();
+  callbacks?.onStageChange?.('page_compose');
+  store.advanceToStage(pid, 'page_compose');
+  store.setStageStatus(pid, 'page_compose', 'running');
+  populateStageInput(pid, 'page_compose', ctx);
+
+  const panelsWithImage = workingSpec.panels.filter((p) => p.imageUrl);
+  if (panelsWithImage.length === 0) {
+    store.setStageStatus(pid, 'page_compose', 'skipped');
+    return { spec: { ...workingSpec, pages: undefined } };
+  }
+
+  store.setStageInputSummary(pid, 'page_compose', {
+    headline: `${panelLayout} · ${panelsWithImage.length} 个分镜`,
+  });
+
+  const proj0 = useComicStore.getState().getProject(pid);
+  const input = proj0?.stages['page_compose']?.input;
+
+  const result = await safeRunStage(pid, 'page_compose', () =>
+    withStageContext(pid, 'page_compose', () =>
+      runPageCompose(
+        workingSpec.panels,
+        {
+          novelProjectId: pid,
+          layout: panelLayout,
+          padding: input?.pagePadding,
+        },
+        (done, total) => {
+          store.setStageStatus(pid, 'page_compose', 'running', {
+            progress: total > 0 ? done / total : 0,
+          });
+          callbacks?.onStageProgress?.('page_compose', total > 0 ? done / total : 0);
+        },
+      ),
+    ),
+  );
+  if (!result) return null;
+
+  store.setPages(pid, result.pages);
+  // page_compose 是最后一步,setFinalPages 触发 currentStage → 'complete'
+  const finalUrls = result.pages
+    .map((pg) => pg.imageUrl)
+    .filter((u): u is string => !!u);
+  store.setFinalPages(pid, finalUrls);
+  store.setStageStatus(pid, 'page_compose', 'completed', { progress: 1 });
+  return { spec: { ...workingSpec, pages: result.pages } };
+}
+
+/** 步 5:对白气泡烧录(dialogue_burn)— 在 page.imageUrl(或 panel.imageUrl) 上画气泡 */
 export async function executeDialogueBurn(
   ctx: StageContext,
 ): Promise<StageResult | null> {
@@ -446,12 +506,7 @@ export async function executeDialogueBurn(
   );
   if (!result) return null;
 
-  // 烧录产物替换 imageUrl,setFinalPages 让 currentStage → 'complete'
-  const finalUrls = result.panels
-    .map((p) => p.imageUrl)
-    .filter((u): u is string => !!u);
-  store.setFinalPages(pid, finalUrls);
-
+  // 烧录产物替换 panel.imageUrl;不在这里 setFinalPages — 后续 page_compose 才产出最终 pages[]
   const burnedCount = result.panels.filter(
     (p) => p.dialogue && p.dialogue.trim(),
   ).length;
@@ -478,6 +533,7 @@ export const RUNTIME_STAGE_ORDER: ComicTrackedStage[] = [
   'panel_script',
   'panel_image',
   'dialogue_burn',
+  'page_compose',
 ];
 
 export const STAGE_HANDLERS: Partial<
@@ -487,6 +543,7 @@ export const STAGE_HANDLERS: Partial<
   panel_script: executePanelScript,
   panel_image: executePanelImage,
   dialogue_burn: executeDialogueBurn,
+  page_compose: executePageCompose,
 };
 
 /** stage → 是否启用 */
@@ -506,6 +563,10 @@ export function isStageEnabled(
       // 至少一个 panel 有对白 + 至少一个 panel 有图
       return spec.panels.some((p) => p.dialogue && p.dialogue.trim()) &&
         spec.panels.some((p) => p.imageUrl);
+    case 'page_compose':
+      // single 模式不拼页(每镜一页 page.imageUrl = panel.imageUrl 直接复用,但也走一遍 store 落 pages)
+      // 多镜模式:至少 1 个 panel 有图
+      return spec.panels.some((p) => p.imageUrl);
     default:
       return false;
   }
@@ -538,6 +599,9 @@ export function isStageLiveCompleted(
   }
   if (stage === 'dialogue_burn') {
     return proj.stages['dialogue_burn']?.status === 'completed';
+  }
+  if (stage === 'page_compose') {
+    return (proj.spec.pages?.length ?? 0) > 0;
   }
   return false;
 }

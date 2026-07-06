@@ -72,6 +72,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
       characterAnchorLimit: project.options.characterAnchorLimit,
       style: project.style,
       aspectRatio: project.aspectRatio,
+      panelLayout: project.spec.meta.panelLayout,
     });
   }, [project, stage, fields, input]);
 

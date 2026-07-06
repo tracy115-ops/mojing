@@ -235,6 +235,10 @@ const zhCN: Record<string, string> = {
   'comic.pipeline.panel_script': '分镜脚本',
   'comic.pipeline.panel_image': '分镜出图',
   'comic.pipeline.dialogue_burn': '对白烧录',
+  'comic.pipeline.page_compose': '拼页',
+  'comic.pipeline.pages': '页',
+  'comic.pipeline.page': '第',
+  'comic.pipeline.noPagesYet': '尚未拼页',
   'comic.pipeline.run': '生成',
   'comic.pipeline.rerunAll': '重新生成',
   'comic.pipeline.runFailed': '生成失败',
@@ -271,6 +275,7 @@ const zhCN: Record<string, string> = {
   'comic.pipeline.field.bubbleShapeRect': '方框(配角)',
   'comic.pipeline.field.bubbleShapeNarration': '旁白(黄色矩形)',
   'comic.pipeline.field.bubbleFontSize': '气泡字号',
+  'comic.pipeline.field.pagePadding': '格子间距',
 
   // ── Video ─────────────────────────────────
   'video.title': '视频工坊',

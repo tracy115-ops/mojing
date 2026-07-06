@@ -34,6 +34,7 @@ function buildContextFromStore(
     characterAnchorLimit: proj.options.characterAnchorLimit,
     style: proj.spec.meta.style ?? proj.style,
     aspectRatio: proj.spec.meta.aspectRatio,
+    panelLayout: proj.spec.meta.panelLayout,
     callbacks,
   };
   return { ctx, spec: proj.spec };

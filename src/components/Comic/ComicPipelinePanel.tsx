@@ -20,6 +20,7 @@ const STAGE_LABEL_KEYS: Record<ComicTrackedStage, string> = {
   panel_script: 'comic.pipeline.panel_script',
   panel_image: 'comic.pipeline.panel_image',
   dialogue_burn: 'comic.pipeline.dialogue_burn',
+  page_compose: 'comic.pipeline.page_compose',
 };
 
 const ComicPipelinePanel: React.FC<ComicPipelinePanelProps> = ({ projectId }) => {
@@ -350,6 +351,62 @@ const StageArtifacts: React.FC<StageArtifactsProps> = ({ stage, project }) => {
                   </Text>
                 )}
               </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    );
+  }
+
+  if (stage === 'page_compose') {
+    const pages = project.spec.pages ?? [];
+    return (
+      <Card size="small" title={t('comic.pipeline.pages')}>
+        {pages.length === 0 ? (
+          <Empty description={t('comic.pipeline.noPagesYet')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+              gap: 12,
+            }}
+          >
+            {pages.map((pg) => (
+              <Card
+                key={pg.id}
+                size="small"
+                hoverable
+                cover={
+                  pg.imageUrl ? (
+                    <img
+                      src={pg.imageUrl}
+                      alt={`page ${pg.pageNumber}`}
+                      style={{ width: '100%', objectFit: 'contain' }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: '100%',
+                        aspectRatio: '5 / 7',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'var(--bg-secondary)',
+                      }}
+                    >
+                      <Text type="secondary">{t('comic.pipeline.noPanelImage')}</Text>
+                    </div>
+                  )
+                }
+              >
+                <Text strong style={{ fontSize: 12 }}>
+                  {t('comic.pipeline.page')} {pg.pageNumber}
+                </Text>
+                <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                  · {pg.panelIds.length} {t('comic.pipeline.panels')}
+                </Text>
+              </Card>
             ))}
           </div>
         )}

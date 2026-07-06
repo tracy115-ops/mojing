@@ -102,6 +102,8 @@ interface ComicStoreState {
   upsertPanel: (id: string, panel: ComicPanelSpec) => void;
   /** 批量替换 panels(panel_script 阶段产物) */
   setPanels: (id: string, panels: ComicPanelSpec[]) => void;
+  /** 批量替换 pages(page_compose 阶段产物) */
+  setPages: (id: string, pages: import('@/types/comic').ComicPageSpec[]) => void;
   setFinalPages: (id: string, urls: string[]) => void;
 
   /** 把从 fromStage 开始(含)的所有 stage 重置为 pending,清掉相关产物。
@@ -307,6 +309,21 @@ export const useComicStore = create<ComicStoreState>()(
           };
         }),
 
+      setPages: (id, pages) =>
+        set((s) => {
+          const proj = s.projects[id];
+          if (!proj) return s;
+          return {
+            projects: {
+              ...s.projects,
+              [id]: touch({
+                ...proj,
+                spec: { ...proj.spec, pages },
+              }),
+            },
+          };
+        }),
+
       setFinalPages: (id, urls) =>
         set((s) => {
           const proj = s.projects[id];
@@ -361,11 +378,24 @@ export const useComicStore = create<ComicStoreState>()(
               turnaroundImage: undefined,
             }));
             newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            newSpec.pages = undefined;
           } else if (fromStage === 'panel_script') {
-            // 清 panels(下游 panel_image 也失效)
+            // 清 panels(下游 panel_image/page_compose/dialogue_burn 全失效)
             newSpec.panels = [];
+            newSpec.pages = undefined;
           } else if (fromStage === 'panel_image') {
             newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            newSpec.pages = undefined;
+          } else if (fromStage === 'page_compose') {
+            // 清 pages(dialogue_burn 也失效)
+            newSpec.pages = undefined;
+          } else if (fromStage === 'dialogue_burn') {
+            // dialogue_burn 烧录产物 = pages[].imageUrl 或 panels[].imageUrl
+            if (proj.spec.pages && proj.spec.pages.length > 0) {
+              newSpec.pages = proj.spec.pages.map((pg) => ({ ...pg, imageUrl: undefined }));
+            } else {
+              newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            }
           }
           return {
             projects: {
