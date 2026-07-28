@@ -35,12 +35,6 @@ jobs:
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 
-      - name: Cache Rust target
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-          sharedKey: tauri-v2-clean
-
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
         run: |
