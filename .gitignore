@@ -21,6 +21,7 @@ tsconfig.tsbuildinfo
 /production-light-theme.png
 /theme-toggle.png
 /test-*.png
+.claude-mojing-shot*.png
 
 # Claude Code local settings
 .claude/settings.local.json
