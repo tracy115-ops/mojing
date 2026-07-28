@@ -9,6 +9,8 @@ on:
 jobs:
   build-tauri:
     runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
