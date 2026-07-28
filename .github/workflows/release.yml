@@ -39,6 +39,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          sharedKey: tauri-v2-clean
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
