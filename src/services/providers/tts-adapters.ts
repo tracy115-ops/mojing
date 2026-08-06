@@ -28,11 +28,16 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     // 备选模型重试序列
     const defaultCandidates = isOfficialOpenAI
       ? ['tts-1', 'tts-1-hd']
-      : ['FunAudioLLM/SenseVoiceSmall', 'cosyvoice-v1', 'tts-1', 'doubao-tts-v1', 'gpt-4o-audio-preview', 'FunAudioLLM/CosyVoice-300M'];
+      : ['FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct', 'cosyvoice-v1', 'tts-1', 'doubao-tts-v1'];
 
-    const specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
+    let specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
     
-    // 如果用户在设置里明确指定了模型，就不再 fallback 到其他模型，以避免报错信息具有误导性
+    // 如果历史保存了语音识别模型 FunAudioLLM/SenseVoiceSmall，自动更正为 TTS 配音模型 CosyVoice-300M
+    if (specifiedModel === 'FunAudioLLM/SenseVoiceSmall') {
+      specifiedModel = 'FunAudioLLM/CosyVoice-300M';
+    }
+
+    // 如果用户在设置里明确指定了模型，就使用用户指定的模型(经更正)
     const candidateModels = specifiedModel ? [specifiedModel] : defaultCandidates;
 
     let lastError: Error | null = null;

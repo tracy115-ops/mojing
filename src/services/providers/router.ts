@@ -437,10 +437,10 @@ class ProviderRouter {
     let resolvedModel = request.model
       || (endpoint.models && endpoint.models.length > 0 ? endpoint.models[0] : undefined);
 
-    if (!resolvedModel) {
-      resolvedModel = config.defaultModel && (isOfficialOpenAI || config.defaultModel !== 'tts-1')
+    if (!resolvedModel || resolvedModel === 'FunAudioLLM/SenseVoiceSmall') {
+      resolvedModel = config.defaultModel && config.defaultModel !== 'FunAudioLLM/SenseVoiceSmall'
         ? config.defaultModel
-        : undefined;
+        : (isOfficialOpenAI ? 'tts-1' : 'FunAudioLLM/CosyVoice-300M');
     }
 
     const requestWithDefaults: TTSRequest = {

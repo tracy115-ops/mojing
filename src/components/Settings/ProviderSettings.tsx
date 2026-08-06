@@ -153,7 +153,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   // TTS
   'openai-tts': ['tts-1', 'tts-1-hd', 'cosyvoice-v1', 'doubao-tts-v1', 'gpt-4o-audio-preview'],
   'doubao-tts': ['doubao-tts-v1', 'doubao-voice-standard'],
-  'siliconflow-tts': ['FunAudioLLM/SenseVoiceSmall', 'FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct'],
+  'siliconflow-tts': ['FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct'],
   'edge-tts': ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
   // Music
   'suno-music': ['suno-v3.5', 'suno-v4'],

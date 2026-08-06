@@ -208,20 +208,25 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         defaultShotDuration: shotDuration,
       });
 
-      // 给本次 direct 生成分配一个临时 projectId,pure 模式只走 video_generation
-      // 一步,extract/multishot 走完整 pipeline。两种模式都把数据写进 store,
-      // 让"查看步骤账本"入口能读到。
-      const directProjectId = `direct_${Date.now()}`;
-      setLastDirectProjectId(directProjectId);
-      // 标题:优先用用户填的任务名;若当前在某项目下发起的,自动挂载 [项目名] 前缀实现关联
-      const activeProjId = useProjectStore.getState().activeProjectId;
-      const activeProj = activeProjId ? useProjectStore.getState().projects.find((p: { id: string; title: string }) => p.id === activeProjId) : undefined;
+      // 找到或创建真正的 video 对应项目 (统一挂载至 projectStore,确保在主列表同步展现与切换)
+      let targetProjectId = useProjectStore.getState().activeProjectId;
       const trimmedName = taskName.trim();
       const trimmedPromptForTitle = trimmed.length > 30 ? `${trimmed.slice(0, 30).trim()}…` : trimmed;
-      const baseTitle = trimmedName || trimmedPromptForTitle;
-      const taskTitle = activeProj ? `[${activeProj.title}] ${baseTitle}` : baseTitle;
+      const taskTitle = trimmedName || trimmedPromptForTitle;
 
-      initProject(directProjectId, [], {
+      if (!targetProjectId) {
+        const newProj = useProjectStore.getState().createProject('video', taskTitle, trimmed.slice(0, 100), {
+          style: 'cinematic',
+          resolution: `${dims[aspectRatio].w}x${dims[aspectRatio].h}`,
+          aspectRatio,
+          fps: 24,
+        });
+        targetProjectId = newProj.id;
+      }
+
+      setLastDirectProjectId(targetProjectId);
+
+      initProject(targetProjectId, [], {
         aspectRatio,
         resolution: `${dims[aspectRatio].w}x${dims[aspectRatio].h}`,
         fps: 24,
@@ -233,23 +238,23 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         bgmStyle: 'cinematic',
       }, taskTitle);
 
-      // 切到主面板的流水线 tab,并清理 top list 的高亮(保持单选高亮同步)
-      useProjectStore.getState().setActiveProject(null);
-      useVideoStore.getState().setActivePipelineId(directProjectId);
+      // 切到主面板并激活对应项目,不再切空
+      useProjectStore.getState().setActiveProject(targetProjectId);
+      useVideoStore.getState().setActivePipelineId(targetProjectId);
       onClose();
 
       // 2) pure 模式:不走 pipeline-runner,直接 T2V 出单 clip
       if (mode === 'pure') {
         const { w, h } = dims[aspectRatio];
         const stage: VideoStage = 'video_generation';
-        useVideoStore.getState().advanceToStage(directProjectId, stage);
-        useVideoStore.getState().setStageStatus(directProjectId, stage, 'running');
-        useVideoStore.getState().setStageInputSummary(directProjectId, stage, {
+        useVideoStore.getState().advanceToStage(targetProjectId, stage);
+        useVideoStore.getState().setStageStatus(targetProjectId, stage, 'running');
+        useVideoStore.getState().setStageInputSummary(targetProjectId, stage, {
           headline: `纯 T2V 模式,${shotDuration}s · ${dims[aspectRatio].w}×${dims[aspectRatio].h}`,
           details: [trimmed.slice(0, 200)],
         });
 
-        pushStageContext({ novelProjectId: directProjectId, stage });
+        pushStageContext({ novelProjectId: targetProjectId, stage });
         let response;
         try {
           response = await providerRouter.generateVideo({
@@ -260,9 +265,9 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
             durationSeconds: shotDuration,
             fps: 24,
           });
-          useVideoStore.getState().setStageStatus(directProjectId, stage, 'completed', { progress: 1 });
+          useVideoStore.getState().setStageStatus(targetProjectId, stage, 'completed', { progress: 1 });
         } catch (err) {
-          useVideoStore.getState().setStageStatus(directProjectId, stage, 'error', {
+          useVideoStore.getState().setStageStatus(targetProjectId, stage, 'error', {
             error: err instanceof Error ? err.message : String(err),
           });
           throw err;
@@ -281,11 +286,11 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           generatedAt: new Date().toISOString(),
           sceneSource: 'direct',
           sourceMode: 'pure',
-          directProjectId,
+          directProjectId: targetProjectId,
         };
         addDirectClip(clip);
-        // 同步写入临时 project,让 VideoPipelinePanel 能看到 clip
-        useVideoStore.getState().addClip(directProjectId, clip);
+        // 同步写入 targetProjectId 对应的项目,让 VideoPipelinePanel 能看到 clip
+        useVideoStore.getState().addClip(targetProjectId, clip);
         return;
       }
 
@@ -296,9 +301,9 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         characterAnchorLimit: characterLimit,
       };
 
-      // 注:Direct 通道用临时 projectId 走 store,产物读出来后转成 directClips
+      // 注:走 targetProjectId 的 store 流程
       const result = await runPipeline({
-        novelProjectId: directProjectId,
+        novelProjectId: targetProjectId,
         spec: sceneSpec,
         options: finalOptions,
         videoGen: {
@@ -319,7 +324,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
             ...clip,
             sceneSource: 'direct',
             sourceMode: mode,
-            directProjectId,
+            directProjectId: targetProjectId,
           });
         }
       }
