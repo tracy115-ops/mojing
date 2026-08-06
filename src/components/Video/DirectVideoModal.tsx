@@ -340,7 +340,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           generatedAt: new Date().toISOString(),
           sceneSource: 'direct',
           sourceMode: 'multishot',
-          directProjectId,
+          directProjectId: targetProjectId,
         });
       }
     } catch (err) {
