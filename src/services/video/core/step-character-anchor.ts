@@ -43,6 +43,8 @@ export async function runCharacterAnchor(
     anchorMode?: 'single' | 'turnaround';
     /** 用户编辑后的整体 prompt(覆盖内部 build 的拼接结果)。
      *  只对 default 单图立绘生效;三视图和 variant 仍按 build 拼接。 */
+    characterPrompts?: Record<string, string>;
+    /** 向后兼容的单句 promptOverride(只在其匹配指定角色时使用) */
     promptOverride?: string;
   },
   onProgress?: (done: number, total: number) => void,
@@ -65,11 +67,10 @@ export async function runCharacterAnchor(
   for (let i = 0; i < limited.length; i++) {
     const c = limited[i];
 
-    // --- 阶段 1:default 单图立绘(始终生成) ---
-    // 传入全部角色,让 prompt 能显式声明"与其他角色的差异点",
-    // 避免 provider 在多角色场景下画出撞脸的图。
-    const portraitPrompt = ctx.promptOverride && ctx.promptOverride.trim()
-      ? ctx.promptOverride
+    // 按角色 ID 或角色名匹配独立专属提示词，彻底防止多角色提示词踩踏与混淆
+    const customPrompt = ctx.characterPrompts?.[c.id] || ctx.characterPrompts?.[c.name];
+    const portraitPrompt = customPrompt && customPrompt.trim()
+      ? customPrompt
       : buildPortraitPrompt(c, limited, ctx.style);
     let portraitOk = false;
     try {
@@ -134,7 +135,7 @@ export async function runCharacterAnchor(
         const turnaroundRef = await readAsDataUri(portraitUrl);
         const img = await providerRouter.generateImage({
           taskType: 'character',
-          prompt: buildTurnaroundPrompt(c, ctx.style),
+          prompt: buildTurnaroundPrompt(c, ctx.style, customPrompt),
           width: 1536,
           height: 1024,
           style: ctx.style,
@@ -185,30 +186,21 @@ function countAnchorsNeeded(chars: CharacterAnchor[], includeTurnaround: boolean
 
 function buildPortraitPrompt(
   c: CharacterAnchor,
-  allChars: CharacterAnchor[],
+  _allChars: CharacterAnchor[],
   style?: string,
   costumeOverride?: string,
 ): string {
-  // 强化角色身份特征:让 provider 在多角色场景下能区分每个角色。
-  // appearance 放最前面(权重最高),并显式要求 "unique identifying features"。
-  // 多角色场景下,把其他角色作为"反例"列出 — 让 provider 知道不能画成他们。
-
-  const others = allChars.filter((o) => o.id !== c.id && o.name !== c.name);
-  const distinguishHint = others.length > 0
-    ? `IMPORTANT: this character is NOT any of these other characters — must have visibly different face, hair color, and body type from: ${others.map((o) => `${o.name}(${truncate(o.appearance, 60)})`).join('; ')}`
-    : '';
-
+  // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
   const parts = [
-    `character reference portrait of ${c.name}`,
-    `defining physical features (preserve exactly): ${c.appearance}`,
+    `solo, 1person, single character portrait of ${c.name}`,
+    `character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
-    'neutral pose, plain background, soft studio lighting',
-    'full body visible from head to knee',
-    'this is a specific individual — every facial detail must match the description',
-    distinguishHint,
+    'neutral pose, plain solid background, studio lighting',
+    'full body visible from head to toe, single centered figure',
+    'high quality character design sheet, concept art',
     style ? `${style} style` : 'cinematic style',
     '8k detail, photorealistic',
-    'no text, no watermark, no signature',
+    'no text, no watermark, no signature, no extra people',
   ].filter(Boolean);
   return parts.join(', ');
 }
@@ -224,18 +216,26 @@ function truncate(s: string | undefined, max: number): string {
  * 调用时通常会传入 default 单图作 reference,让三视图里的角色和单图保持一致。
  * 后续 keyframe 拿到三视图后会自动裁出正面那 1/3 作为 reference。
  */
-function buildTurnaroundPrompt(c: CharacterAnchor, style?: string): string {
+function buildTurnaroundPrompt(
+  c: CharacterAnchor,
+  style?: string,
+  customAppearance?: string,
+): string {
+  const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
   const parts = [
-    `character turnaround reference sheet of ${c.name}, model sheet, three views side by side`,
-    c.appearance,
-    'showing three views: front view, side profile view, back view',
-    'all three views share identical proportions, outfit and art style as the reference image',
-    'neutral poses, plain white background, consistent lighting',
+    `solo, 1person, character model sheet and turnaround sheet of ${c.name}`,
+    `exclusive identity for ${c.name}: ${appearance}`,
+    `showing 3 distinct angle views side-by-side of ONLY ${c.name}:`,
+    `1. FRONT VIEW: full front face showing facial features, eye color, front hair and outfit of ${c.name}`,
+    `2. SIDE PROFILE VIEW: 90 degree side profile showing nose shape, side silhouette and hair of ${c.name}`,
+    `3. BACK VIEW: full back view showing hairstyle and outfit design from behind for ${c.name}`,
+    'all 3 views must maintain 100% identical face, body proportions, clothing and art style',
+    'neutral standing pose, plain solid white background, studio lighting',
     'full body visible from head to toe in each view',
-    'character design sheet, concept art',
+    'character concept art design sheet',
     style ? `${style} style` : 'cinematic style',
-    '8k detail, photorealistic',
-    'no text labels, no watermark, no signature',
+    '8k resolution, photorealistic, highly detailed',
+    'no text labels, no watermark, no signature, no extra people, no other characters',
   ].filter(Boolean);
   return parts.join(', ');
 }

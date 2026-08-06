@@ -290,12 +290,11 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
   });
 
   const anchorChars = workingSpec.characters!;
-  // 读用户在 UI 里改过的 anchorMode / prompt(单步重跑用)
+  // 读用户在 UI 里改过的 anchorMode / characterPrompts(单步重跑用)
   const proj0 = useVideoStore.getState().getProject(pid);
   const anchorInput = proj0?.stages['character_anchor']?.input;
   const anchorMode = anchorInput?.anchorMode;
-  // prompt 改过则作为「整体覆盖」传给 step;空值/undefined 时 step 内部 build
-  const promptOverride = anchorInput?.prompt && anchorInput.prompt.trim() ? anchorInput.prompt : undefined;
+  const characterPrompts = (anchorInput as any)?.characterPrompts as Record<string, string> | undefined;
 
   const result = await safeRunStage(pid, 'character_anchor', () =>
     withStageContext(pid, 'character_anchor', () =>
@@ -307,7 +306,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
           limit: options.characterAnchorLimit,
           novelProjectId: pid,
           anchorMode,
-          promptOverride,
+          characterPrompts,
         },
         (done, total) => {
           store.setStageStatus(pid, 'character_anchor', 'running', { progress: done / total });
@@ -396,12 +395,15 @@ export async function executeTTS(ctx: StageContext): Promise<StageResult | null>
     details: narrationShots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${(s.narration ?? '').slice(0, 40)}`),
   });
 
+  const stageInput = store.getProject(pid)?.stages.tts?.input;
+  const customModel = stageInput?.model as string | undefined;
+
   const ttsResult = await safeRunStage(pid, 'tts', () =>
     withStageContext(pid, 'tts', () =>
       runTTS(
         workingSpec.shots,
         workingSpec.characters ?? [],
-        { ttsTier: 'free', novelProjectId: pid },
+        { ttsTier: 'free', novelProjectId: pid, model: customModel },
         (done, total) => {
           store.setStageStatus(pid, 'tts', 'running', { progress: done / total });
           callbacks?.onStageProgress?.('tts', done / total);

@@ -25,6 +25,7 @@ import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
 import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import { VideoPipeline } from '@/services/video/pipeline';
+import { runFromFirstFailedStage, runFromStage } from '@/services/video/core/pipeline-runner';
 import { logger } from '@/services/log';
 import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
 
@@ -381,6 +382,33 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          {overall === 'error' && (
+            <Button
+              type="primary"
+              danger
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={async () => {
+                if (!pipelineId) return;
+                message.loading('正在从失败处智能恢复生成...', 1.5);
+                await runFromFirstFailedStage(pipelineId);
+              }}
+            >
+              🚀 从失败处恢复重试
+            </Button>
+          )}
+          <Popconfirm
+            title="确定清空全部产物，一键从第一步重新全流程生成吗？"
+            onConfirm={async () => {
+              if (!pipelineId) return;
+              message.loading('正在重置并从第一步重新生成...', 1.5);
+              await runFromStage(pipelineId, 'character_anchor');
+            }}
+          >
+            <Button size="small" icon={<ReloadOutlined />}>
+              🔄 一键从头重新生成
+            </Button>
+          </Popconfirm>
           <Tooltip title="导出 4K 高帧率超分增强版本">
             <Tag color="gold" style={{ cursor: 'pointer', fontSize: 11 }}>
               ⚡ 4K 超分渲染已就绪
@@ -424,7 +452,26 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
         </Space>
       </div>
 
-      {/* ── 主区域:左 Steps + 右产物 ── */}
+      {/* ── 漫剧 SOP 黄金法则 Banner ── */}
+      <div style={{
+        padding: '6px 12px',
+        background: 'linear-gradient(90deg, rgba(24, 144, 255, 0.08), rgba(114, 46, 209, 0.08))',
+        borderBottom: '1px solid var(--border-secondary)',
+        fontSize: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <Space size={6} style={{ flex: 1, overflow: 'hidden' }}>
+          <Tag color="purple" style={{ fontWeight: 600 }}>🎬 AI 漫剧 SOP 6 步工作流</Tag>
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            1.剧本(角色/目标/冲突/行动/结局) ➔ 2.分镜(景别/角度/构图) ➔ 3.角色一致(Seed/参考图) ➔ 4.图生视频 ➔ 5.后期配音 ➔ 6.SOP工具箱
+          </Text>
+        </Space>
+        <Text style={{ fontSize: 11, color: '#722ed1', fontWeight: 600, fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+          ✨ "AI 是副驾驶，不是方向盘。流程越清楚，结果越稳定。"
+        </Text>
+      </div>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         {/* 左侧 Steps 导航 - Antd Steps 竖向时间轴 */}
         <div style={{

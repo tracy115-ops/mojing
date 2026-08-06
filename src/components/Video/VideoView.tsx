@@ -48,9 +48,63 @@ const VideoView: React.FC = () => {
       aspectRatio: values.aspectRatio,
       fps: values.fps,
     } as Partial<VideoMetadata>);
+    
+    // 初始化 videoStore 中的对应项目运行时状态
+    useVideoStore.getState().initProject(
+      project.id,
+      [],
+      {
+        aspectRatio: (values.aspectRatio as any) || '16:9',
+        resolution: values.resolution || '1920x1080',
+        fps: values.fps || 24,
+        shotDurationSeconds: 5,
+        videoTier: 'value',
+        imageTier: 'value',
+        ttsTier: 'free',
+        hardcodeSubtitles: false,
+        bgmStyle: values.style || 'cinematic',
+      },
+      values.title,
+    );
+
     setActiveProject(project.id);
+    useVideoStore.getState().setActivePipelineId(project.id);
     setCreateOpen(false);
     message.success(t('common.success'));
+  };
+
+  const handleSelectProject = (id: string) => {
+    setActiveProject(id);
+    const store = useVideoStore.getState();
+    if (!store.projects[id]) {
+      const proj = projects.find((p) => p.id === id);
+      const meta = proj?.metadata as Partial<VideoMetadata> | undefined;
+      store.initProject(
+        id,
+        [],
+        {
+          aspectRatio: (meta?.aspectRatio as any) || '16:9',
+          resolution: meta?.resolution || '1920x1080',
+          fps: meta?.fps || 24,
+          shotDurationSeconds: 5,
+          videoTier: 'value',
+          imageTier: 'value',
+          ttsTier: 'free',
+          hardcodeSubtitles: false,
+          bgmStyle: meta?.style || 'cinematic',
+        },
+        proj?.title,
+      );
+    }
+    store.setActivePipelineId(id);
+  };
+
+  const handleDeleteProject = (id: string) => {
+    deleteProject(id);
+    useVideoStore.getState().resetProject(id);
+    if (useVideoStore.getState().activePipelineId === id) {
+      useVideoStore.getState().setActivePipelineId(undefined);
+    }
   };
 
   return (
@@ -61,8 +115,8 @@ const VideoView: React.FC = () => {
             projects={videoProjects}
             type="video"
             activeId={activeProjectId}
-            onSelect={setActiveProject}
-            onDelete={deleteProject}
+            onSelect={handleSelectProject}
+            onDelete={handleDeleteProject}
             onToggleFavorite={toggleFavorite}
             onCreate={() => setCreateOpen(true)}
           />

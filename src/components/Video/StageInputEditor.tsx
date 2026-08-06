@@ -180,6 +180,45 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
         borderRadius: 4,
         border: '1px solid var(--border-secondary)',
       }}>
+        {stage === 'character_anchor' && (
+          <div style={{ marginBottom: 12 }}>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6, fontWeight: 600 }}>
+              👤 独立角色生成控制面板 (共 {project.sceneSpec?.characters?.length ?? 0} 个独立实体):
+            </Text>
+            {(project.sceneSpec?.characters ?? []).map((char) => {
+              const charPrompts = (input as any)?.characterPrompts || {};
+              const currentPrompt = charPrompts[char.id] ?? char.appearance;
+              return (
+                <div
+                  key={char.id}
+                  style={{
+                    padding: 8,
+                    marginBottom: 6,
+                    background: 'var(--bg-primary, #fff)',
+                    borderRadius: 4,
+                    border: '1px solid var(--border-secondary)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text strong style={{ fontSize: 12, color: '#1890ff' }}>
+                      👤 角色: {char.name}
+                    </Text>
+                  </div>
+                  <Input.TextArea
+                    rows={2}
+                    size="small"
+                    value={currentPrompt}
+                    placeholder={`输入 ${char.name} 的独立专属外观 Prompt...`}
+                    onChange={(e) => {
+                      const updatedPrompts = { ...charPrompts, [char.id]: e.target.value };
+                      setStageInput(project.novelProjectId, stage, { characterPrompts: updatedPrompts } as any);
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
         {stage === 'composing' && (
           <div style={{ marginBottom: 8 }}>
             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>

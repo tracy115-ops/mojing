@@ -21,10 +21,16 @@ export interface AudioMergeResult {
   failedShotIds: string[];
 }
 
+export type BGMMoodStyle = 'epic_action' | 'suspense_thriller' | 'warm_emotional' | 'comic_funny' | 'cyberpunk';
+
 export interface AudioMergeCtx {
   novelProjectId: string;
   /** clip by shotId,用于拿到 videoUrl */
   clips: GeneratedClip[];
+  /** 可选背景音乐风格预设 */
+  bgmStyle?: BGMMoodStyle;
+  /** BGM 混音音量 (0.0 ~ 1.0,默认 0.20 避免掩盖 TTS 旁白) */
+  bgmVolume?: number;
 }
 
 export async function runAudioMerge(

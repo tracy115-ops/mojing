@@ -126,9 +126,11 @@ async function generateOne(
     }
   }
 
+  const enhancedPrompt = buildEnhancedVideoPrompt(shot);
+
   const response = await providerRouter.generateVideo({
     taskType: 'clip',
-    prompt: shot.videoPrompt,
+    prompt: enhancedPrompt,
     model: options.model ?? tierToDefaultModel(options.spec.videoTier),
     endpointId: options.endpointId,
     width: w,
@@ -176,4 +178,25 @@ function parseResolution(s: string): [number, number] {
  */
 export function tierToDefaultModel(_tier: VideoSpec['videoTier']): string {
   return '';
+}
+
+function buildEnhancedVideoPrompt(shot: ShotSpec): string {
+  const basePrompt = shot.videoPrompt.trim();
+  const camera = shot.cameraMovement
+    ? `${shot.cameraMovement} camera movement, cinematic tracking shot`
+    : 'cinematic slow panning camera movement, 35mm lens depth of field';
+
+  const mood = shot.mood ? `${shot.mood} lighting and mood` : 'dramatic cinematic lighting';
+
+  // 商业级超画质黑科技拼装（让免费/通用 API 也能渲染出极具光影拉满、物理连贯的电影画面）
+  const commercialEnhancers = [
+    'shot on 35mm ARRI Alexa LF',
+    'masterpiece photorealistic 8k UHD',
+    'volumetric lighting, raytracing ambient occlusion',
+    'smooth 60fps fluid physical motion, natural movement',
+    'ultra-detailed textures, crisp focus',
+    'no artifact, no face distortion, no flickering, no noise',
+  ].join(', ');
+
+  return [basePrompt, camera, mood, commercialEnhancers].filter(Boolean).join(', ');
 }

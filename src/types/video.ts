@@ -71,6 +71,68 @@ export const VISUAL_STYLE_PRESETS: StylePreset[] = [
   },
 ];
 
+// --- AI 漫剧 SOP 6 步标准流程定义 ---
+
+export interface SOPStep {
+  step: number;
+  key: string;
+  name: string;
+  subTitle: string;
+  description: string;
+  icon: string;
+}
+
+export const MANGA_SOP_6STEPS: SOPStep[] = [
+  {
+    step: 1,
+    key: 'script',
+    name: '1. 剧本创作',
+    subTitle: '角色 · 目标 · 冲突 · 行动 · 结局',
+    description: '厘清故事主线，确定核心角色、欲望目标、剧情冲突、关键行动与最终结局。',
+    icon: '📝',
+  },
+  {
+    step: 2,
+    key: 'storyboard',
+    name: '2. 分镜设计',
+    subTitle: '景别 · 角度 · 构图 · 画面描述',
+    description: '精细划定景别(特写/全景)、镜头角度(俯仰视角)与黄金构图法。',
+    icon: '📐',
+  },
+  {
+    step: 3,
+    key: 'anchor',
+    name: '3. 角色一致',
+    subTitle: '固定人设 · 参考图 · Seed · 隔离提示词',
+    description: '生成独立角色立绘与三视图，锁定 Seed 与参考图，防止多角色碰撞干扰。',
+    icon: '👤',
+  },
+  {
+    step: 4,
+    key: 'video_gen',
+    name: '4. 图生视频',
+    subTitle: '可灵 · Runway · MiniMax · 运镜微动',
+    description: '赋予静态分镜眨眼、呼吸、推拉摇移运镜及高帧率流畅物理微动作。',
+    icon: '🎬',
+  },
+  {
+    step: 5,
+    key: 'audio_post',
+    name: '5. 后期配音',
+    subTitle: 'TTS 配音 · BGM 氛围 · 音效 · 剪辑节奏',
+    description: '合成角色情感台词，叠加背景音乐与环境音效，自适应对齐音画时长。',
+    icon: '🎙️',
+  },
+  {
+    step: 6,
+    key: 'toolkit',
+    name: '6. 工具箱 SOP',
+    subTitle: '常用提示词 · SOP 预设 · 批量导出',
+    description: '沉淀高质感 Prompt SOP 资产包，AI 是副驾驶，流程越清楚，结果越稳定。',
+    icon: '🛠️',
+  },
+];
+
 
 // --- Source Mode ---
 
@@ -454,6 +516,7 @@ export interface VideoSpec {
   ttsTier: ModelTier;
   hardcodeSubtitles: boolean;
   bgmStyle?: string;
+  customBgmUrl?: string;
   /** Phase 2:是否启用角色立绘(默认 true) */
   enableCharacterAnchor?: boolean;
   /** Phase 2:是否启用场景图 */
@@ -499,6 +562,8 @@ export interface StageInput {
   fps?: number;
   /** video_generation:单镜头时长(秒) */
   durationSeconds?: number;
+  /** tts/video/image:特定模型名(如 cosyvoice-v1, FunAudioLLM/CosyVoice-300M 等) */
+  model?: string;
   /** tts:音色 ID */
   voiceId?: string;
   /** tts:语速 */
@@ -507,6 +572,10 @@ export interface StageInput {
   style?: string;
   /** character_anchor:立绘模式 — 'single'(单图正面) | 'turnaround'(三视图正/侧/背) */
   anchorMode?: 'single' | 'turnaround';
+  /** audio_merge:背景音乐氛围风格 */
+  bgmStyle?: string;
+  /** audio_merge:自定义背景音乐文件路径/DataURI */
+  customBgmUrl?: string;
 }
 
 /** 输入字段定义 — 驱动 UI 表单渲染。 */
@@ -528,6 +597,19 @@ export interface StageInputFieldDef {
 /** 各 stage 可编辑的字段配置。空数组 = 该 stage 暂不支持改输入(只能纯重跑)。
  *  字段 label 走 i18n,key 格式 'video.pipeline.field.<key>'。 */
 export const STAGE_INPUT_FIELDS: Partial<Record<VideoStage, StageInputFieldDef[]>> = {
+  audio_merge: [
+    {
+      key: 'bgmStyle',
+      label: 'video.pipeline.field.bgmStyle',
+      type: 'radio',
+      options: [
+        { value: 'epic_action', labelKey: '🔥 热血打斗/宏大爆发 (Action)' },
+        { value: 'suspense_thriller', labelKey: '👁️ 悬疑惊悚/阴谋潜行 (Suspense)' },
+        { value: 'warm_emotional', labelKey: '🌸 治愈温馨/日常相伴 (Warm)' },
+        { value: 'cyberpunk', labelKey: '⚡ 赛博朋克/科幻电音 (Cyberpunk)' },
+      ],
+    },
+  ],
   storyboard_prompt: [
     { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
   ],
@@ -558,5 +640,10 @@ export const STAGE_INPUT_FIELDS: Partial<Record<VideoStage, StageInputFieldDef[]
     { key: 'resolution', label: 'video.pipeline.field.resolution', type: 'text' },
     { key: 'fps', label: 'video.pipeline.field.fps', type: 'number', min: 1, max: 60, step: 1 },
     { key: 'durationSeconds', label: 'video.pipeline.field.duration', type: 'number', min: 1, max: 60, step: 1 },
+  ],
+  tts: [
+    { key: 'model', label: 'video.pipeline.field.model', type: 'text' },
+    { key: 'voiceId', label: 'video.pipeline.field.voiceId', type: 'text' },
+    { key: 'speed', label: 'video.pipeline.field.speed', type: 'number', min: 0.25, max: 4, step: 0.1 },
   ],
 };

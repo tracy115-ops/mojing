@@ -57,6 +57,7 @@ const zhCN: Record<string, string> = {
   'sidebar.novels': '小说引擎',
   'sidebar.comics': '漫画工坊',
   'sidebar.videos': '视频工坊',
+  'sidebar.music': '音乐工坊',
   'sidebar.projects': '项目管理',
   'sidebar.settings': '设置',
   'sidebar.collapse': '收起侧边栏',

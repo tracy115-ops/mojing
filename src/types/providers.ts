@@ -51,12 +51,18 @@ export type TTSProviderId =
   | 'edge-tts'          // Microsoft Edge TTS (免费)
   | 'custom';
 
+export type MusicProviderId =
+  | 'suno-music'        // Suno AI (v3.5 / v4 音乐大模型)
+  | 'udio-music'        // Udio 音乐大模型
+  | 'siliconflow-music' // 硅基流动语音/配乐
+  | 'custom';
+
 // --- API Endpoint Config ---
 
 export interface ApiEndpoint {
   id: string;
   name: string;
-  provider: LLMProviderId | ImageProviderId | VideoProviderId | TTSProviderId;
+  provider: LLMProviderId | ImageProviderId | VideoProviderId | TTSProviderId | MusicProviderId;
   /**
    * 类别标记。固定类别 provider(llm/openai 等)可不填,会从 PROVIDER_CATEGORY 推断;
    * 'custom' provider 必须填,否则会在所有类别列表里都出现/都不出现。
@@ -64,6 +70,7 @@ export interface ApiEndpoint {
   category?: 'llm' | 'image' | 'video' | 'tts';
   baseUrl: string;
   apiKey: string;
+  models?: string[];
   organizationId?: string;
   customHeaders?: Record<string, string>;
   enabled: boolean;

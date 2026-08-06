@@ -18,7 +18,7 @@ export interface TTSResult {
 export async function runTTS(
   shots: ShotSpec[],
   characters: CharacterAnchor[],
-  ctx: { ttsTier: string; novelProjectId: string },
+  ctx: { ttsTier: string; novelProjectId: string; model?: string },
   onProgress?: (done: number, total: number) => void,
 ): Promise<TTSResult> {
   const total = shots.length;
@@ -45,10 +45,17 @@ export async function runTTS(
       .find((c) => c?.voiceRef);
     const voice = speaker?.voiceRef;
 
+    const cleanText = cleanNarrationForTTS(text);
+    if (!cleanText) {
+      onProgress?.(i + 1, total);
+      continue;
+    }
+
     try {
       const response = await providerRouter.generateTTS({
-        text,
+        text: cleanText,
         voice,
+        model: ctx.model,
       });
       result[i].audioTrack = await saveAsset(
         ctx.novelProjectId,
@@ -78,4 +85,15 @@ export async function runTTS(
   }
 
   return { shots: result, failedShotIds };
+}
+
+function cleanNarrationForTTS(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\[.*?\]/g, '') // 去除 [动作/神态] 提示
+    .replace(/（.*?）/g, '') // 去除 (括号) 提示
+    .replace(/\(.*?\)/g, '')
+    .replace(/^.*?:/g, '')  // 去除 "角色名:" 前缀
+    .replace(/^.*?:/g, '')
+    .trim();
 }

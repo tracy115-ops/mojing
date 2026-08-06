@@ -59,6 +59,17 @@ export async function getLogPath(): Promise<string | null> {
   }
 }
 
+/** 打开日志目录 */
+export async function openLogDir(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    await invoke('log_open_dir');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface InMemEntry {
   ts: number;
   level: LogLevel;

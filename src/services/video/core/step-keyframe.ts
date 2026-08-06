@@ -112,6 +112,9 @@ export async function runKeyframe(
     }
 
     try {
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
       const img = await providerRouter.generateImage({
         taskType: 'storyboard',
         prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style),
@@ -172,17 +175,18 @@ function buildKeyframePrompt(
     ? '\nReference image guide: the wide image with three views is a character model sheet (front/side/back); the single front-view image is the same character\'s face reference. Use them together to preserve identity.'
     : '';
 
-  // 把未生成立绘的角色(超出 limit)的外貌塞进 prompt 兜底
+  const noPeopleHint = presentChars.length === 0 ? 'no humans, no people, empty scene, background scenery shot' : '';
+
   return [
     'cinematic keyframe for a video shot',
     shot.videoPrompt,
-    charBlock ? `\nCharacters in frame (use provided reference images; preserve face and costume exactly):\n${charBlock}` : '',
+    charBlock ? `\nCharacters in frame (use provided reference images; preserve face and costume exactly):\n${charBlock}` : noPeopleHint,
     turnaroundHint,
     shot.location ? `Location: ${shot.location}` : '',
     shot.mood ? `Mood: ${shot.mood}` : '',
     shot.cameraMovement ? `Camera: ${shot.cameraMovement}` : '',
     style ? `${style} style` : 'cinematic style',
-    'rule of thirds, no text, no watermark',
+    'rule of thirds, no text, no watermark, no signature',
   ]
     .filter(Boolean)
     .join(', ');

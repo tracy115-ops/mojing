@@ -148,13 +148,17 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   'minimax-video': ['video-01', 'video-01-live'],
   cogvideo: ['cogvideox_5b', 'cogvideox_flash'],
   '302ai-video': ['sora-302', 'kling-302', 'runway-302', 'minimax-302'],
-  'siliconflow-video': ['Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-14B'],
+  'siliconflow-video': ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-T2V-14B'],
   'leonardo-video': ['leonardo-motion'],
   // TTS
-  'openai-tts': ['tts-1', 'tts-1-hd'],
+  'openai-tts': ['tts-1', 'tts-1-hd', 'cosyvoice-v1', 'doubao-tts-v1', 'gpt-4o-audio-preview'],
   'doubao-tts': ['doubao-tts-v1', 'doubao-voice-standard'],
-  'siliconflow-tts': ['FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct'],
+  'siliconflow-tts': ['FunAudioLLM/SenseVoiceSmall', 'FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct'],
   'edge-tts': ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
+  // Music
+  'suno-music': ['suno-v3.5', 'suno-v4'],
+  'udio-music': ['udio-v1.5'],
+  'siliconflow-music': ['FunAudioLLM/SenseVoiceSmall'],
 };
 
 /** Return the suggestion list for the *primary* provider of a given category.
@@ -285,6 +289,7 @@ const ProviderSettings: React.FC = () => {
       provider: endpoint.provider,
       baseUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
+      modelsStr: endpoint.models ? endpoint.models.join(', ') : '',
     });
     setAddModalOpen(true);
   }, [form]);
@@ -292,19 +297,32 @@ const ProviderSettings: React.FC = () => {
   const handleSaveEndpoint = useCallback(async () => {
     try {
       const values = await form.validateFields();
+      const models = values.modelsStr
+        ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : undefined;
+
       if (editingEndpoint) {
         updateEndpoint(editingEndpoint.id, {
           name: values.name,
           provider: values.provider,
           baseUrl: values.baseUrl,
           apiKey: values.apiKey,
+          models,
         });
       } else {
         // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
         // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
         // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
         // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
-        addEndpoint({ ...values, enabled: true, category: addCategory });
+        addEndpoint({
+          name: values.name,
+          provider: values.provider,
+          baseUrl: values.baseUrl,
+          apiKey: values.apiKey,
+          models,
+          enabled: true,
+          category: addCategory,
+        });
       }
       setAddModalOpen(false);
       setEditingEndpoint(null);
@@ -512,7 +530,13 @@ const ProviderSettings: React.FC = () => {
             <Select
               style={{ width: '100%' }}
               value={catConfig.primary}
-              onChange={(v) => setProvider(v as never, undefined, catConfig.endpointId)}
+              onChange={(v) => {
+                if (category === 'tts') {
+                  setTTSProvider(v as TTSProviderId, catConfig.defaultModel, (catConfig as any).defaultVoice, catConfig.endpointId);
+                } else {
+                  setProvider(v as never, undefined, catConfig.endpointId);
+                }
+              }}
               options={options}
             />
           </div>
@@ -536,7 +560,13 @@ const ProviderSettings: React.FC = () => {
             <Select
               style={{ width: '100%' }}
               value={catConfig.endpointId}
-              onChange={(v) => setProvider(catConfig.primary as never, undefined, v)}
+              onChange={(v) => {
+                if (category === 'tts') {
+                  setTTSProvider(catConfig.primary as TTSProviderId, catConfig.defaultModel, (catConfig as any).defaultVoice, v);
+                } else {
+                  setProvider(catConfig.primary as never, undefined, v);
+                }
+              }}
               options={categoryEndpoints.map((e) => ({ value: e.id, label: `${e.name} (${e.baseUrl})` }))}
               placeholder={t('provider.endpoint')}
               allowClear
@@ -592,6 +622,29 @@ const ProviderSettings: React.FC = () => {
             key: 'tts',
             label: t('provider.tts'),
             children: <Card size="small">{renderModelSelector('tts', TTS_PROVIDER_OPTIONS)}</Card>,
+          },
+          {
+            key: 'music',
+            label: '🎵 AI 音乐生成',
+            children: (
+              <Card size="small">
+                <div style={{ marginBottom: 12 }}>
+                  <Typography.Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    选择默认 AI 音乐引擎端点
+                  </Typography.Text>
+                  <AutoComplete
+                    style={{ width: '100%' }}
+                    placeholder="选填 Suno AI / 硅基流动 / 自定义中转站音乐模型 (如 suno-v3.5)"
+                    options={[
+                      { value: 'suno-v3.5', label: 'suno-v3.5 (Suno 高清原声推荐)' },
+                      { value: 'suno-v4', label: 'suno-v4 (Suno 最新高品规引擎)' },
+                      { value: 'udio-v1.5', label: 'udio-v1.5 (Udio 交响与流行配乐)' },
+                      { value: 'FunAudioLLM/SenseVoiceSmall', label: 'FunAudioLLM/SenseVoiceSmall (硅基流动免费)' },
+                    ]}
+                  />
+                </div>
+              </Card>
+            ),
           },
         ]}
       />
@@ -709,6 +762,28 @@ const ProviderSettings: React.FC = () => {
             );
           })}
         </Card>
+
+        <Card size="small" title={`${t('provider.tts')} — 默认模型与音色设置`}>
+          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
+            设置 TTS 配音调用的默认 Voice Model 及预设音色（如 CosyVoice / 豆包音色）
+          </div>
+          {renderTaskModelRow(
+            'tts_default_model',
+            'TTS 默认模型',
+            config.tts?.defaultModel || '',
+            'FunAudioLLM/CosyVoice-300M',
+            getModelSuggestions(config, 'tts'),
+            (v) => setTTSProvider(config.tts?.primary ?? 'openai-tts', v, config.tts?.defaultVoice, config.tts?.endpointId),
+          )}
+          {renderTaskModelRow(
+            'tts_default_voice',
+            'TTS 默认音色',
+            config.tts?.defaultVoice || '',
+            'alloy / xiaoxiao / yunxi',
+            ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
+            (v) => setTTSProvider(config.tts?.primary ?? 'openai-tts', config.tts?.defaultModel, v, config.tts?.endpointId),
+          )}
+        </Card>
       </div>
     );
   };
@@ -821,6 +896,9 @@ const ProviderSettings: React.FC = () => {
           </Form.Item>
           <Form.Item name="apiKey" label={t('provider.apiKey')} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
             <Input.Password placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsNoKey') : t('provider.apiKeyPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="modelsStr" label="模型名称 (可选 / 多个用逗号隔开)" tooltip="自定义中转站或服务的模型名，例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1">
+            <Input placeholder="例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1" />
           </Form.Item>
           {watchProvider === 'edge-tts' && (
             <Alert type="info" showIcon message={t('provider.edgeTtsHint')} style={{ marginTop: 4 }} />

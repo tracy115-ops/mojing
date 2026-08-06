@@ -28,6 +28,9 @@ export async function runSceneImage(
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i];
     try {
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
       const img = await providerRouter.generateImage({
         taskType: 'scene',
         prompt: buildScenePrompt(s, ctx.style),
@@ -67,11 +70,11 @@ function buildScenePrompt(s: SceneAnchor, style?: string): string {
   return [
     `environment establishing shot of ${s.name}`,
     s.description,
-    'wide angle, no people, cinematic composition',
-    'rule of thirds, atmospheric lighting',
+    'empty scene, no humans, no people, no character, background scenery only',
+    'wide angle, cinematic composition, rule of thirds, atmospheric lighting',
     style ? `${style} style` : 'cinematic style',
     '8k detail, photorealistic',
-    'no text, no watermark',
+    'no text, no watermark, no signature, no people',
   ]
     .filter(Boolean)
     .join(', ');

@@ -23,8 +23,10 @@ import NovelView from '@/components/Novel/NovelView';
 import ComicView from '@/components/Comic/ComicView';
 import VideoView from '@/components/Video/VideoView';
 import SettingsPanel from '@/components/Settings/SettingsPanel';
+import MusicView from '@/components/Music/MusicView';
+import { CustomerServiceOutlined } from '@ant-design/icons';
 
-type ViewKey = 'novels' | 'comics' | 'videos';
+type ViewKey = 'novels' | 'comics' | 'videos' | 'music';
 
 interface NavTab {
   key: ViewKey | 'settings';
@@ -80,6 +82,7 @@ const MainLayout: React.FC = () => {
     { key: 'novels', icon: <BookOutlined />, label: t('sidebar.novels'), color: '#3b82f6' },
     { key: 'comics', icon: <PictureOutlined />, label: t('sidebar.comics'), color: '#f59e0b' },
     { key: 'videos', icon: <VideoCameraOutlined />, label: t('sidebar.videos'), color: '#ef4444' },
+    { key: 'music', icon: <CustomerServiceOutlined />, label: t('sidebar.music'), color: '#10b981' },
     { key: 'settings', icon: <SettingOutlined />, label: t('sidebar.settings'), color: '#8b5cf6' },
   ];
 
@@ -90,6 +93,7 @@ const MainLayout: React.FC = () => {
       case 'novels': return <NovelView />;
       case 'comics': return <ComicView />;
       case 'videos': return <VideoView />;
+      case 'music': return <MusicView />;
       default: return <NovelView />;
     }
   };

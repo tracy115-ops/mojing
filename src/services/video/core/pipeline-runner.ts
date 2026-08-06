@@ -397,6 +397,24 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
 }
 
 /**
+ * 自动寻找第一个失败或待执行的 Stage，重置并向下恢复重跑。
+ */
+export async function runFromFirstFailedStage(pid: string): Promise<boolean> {
+  void logger.info(`[pipeline] runFromFirstFailedStage pid=${pid}`, 'pipeline');
+  const store = useVideoStore.getState();
+  const proj = store.getProject(pid);
+  if (!proj) return false;
+
+  // 扫描第一个 error 状态的 stage;若无则取 pending 状态的 stage;否则取第一个 stage
+  const failedStage =
+    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'error') ||
+    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'pending') ||
+    RUNTIME_STAGE_ORDER[0];
+
+  return runFromStage(pid, failedStage);
+}
+
+/**
  * 单镜头独立重试/重新生成：仅针对单个 Shot 重新跑 T2V / I2V 生成 Clip。
  */
 export async function rerunSingleShot(pid: string, shotId: string): Promise<GeneratedClip | null> {

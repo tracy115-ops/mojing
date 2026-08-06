@@ -1,6 +1,7 @@
 import type {
   VideoGenerateRequest,
   VideoGenerateResponse,
+  VideoProviderId,
   ApiEndpoint,
 } from '@/types/providers';
 import { BaseVideoProvider } from './base';
@@ -1036,6 +1037,140 @@ export class LeonardoVideoProvider extends BaseVideoProvider {
   }
 }
 
+// --- SiliconFlow / 硅基流动 Video Provider (Wan 2.1) ---
+// API: POST {baseUrl}/video/submit
+// Body: { model, prompt, image?, seed }
+// Response: { requestId }
+// Status Check: POST {baseUrl}/video/status { requestId }
+
+export class SiliconFlowVideoProvider extends BaseVideoProvider {
+  readonly providerId: VideoProviderId = 'siliconflow-video';
+
+  private baseUrl(): string {
+    const b = this.endpoint.baseUrl.replace(/\/+$/, '');
+    return /\/v\d+$/.test(b) ? b : `${b}/v1`;
+  }
+
+  async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
+    const startTime = Date.now();
+    const isI2V = request.referenceImages && request.referenceImages.length > 0;
+    const defaultModels = isI2V
+      ? ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'wan2.1-i2v-720p', 'wan2.1-i2v-14b', 'wan2.1-i2v']
+      : ['Wan-AI/Wan2.2-T2V-A14B', 'Wan-AI/Wan2.1-T2V-1.4B', 'wan2.1-t2v-1.4b', 'wan2.1-t2v-14b', 'wan2.1-t2v'];
+
+    // 优先尝试用户指定的或 endpoint 里配置的 model,然后再按备选列表重试
+    const specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
+    const candidateModels = specifiedModel
+      ? [specifiedModel, ...defaultModels.filter((m) => m !== specifiedModel)]
+      : defaultModels;
+
+    let lastError: Error | null = null;
+
+    for (const modelCandidate of candidateModels) {
+      const body: Record<string, unknown> = {
+        model: modelCandidate,
+        prompt: request.prompt,
+      };
+
+      if (isI2V) {
+        body.image = request.referenceImages![0];
+      }
+      const seedVal = (request as unknown as Record<string, unknown>).seed;
+      if (typeof seedVal === 'number') {
+        body.seed = seedVal;
+      }
+
+      const submitUrl = `${this.baseUrl()}/video/submit`;
+      const submitResponse = await httpFetch(submitUrl, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(body),
+        signal: this.timeoutSignal(60_000),
+      });
+
+      if (!submitResponse.ok) {
+        const text = await submitResponse.text().catch(() => '');
+        // 如果是 400 且提示 Model does not exist,说明该中转站不支持这个 model 格式,尝试下一个 candidate
+        if (submitResponse.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
+          lastError = new Error(`SiliconFlow Video error 400 (Model '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效视频模型名(如 wan2.1-i2v-720p / Wan-AI/Wan2.1-I2V-14B-720P)。`);
+          continue; // 尝试下一个备选模型名
+        }
+        throw new Error(`SiliconFlow Video API error ${submitResponse.status}: ${text}`);
+      }
+
+      const submitData = await submitResponse.json();
+      const requestId = submitData.requestId || submitData.request_id || submitData.task_id || submitData.id;
+
+      if (!requestId) {
+        throw new Error('SiliconFlow Video API: no requestId returned');
+      }
+
+      return this.pollUntilComplete(requestId, startTime, modelCandidate);
+    }
+
+    throw lastError || new Error('SiliconFlow Video: 所有候选模型提交均被服务器拒绝。请检查 Endpoint 模型的拼写。');
+  }
+
+  async checkStatus(requestId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }> {
+    const statusUrl = `${this.baseUrl()}/video/status`;
+    const response = await httpFetch(statusUrl, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ requestId }),
+      signal: this.timeoutSignal(90_000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`SiliconFlow Video status check error ${response.status}`);
+    }
+
+    const data = await response.json();
+    const state = (data.status || data.state || '').toLowerCase();
+
+    if (state === 'succeed' || state === 'success' || state === 'completed') {
+      const videoUrl = data.results?.videos?.[0]?.url || data.result?.url || data.url || data.video_url;
+      if (!videoUrl) {
+        throw new Error('SiliconFlow Video: completed but no video url in response');
+      }
+      return {
+        status: 'completed',
+        progress: 1.0,
+        result: {
+          videoData: videoUrl,
+          width: 1280,
+          height: 720,
+          durationSeconds: 5,
+          model: 'Wan2.1',
+          provider: 'siliconflow-video',
+          latencyMs: 0,
+        },
+      };
+    }
+
+    if (state === 'failed' || state === 'error') {
+      const reason = data.reason || data.message || JSON.stringify(data).slice(0, 300);
+      return { status: 'failed', progress: 0, failReason: reason };
+    }
+
+    return { status: 'processing', progress: typeof data.progress === 'number' ? data.progress : 0.4 };
+  }
+
+  private async pollUntilComplete(requestId: string, startTime: number, model: string): Promise<VideoGenerateResponse> {
+    const maxPolls = 120; // 10 分钟
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const status = await this.checkStatus(requestId);
+      if (status.status === 'completed' && status.result) {
+        return { ...status.result, model, latencyMs: Date.now() - startTime };
+      }
+      if (status.status === 'failed') {
+        throw new Error(`SiliconFlow Video failed: ${status.failReason ?? 'unknown error'}`);
+      }
+    }
+    throw new Error('SiliconFlow Video timed out (10 min)');
+  }
+}
+
 // --- Factory ---
 
 export function createVideoProvider(
@@ -1055,8 +1190,16 @@ export function createVideoProvider(
       return new DoubaoVideoProvider(endpoint);
     case 'leonardo-video':
       return new LeonardoVideoProvider(endpoint);
+    case 'siliconflow-video':
+      return new SiliconFlowVideoProvider(endpoint);
+    case '302ai-video':
+      return new SiliconFlowVideoProvider(endpoint);
     default:
-      // Default to Kling-compatible API
+      // 如果 Provider 是 custom 或者属于其他通用,检查 URL 特征。
+      // 若包含 siliconflow 则自动走向 SiliconFlow 驱动,避免抛错成 Kling
+      if (endpoint.baseUrl.includes('siliconflow')) {
+        return new SiliconFlowVideoProvider(endpoint);
+      }
       return new KlingVideoProvider(endpoint);
   }
 }

@@ -90,16 +90,14 @@ function isTransientNetworkError(err: unknown): boolean {
   if (msg.includes('request canceled')) return true;
   if (msg.includes('timed out') || msg.includes('timeout')) return true;
   if (msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('econnaborted')) return true;
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('limit reached') || msg.includes('ipm limit')) return true;
   // HTTP 5xx(从 "API error 503: ..." 这种消息里识别)
   if (/\b5\d{2}\b/.test(msg) && msg.includes('error')) return true;
   return false;
 }
 
-/** 对瞬时网络错误自动重试(最多 retries 次,指数退避)。
- *  非瞬时错误(如 content_policy / 4xx / 逻辑错误)直接抛,不重试。
- *
- *  视频生成是长任务(submit 单次最长 5 分钟),重试间隔用 3s/9s/27s
- *  让代理有时间从拥塞中恢复 — 太快重试容易再撞同一拥塞点。 */
+/** 对瞬时网络错误及 429 限流自动重试(最多 retries 次,指数退避)。
+ *  非瞬时错误(如 content_policy / 400 参数错误 / 401 鉴权失败)直接抛,不重试。 */
 async function callWithTimeoutRetry<T>(
   fn: () => Promise<T>,
   retries = 3,
@@ -111,10 +109,11 @@ async function callWithTimeoutRetry<T>(
     } catch (err) {
       lastErr = err;
       if (attempt === retries || !isTransientNetworkError(err)) throw err;
-      // 指数退避:3s, 9s, 27s
-      const delayMs = 3000 * Math.pow(3, attempt);
+      const isRateLimit = err instanceof Error && /429|rate limit|limit reached/i.test(err.message);
+      // 限流退避:6s, 12s, 24s;普通网络抖动:3s, 9s, 27s
+      const delayMs = isRateLimit ? 6000 * Math.pow(2, attempt) : 3000 * Math.pow(3, attempt);
       void logger.warn(
-        `[router] 瞬时错误,${delayMs}ms 后重试 (${attempt + 1}/${retries}): ${
+        `[router] 瞬时错误/限流,${delayMs}ms 后重试 (${attempt + 1}/${retries}): ${
           err instanceof Error ? err.message : String(err)
         }`,
         'router',
@@ -433,9 +432,20 @@ class ProviderRouter {
     }
 
     const endpointProvider = endpoint.provider as TTSProviderId;
+    const isOfficialOpenAI = endpoint.baseUrl.includes('api.openai.com');
+    // 优先拿 Endpoint 配置里填写的模型(如用户在 Mojing/302.AI 填的特定模型名);若为第三方代理中转站,避开盲目发 tts-1
+    let resolvedModel = request.model
+      || (endpoint.models && endpoint.models.length > 0 ? endpoint.models[0] : undefined);
+
+    if (!resolvedModel) {
+      resolvedModel = config.defaultModel && (isOfficialOpenAI || config.defaultModel !== 'tts-1')
+        ? config.defaultModel
+        : undefined;
+    }
+
     const requestWithDefaults: TTSRequest = {
       ...request,
-      model: request.model || config.defaultModel,
+      model: resolvedModel,
       voice: request.voice || config.defaultVoice,
       format: request.format || config.defaultFormat,
       speed: request.speed ?? config.defaultSpeed,

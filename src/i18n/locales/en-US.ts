@@ -59,6 +59,7 @@ const enUS: typeof zhCN = {
   'sidebar.novels': 'Novel Engine',
   'sidebar.comics': 'Comic Studio',
   'sidebar.videos': 'Video Studio',
+  'sidebar.music': 'Music Studio',
   'sidebar.projects': 'Projects',
   'sidebar.settings': 'Settings',
   'sidebar.collapse': 'Collapse sidebar',

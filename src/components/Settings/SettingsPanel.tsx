@@ -224,17 +224,16 @@ const SettingsPanel: React.FC = () => {
             size="small"
             onClick={async () => {
               try {
-                const { getLogPath } = await import('@/services/log');
-                const p = await getLogPath();
-                if (!p) {
-                  messageApi.warning(t('settings.general.logOpenUnavailable'));
-                  return;
+                const { openLogDir, getLogPath } = await import('@/services/log');
+                const ok = await openLogDir();
+                if (!ok) {
+                  const p = await getLogPath();
+                  if (!p) {
+                    messageApi.warning(t('settings.general.logOpenUnavailable'));
+                  } else {
+                    messageApi.info(`日志存储路径: ${p}`);
+                  }
                 }
-                // 打开日志所在文件夹 (跨平台):用 shell open 打开目录路径
-                const { open } = await import('@tauri-apps/plugin-shell');
-                // 取目录:去掉最后的 app.log
-                const dir = p.replace(/[\\/][^\\/]+$/, '');
-                await open(dir);
               } catch (err) {
                 messageApi.error(`${t('settings.general.logOpenFailed')}: ${String(err)}`);
               }

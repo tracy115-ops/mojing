@@ -73,6 +73,37 @@ pub fn log_path(app: AppHandle) -> Result<String, String> {
     Ok(dir.join("app.log").to_string_lossy().to_string())
 }
 
+/// 在系统文件管理器中直接打开日志文件夹(绕过 tauri-plugin-shell 的 URL 校验规则)
+#[tauri::command]
+pub fn log_open_dir(app: AppHandle) -> Result<(), String> {
+    let dir = resolve_log_dir(&app)?;
+    if !dir.exists() {
+        let _ = fs::create_dir_all(&dir);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("open explorer failed: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("open finder failed: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("open xdg-open failed: {}", e))?;
+    }
+    Ok(())
+}
+
 fn resolve_log_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()

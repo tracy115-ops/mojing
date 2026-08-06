@@ -17,47 +17,65 @@ export class OpenAITTSProvider extends BaseTTSProvider {
 
   async generate(request: TTSRequest): Promise<TTSResponse> {
     const startTime = Date.now();
-    const model = request.model || 'tts-1';
+    const isOfficialOpenAI = this.endpoint.baseUrl.includes('api.openai.com');
     const voice = request.voice || 'alloy';
     const format = request.format || 'mp3';
     const speed = request.speed ?? 1.0;
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
-    // 兼容用户填 https://api.openai.com/v1 或 https://api.openai.com
     const url = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/audio/speech` : `${baseUrl}/v1/audio/speech`;
 
-    const response = await httpFetch(url, {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        model,
-        input: request.text,
-        voice,
-        response_format: format,
-        speed,
-      }),
-      signal: this.timeoutSignal(60_000),
-    });
+    // 备选模型重试序列
+    const defaultCandidates = isOfficialOpenAI
+      ? ['tts-1', 'tts-1-hd']
+      : ['FunAudioLLM/SenseVoiceSmall', 'cosyvoice-v1', 'tts-1', 'doubao-tts-v1', 'gpt-4o-audio-preview', 'FunAudioLLM/CosyVoice-300M'];
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+    const specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
+    
+    // 如果用户在设置里明确指定了模型，就不再 fallback 到其他模型，以避免报错信息具有误导性
+    const candidateModels = specifiedModel ? [specifiedModel] : defaultCandidates;
+
+    let lastError: Error | null = null;
+
+    for (const modelCandidate of candidateModels) {
+      const response = await httpFetch(url, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          model: modelCandidate,
+          input: request.text,
+          voice,
+          response_format: format,
+          speed,
+        }),
+        signal: this.timeoutSignal(60_000),
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        if (response.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
+          lastError = new Error(`OpenAI TTS API error 400 (模型 '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效 TTS 模型名(如 cosyvoice-v1 / tts-1)。`);
+          continue; // 尝试下一个候选模型
+        }
+        throw new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+      }
+
+      // Response is binary audio
+      const buffer = await response.arrayBuffer();
+      const base64 = arrayBufferToBase64(buffer);
+
+      return {
+        audioData: `data:audio/${format};base64,${base64}`,
+        format,
+        durationSeconds: estimateDuration(request.text),
+        model: modelCandidate,
+        voice,
+        provider: 'openai-tts',
+        latencyMs: Date.now() - startTime,
+      };
     }
 
-    // Response is binary audio
-    const buffer = await response.arrayBuffer();
-    const base64 = arrayBufferToBase64(buffer);
-
-    return {
-      audioData: `data:audio/${format};base64,${base64}`,
-      format,
-      // OpenAI TTS 不返回时长,粗略估算:mp3 24kbps ≈ 字符数 / 14
-      durationSeconds: estimateDuration(request.text),
-      model,
-      voice,
-      provider: 'openai-tts',
-      latencyMs: Date.now() - startTime,
-    };
+    throw lastError || new Error('OpenAI TTS API: 所有候选模型提交均被中转站服务器拒绝。');
   }
 }
 
