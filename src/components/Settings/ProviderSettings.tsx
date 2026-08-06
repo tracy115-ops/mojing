@@ -125,6 +125,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
   claude: ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+  siliconflow: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct', 'THUDM/glm-4-9b-chat'],
   qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
   doubao: ['doubao-1.5-pro', 'doubao-1.5-lite'],
   glm: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'],
@@ -134,7 +135,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   cogview: ['cogview-3-plus', 'cogview-3-flash'],
   wanx: ['wanx-v1', 'wanx-2.1-t2i-turbo', 'wanx-2.1-t2i-plus'],
   jimeng: ['doubao-seedream-3-0-t2i-250415', 'doubao-seedream-3-0-i2i-250415'],
-  'siliconflow-image': ['Kwai-Kolors/Kolors', 'black-forest-labs/FLUX.1-schnell', 'black-forest-labs/FLUX.1-dev'],
+  'siliconflow-image': ['black-forest-labs/FLUX.1-schnell', 'black-forest-labs/FLUX.1-dev', 'Kwai-Kolors/Kolors', 'stabilityai/stable-diffusion-3-5-large'],
   ideogram: ['V_3', 'V_2'],
   'agnes-image': ['agnes-image-2.1-flash', 'agnes-image-2.0-flash'],
   leonardo: ['b24a42c0-7a00-4cc4-9753-ca0962555099', '2067ae52-fafc-4a4c-9bbf-75c2b2cbb4c2'],
@@ -148,7 +149,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   'minimax-video': ['video-01', 'video-01-live'],
   cogvideo: ['cogvideox_5b', 'cogvideox_flash'],
   '302ai-video': ['sora-302', 'kling-302', 'runway-302', 'minimax-302'],
-  'siliconflow-video': ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-T2V-14B'],
+  'siliconflow-video': ['Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-14B', 'Wan-AI/Wan2.2-I2V-A14B'],
   'leonardo-video': ['leonardo-motion'],
   // TTS
   'openai-tts': ['tts-1', 'tts-1-hd', 'cosyvoice-v1', 'doubao-tts-v1', 'gpt-4o-audio-preview'],
@@ -158,7 +159,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   // Music
   'suno-music': ['suno-v3.5', 'suno-v4'],
   'udio-music': ['udio-v1.5'],
-  'siliconflow-music': ['FunAudioLLM/SenseVoiceSmall'],
+  'siliconflow-music': ['suno-v3.5', 'suno-v4'],
 };
 
 /** Return the suggestion list for the *primary* provider of a given category.
