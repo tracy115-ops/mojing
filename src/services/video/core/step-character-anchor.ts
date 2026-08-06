@@ -223,19 +223,16 @@ function buildTurnaroundPrompt(
 ): string {
   const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
   const parts = [
-    `solo, 1person, character model sheet and turnaround sheet of ${c.name}`,
-    `exclusive identity for ${c.name}: ${appearance}`,
-    `showing 3 distinct angle views side-by-side of ONLY ${c.name}:`,
-    `1. FRONT VIEW: full front face showing facial features, eye color, front hair and outfit of ${c.name}`,
-    `2. SIDE PROFILE VIEW: 90 degree side profile showing nose shape, side silhouette and hair of ${c.name}`,
-    `3. BACK VIEW: full back view showing hairstyle and outfit design from behind for ${c.name}`,
-    'all 3 views must maintain 100% identical face, body proportions, clothing and art style',
-    'neutral standing pose, plain solid white background, studio lighting',
-    'full body visible from head to toe in each view',
-    'character concept art design sheet',
+    `character turnaround sheet, model sheet, 3 full body views of ${c.name}`,
+    `front view, side profile view, back view, standing side-by-side`,
+    `character features: ${appearance}`,
+    'neutral standing pose, A-pose, full body visible from head to toe',
+    'simple plain solid light background, studio lighting',
+    'character design concept art',
     style ? `${style} style` : 'cinematic style',
-    '8k resolution, photorealistic, highly detailed',
-    'no text labels, no watermark, no signature, no extra people, no other characters',
+    'consistent facial features, consistent outfit across all 3 views',
+    'high quality, highly detailed, masterwork',
+    'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
   ].filter(Boolean);
   return parts.join(', ');
 }
