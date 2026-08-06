@@ -80,12 +80,16 @@ export class VideoPipeline {
     const videoProject = useVideoStore.getState().getProject(novelProjectId);
     if (!videoProject) return null;
 
-    // Direct 通道:无 novel project 元信息,跳过查找直接用 store 状态。
-    if (novelProjectId.startsWith('direct_')) {
+    // Direct 通道 / 纯视频项目: 无 novel 类型的项目元信息,直接用 videoStore 中的 spec/options 重建。
+    const novelProject = useProjectStore
+      .getState()
+      .projects.find((p) => p.id === novelProjectId);
+
+    if (!novelProject || novelProject.type === 'video' || novelProjectId.startsWith('direct_')) {
       return new VideoPipeline(
         {
           novelProjectId,
-          novelTitle: 'Direct',
+          novelTitle: novelProject?.title || 'Video',
           genre: '',
           style: '',
           chapters: [],
@@ -96,22 +100,17 @@ export class VideoPipeline {
       );
     }
 
-    const novelProject = useProjectStore
-      .getState()
-      .projects.find((p) => p.id === novelProjectId && p.type === 'novel');
-    if (!novelProject) return null;
-    const meta = novelProject.metadata as NovelMetadata;
-
-    const chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = videoProject.selectedChapterIds
-      .map((cid) => meta.chapters.find((c) => c.id === cid))
+    const meta = novelProject.metadata as NovelMetadata | undefined;
+    const chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = (videoProject.selectedChapterIds ?? [])
+      .map((cid) => meta?.chapters?.find((c) => c.id === cid))
       .filter((c): c is NovelChapter => !!c);
 
     return new VideoPipeline(
       {
         novelProjectId,
         novelTitle: novelProject.title,
-        genre: meta.genre,
-        style: meta.style,
+        genre: meta?.genre || '',
+        style: meta?.style || '',
         chapters,
         spec: videoProject.spec,
         options: videoProject.options,
