@@ -436,7 +436,7 @@ const zhCN: Record<string, string> = {
   'video.artifacts.mergedClips': '合并片段',
   'video.artifacts.finalVideo': '最终成片',
   'video.artifacts.turnaround': '三视图',
-  'video.artifacts.turnaroundHint': '三视图作为角色设计参考传入关键帧生成,单图立绘同时作为正面锚定。',
+  'video.artifacts.turnaroundHint': '💡 三视图 (Turnaround Sheet)：将角色的正面、侧面、背面 3 个视角并排绘制在同一张长图中。这是 AI 角色设计的标准做法，旨在保证三个视角下角色的脸型、发型和服饰 100% 保持一致，并在后续生成镜头画面时提供全方位视角参考。',
   'video.artifacts.portraitTab': '单图立绘',
   'video.artifacts.turnaroundTab': '三视图',
   'video.artifacts.noTurnaround': '尚未生成三视图',

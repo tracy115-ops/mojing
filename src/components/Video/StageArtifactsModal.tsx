@@ -330,10 +330,18 @@ export function renderStageContent(
                   key: 'turnaround',
                   label: t('video.artifacts.turnaroundTab'),
                   children: (
-                    <ImageGrid
-                      items={turnaroundItems}
-                      emptyText={t('video.artifacts.noTurnaround')}
-                    />
+                    <>
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 12 }}
+                        message={t('video.artifacts.turnaroundHint')}
+                      />
+                      <ImageGrid
+                        items={turnaroundItems}
+                        emptyText={t('video.artifacts.noTurnaround')}
+                      />
+                    </>
                   ),
                 },
               ]}
@@ -344,13 +352,6 @@ export function renderStageContent(
               items={portraitItems}
               emptyText={t('video.artifacts.noPortraits')}
             />
-          )}
-          {hasTurnaround && (
-            <div style={{ marginTop: 8 }}>
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {t('video.artifacts.turnaroundHint')}
-              </Text>
-            </div>
           )}
         </Section>
       );
