@@ -122,7 +122,7 @@ async function generateOne(
   if (enableI2V && refSource) {
     const dataUri = await readAsDataUri(refSource);
     if (dataUri) {
-      referenceImages = [dataUri];
+      referenceImages.push(dataUri);
     }
   }
 
@@ -183,20 +183,25 @@ export function tierToDefaultModel(_tier: VideoSpec['videoTier']): string {
 function buildEnhancedVideoPrompt(shot: ShotSpec): string {
   const basePrompt = shot.videoPrompt.trim();
   const camera = shot.cameraMovement
-    ? `${shot.cameraMovement} camera movement, cinematic tracking shot`
-    : 'cinematic slow panning camera movement, 35mm lens depth of field';
+    ? `${shot.cameraMovement} camera movement, cinematic camera control`
+    : 'subtle natural camera motion, shallow depth of field';
 
-  const mood = shot.mood ? `${shot.mood} lighting and mood` : 'dramatic cinematic lighting';
+  const mood = shot.mood ? `${shot.mood} lighting and atmosphere` : 'dramatic cinematic lighting';
+
+  // 连贯性动效补全：如果是后续镜头，指导 AI 保持与前景相同的色彩与光影过渡
+  const continuityCue = shot.index > 0
+    ? 'seamless motion continuation, consistent lighting and character appearance from previous scene'
+    : '';
 
   // 商业级超画质黑科技拼装（让免费/通用 API 也能渲染出极具光影拉满、物理连贯的电影画面）
   const commercialEnhancers = [
     'shot on 35mm ARRI Alexa LF',
     'masterpiece photorealistic 8k UHD',
     'volumetric lighting, raytracing ambient occlusion',
-    'smooth 60fps fluid physical motion, natural movement',
+    'smooth fluid physical motion, natural realistic movement',
     'ultra-detailed textures, crisp focus',
     'no artifact, no face distortion, no flickering, no noise',
   ].join(', ');
 
-  return [basePrompt, camera, mood, commercialEnhancers].filter(Boolean).join(', ');
+  return [basePrompt, camera, mood, continuityCue, commercialEnhancers].filter(Boolean).join(', ');
 }
