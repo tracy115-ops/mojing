@@ -22,11 +22,8 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     const format = request.format || 'mp3';
     const speed = request.speed ?? 1.0;
 
-    let voice = request.voice || 'alloy';
-    // 硅基流动要求特定的预设音色(如 alex, anna, benjamin, bella),如果传入 OpenAI 默认音色 alloy 等,自动映射为 alex
-    if (isSiliconFlow && (!voice || ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].includes(voice.toLowerCase()))) {
-      voice = 'alex';
-    }
+    let voice = request.voice || 'alex';
+    const SILICONFLOW_PRESETS = ['alex', 'anna', 'bella', 'benjamin', 'charles', 'claire', 'david', 'diana'];
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     const url = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/audio/speech` : `${baseUrl}/v1/audio/speech`;
@@ -53,13 +50,21 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     let lastError: Error | null = null;
 
     for (const modelCandidate of candidateModels) {
-      const response = await httpFetch(url, {
+      const isCosyOrFish = modelCandidate.includes('CosyVoice') || modelCandidate.includes('fishaudio') || modelCandidate.includes('cosyvoice');
+      // 如果使用硅基流动/CosyVoice/第三方中转站且音色不是硅基流动官方预设音色(如 alloy 或自定义角色名)，强行映射为有效预设音色 alex/anna
+      let effectiveVoice = voice;
+      if ((isSiliconFlow || isCosyOrFish || !isOfficialOpenAI) && !SILICONFLOW_PRESETS.includes(effectiveVoice.toLowerCase())) {
+        const isFemale = /女|female|anna|bella|claire|diana|妹|娘/i.test(effectiveVoice);
+        effectiveVoice = isFemale ? 'anna' : 'alex';
+      }
+
+      let response = await httpFetch(url, {
         method: 'POST',
         headers: this.getHeaders(),
         body: JSON.stringify({
           model: modelCandidate,
           input: request.text,
-          voice,
+          voice: effectiveVoice,
           response_format: format,
           speed,
         }),
@@ -67,12 +72,36 @@ export class OpenAITTSProvider extends BaseTTSProvider {
       });
 
       if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        if (response.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
-          lastError = new Error(`OpenAI TTS API error 400 (模型 '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效 TTS 模型名(如 cosyvoice-v1 / tts-1)。`);
-          continue; // 尝试下一个候选模型
+        let text = await response.text().catch(() => '');
+        
+        // 捕获 20047 Invalid voice 错误:如果因为音色不合规被拒绝，自动切换为 alex 重试一次
+        if (response.status === 400 && (text.includes('20047') || text.toLowerCase().includes('invalid voice'))) {
+          logger.warn(`OpenAITTSProvider: Invalid voice '${effectiveVoice}' for model '${modelCandidate}', retrying with 'alex'`);
+          effectiveVoice = 'alex';
+          response = await httpFetch(url, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+              model: modelCandidate,
+              input: request.text,
+              voice: effectiveVoice,
+              response_format: format,
+              speed,
+            }),
+            signal: this.timeoutSignal(60_000),
+          });
+          if (!response.ok) {
+            text = await response.text().catch(() => '');
+          }
         }
-        throw new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+
+        if (!response.ok) {
+          if (response.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
+            lastError = new Error(`OpenAI TTS API error 400 (模型 '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效 TTS 模型名(如 cosyvoice-v1 / tts-1)。`);
+            continue; // 尝试下一个候选模型
+          }
+          throw new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+        }
       }
 
       // Response is binary audio

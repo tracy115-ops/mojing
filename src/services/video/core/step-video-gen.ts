@@ -127,18 +127,40 @@ async function generateOne(
   }
 
   const enhancedPrompt = buildEnhancedVideoPrompt(shot);
+  const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
 
-  const response = await providerRouter.generateVideo({
-    taskType: 'clip',
-    prompt: enhancedPrompt,
-    model: options.model ?? tierToDefaultModel(options.spec.videoTier),
-    endpointId: options.endpointId,
-    width: w,
-    height: h,
-    durationSeconds: shot.durationSeconds,
-    fps: options.spec.fps,
-    referenceImages,
-  });
+  let response;
+  try {
+    response = await providerRouter.generateVideo({
+      taskType: 'clip',
+      prompt: enhancedPrompt,
+      model: targetModel,
+      endpointId: options.endpointId,
+      width: w,
+      height: h,
+      durationSeconds: shot.durationSeconds,
+      fps: options.spec.fps,
+      referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+    });
+  } catch (err) {
+    // 如果 I2V 模式报错(中转站不支持参考图/参考图过大/模型拒绝 I2V),自动平滑回退到 T2V 模式重试
+    if (enableI2V && referenceImages.length > 0) {
+      console.warn(`video_gen: I2V failed for shot ${shot.id}, falling back to T2V`, err);
+      response = await providerRouter.generateVideo({
+        taskType: 'clip',
+        prompt: enhancedPrompt,
+        model: targetModel,
+        endpointId: options.endpointId,
+        width: w,
+        height: h,
+        durationSeconds: shot.durationSeconds,
+        fps: options.spec.fps,
+        referenceImages: undefined,
+      });
+    } else {
+      throw err;
+    }
+  }
 
   // 落盘:把 http URL / data URI 转成稳定的本地文件路径(Novel 模式下)。
   // Direct 模式不落盘(novelProjectId 没传)。
