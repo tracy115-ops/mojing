@@ -9,7 +9,6 @@ import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal from './CreateVideoModal';
 import VideoGeneratorModal from './VideoGeneratorModal';
 import DirectVideoModal from './DirectVideoModal';
-import DirectTaskList from './DirectTaskList';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 
@@ -110,20 +109,15 @@ const VideoView: React.FC = () => {
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <div style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <ProjectList
-            projects={videoProjects}
-            type="video"
-            activeId={activeProjectId}
-            onSelect={handleSelectProject}
-            onDelete={handleDeleteProject}
-            onToggleFavorite={toggleFavorite}
-            onCreate={() => setCreateOpen(true)}
-          />
-        </div>
-        {/* Direct 任务列表:跟 Novel 项目并列,但来自 videoStore(不在 projectStore)。
-            点任一项 = 切 activePipelineId → VideoPipelinePanel 切到对应执行过程。 */}
-        <DirectTaskList />
+        <ProjectList
+          projects={videoProjects}
+          type="video"
+          activeId={activeProjectId}
+          onSelect={handleSelectProject}
+          onDelete={handleDeleteProject}
+          onToggleFavorite={toggleFavorite}
+          onCreate={() => setCreateOpen(true)}
+        />
       </div>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* Top toolbar — two entries */}
