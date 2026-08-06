@@ -115,18 +115,89 @@ const VideoView: React.FC = () => {
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: 16,
-              padding: 24,
+              gap: 20,
+              padding: 32,
               textAlign: 'center',
+              overflowY: 'auto',
             }}>
-              <VideoCameraOutlined style={{ fontSize: 64, color: 'var(--text-tertiary, rgba(0,0,0,0.25))' }} />
-              <Title level={4} style={{ margin: 0, color: 'var(--text-primary, inherit)' }}>
-                {t('video.empty.title')}
-              </Title>
-              <Text type="secondary" style={{ maxWidth: 480 }}>
-                {t('video.empty.hint')}
-              </Text>
-              <div style={{ display: 'flex', gap: 12 }}>
+              <VideoCameraOutlined style={{ fontSize: 56, color: 'var(--accent-primary, #3b82f6)' }} />
+              <div>
+                <Title level={4} style={{ margin: '0 0 6px 0', color: 'var(--text-primary, inherit)' }}>
+                  {t('video.empty.title')}
+                </Title>
+                <Text type="secondary" style={{ maxWidth: 520, fontSize: 13, display: 'inline-block' }}>
+                  {t('video.empty.hint')}
+                </Text>
+              </div>
+
+              {/* 灵感快捷启动卡片 */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 16,
+                maxWidth: 780,
+                width: '100%',
+                marginTop: 8,
+              }}>
+                <div
+                  onClick={() => setDirectOpen(true)}
+                  style={{
+                    padding: 16,
+                    border: '1px solid var(--border-secondary)',
+                    borderRadius: 8,
+                    background: 'var(--bg-container)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
+                >
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>⚡</div>
+                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>一键灵感生视频</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>输入单条 Prompt 立即文本/图生成短视频片段</Text>
+                </div>
+
+                <div
+                  onClick={() => setDirectOpen(true)}
+                  style={{
+                    padding: 16,
+                    border: '1px solid var(--border-secondary)',
+                    borderRadius: 8,
+                    background: 'var(--bg-container)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
+                >
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>🎭</div>
+                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>角色一致性短剧</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>提取形象立绘与场景背景图，跨镜头脸部统一</Text>
+                </div>
+
+                <div
+                  onClick={() => setGenOpen(true)}
+                  style={{
+                    padding: 16,
+                    border: '1px solid var(--border-secondary)',
+                    borderRadius: 8,
+                    background: 'var(--bg-container)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
+                >
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>📜</div>
+                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>小说/脚本改编</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>选择已有小说章节，14步智能编排完整短片</Text>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
                 <Button
                   type="primary"
                   size="large"

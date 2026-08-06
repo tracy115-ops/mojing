@@ -853,6 +853,189 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
   }
 }
 
+// --- Leonardo Motion (图生视频) ---
+// 文档: https://docs.leonardo.ai/ (Leonardo Motion)
+// POST {baseUrl}/rest/v1/video-generations  (baseUrl 通常为 https://api.leonardo.ai/v1)
+// 鉴权: Bearer apiKey
+// 异步任务: 返回 id / videoGenerationId,轮询 GET /rest/v1/video-generations/{id}
+// 完成态返回视频 URL (临时有效,需及时下载)。
+//
+// Leonardo Motion 本质是图生视频 (I2V):必须传一张源图片。
+// 项目视频流水线 step-video-gen 总是带关键帧,正常路径走 I2V;
+// 若调用方没给 referenceImages,抛清晰错误,避免后端报含糊的 400。
+//
+// 字段名基于训练数据,接入后建议用真实 key 跑一次校对。
+// 结果字段做多名兼容 (参考 AgnesVideoProvider)。
+
+export class LeonardoVideoProvider extends BaseVideoProvider {
+  readonly providerId = 'leonardo-video';
+
+  /** 记住提交拿到的查询 id,checkStatus 外部单独调用时也能用 */
+  private lastQueryId: string = '';
+  /** 记住用户请求的时长,完成态回算 (Leonardo 不一定回传 duration) */
+  private requestedDurationSeconds: number | undefined;
+
+  async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
+    const startTime = Date.now();
+    this.requestedDurationSeconds = request.durationSeconds;
+
+    if (!request.referenceImages?.length) {
+      throw new Error(
+        'Leonardo Motion 需要一张源图片(图生视频),请在视频设置里保留 I2V,或换用支持文生视频的 provider。',
+      );
+    }
+
+    const model = request.model || 'leonardo-motion';
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // 兼容用户填 https://api.leonardo.ai/v1 或不带版本
+    const base = /\/v\d+$/.test(baseUrl) ? baseUrl.replace(/\/v\d+$/, '/v1') : `${baseUrl}/v1`;
+
+    // Leonardo Motion 接受 image 为公网 URL 或 data URI;本地 webview URL 后端拉不到,
+    // 这里只做透传 + 基本校验 (data: / https:),其余交给后端报错或上层转 data URI。
+    const image = request.referenceImages[0];
+    if (!/^(https?:|data:)/i.test(image)) {
+      throw new Error(
+        'Leonardo Motion: 源图必须是公网 URL 或 data URI,本地文件 URL 后端无法读取。请换用支持 URL 引用的 provider,或先把关键帧转成 data URI。',
+      );
+    }
+
+    const body: Record<string, unknown> = {
+      prompt: request.prompt,
+      modelId: model,
+      image,
+    };
+    if (request.negativePrompt) {
+      body.negative_prompt = request.negativePrompt;
+    }
+    if (request.durationSeconds) {
+      // Leonardo Motion 通常只支持 4-5s 档位,这里传秒数让它自行取整
+      body.duration = request.durationSeconds;
+    }
+
+    const submitResp = await httpFetch(`${base}/rest/v1/video-generations`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(300_000),
+    });
+
+    if (!submitResp.ok) {
+      const text = await submitResp.text().catch(() => '');
+      throw new Error(`Leonardo Motion submit error ${submitResp.status}: ${text.slice(0, 500)}`);
+    }
+
+    const submitData = await submitResp.json();
+    const taskId =
+      submitData.id ??
+      submitData.videoGenerationId ??
+      submitData.video_generation_id ??
+      submitData.data?.id;
+    if (!taskId) {
+      throw new Error(`Leonardo Motion: no task id returned (got ${JSON.stringify(submitData).slice(0, 200)})`);
+    }
+    this.lastQueryId = taskId;
+
+    return this.pollUntilComplete(taskId, startTime);
+  }
+
+  async checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }> {
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    const base = /\/v\d+$/.test(baseUrl) ? baseUrl.replace(/\/v\d+$/, '/v1') : `${baseUrl}/v1`;
+    const id = taskId || this.lastQueryId;
+
+    const resp = await httpFetch(`${base}/rest/v1/video-generations/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      headers: this.getHeaders(),
+      // tauri-plugin-http 在 AbortSignal 到期抛 "Request canceled",代理转发可能慢,给 90s
+      signal: this.timeoutSignal(90_000),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Leonardo Motion status error ${resp.status}: ${text.slice(0, 500)}`);
+    }
+
+    const data = await resp.json();
+    const state = String(data.status ?? data.state ?? '').toLowerCase();
+
+    if (state === 'complete' || state === 'completed' || state === 'succeeded' || state === 'success') {
+      // 结果字段多名兼容
+      const videoUrl =
+        data.url ??
+        data.video_url ??
+        data.output?.video_url ??
+        data.output?.url ??
+        data.data?.video_url ??
+        data.video?.url ??
+        '';
+      const duration =
+        typeof data.duration === 'number' ? data.duration :
+        typeof data.length === 'number' ? data.length :
+        (this.requestedDurationSeconds ?? 5);
+      return {
+        status: 'completed',
+        progress: 1,
+        result: {
+          videoData: videoUrl,
+          width: 1920,
+          height: 1080,
+          durationSeconds: duration,
+          model: 'leonardo-motion',
+          provider: 'leonardo-video',
+          latencyMs: 0,
+        },
+      };
+    }
+
+    if (state === 'failed' || state === 'error') {
+      const reason =
+        (typeof data.error === 'string' && data.error) ||
+        data.error?.message ||
+        data.failure_reason ||
+        data.data?.error?.message ||
+        JSON.stringify(data).slice(0, 300);
+      return { status: 'failed', progress: 0, failReason: reason };
+    }
+
+    // pending / processing / running
+    return { status: 'processing', progress: typeof data.progress === 'number' ? data.progress : 0.3 };
+  }
+
+  private async pollUntilComplete(taskId: string, startTime: number): Promise<VideoGenerateResponse> {
+    const maxPolls = 120; // 10 分钟 (5s × 120)
+    const maxConsecutiveErrors = 3;
+    let consecutiveErrors = 0;
+    let lastPollError: Error | null = null;
+
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const status = await this.checkStatus(taskId);
+        consecutiveErrors = 0;
+        if (status.status === 'completed' && status.result) {
+          return { ...status.result, latencyMs: Date.now() - startTime };
+        }
+        if (status.status === 'failed') {
+          throw new Error(`Leonardo Motion generation failed: ${status.failReason ?? '(provider 未给出原因)'}`);
+        }
+      } catch (err) {
+        // "generation failed" 是明确的失败状态,直接冒泡
+        if (err instanceof Error && err.message.includes('Leonardo Motion generation failed')) {
+          throw err;
+        }
+        consecutiveErrors++;
+        lastPollError = err instanceof Error ? err : new Error(String(err));
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          throw new Error(
+            `Leonardo Motion polling failed after ${consecutiveErrors} consecutive errors: ${lastPollError.message}`,
+          );
+        }
+      }
+    }
+    throw new Error('Leonardo Motion generation timed out (10 min)');
+  }
+}
+
 // --- Factory ---
 
 export function createVideoProvider(
@@ -870,6 +1053,8 @@ export function createVideoProvider(
       return new AgnesVideoProvider(endpoint);
     case 'doubao-video':
       return new DoubaoVideoProvider(endpoint);
+    case 'leonardo-video':
+      return new LeonardoVideoProvider(endpoint);
     default:
       // Default to Kling-compatible API
       return new KlingVideoProvider(endpoint);

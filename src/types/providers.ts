@@ -23,8 +23,10 @@ export type ImageProviderId =
   | 'cogview'
   | 'wanx'
   | 'jimeng'
+  | 'siliconflow-image'
   | 'ideogram'
   | 'agnes-image'
+  | 'leonardo'
   | 'custom';
 
 export type VideoProviderId =
@@ -35,12 +37,18 @@ export type VideoProviderId =
   | 'pika'
   | 'agnes-video'
   | 'doubao-video'
+  | 'minimax-video'
+  | 'cogvideo'
+  | '302ai-video'
+  | 'siliconflow-video'
+  | 'leonardo-video'
   | 'custom';
 
 export type TTSProviderId =
-  | 'openai-tts'    // OpenAI TTS API (tts-1 / tts-1-hd)
-  | 'doubao-tts'    // 字节豆包 TTS
-  | 'edge-tts'      // Microsoft Edge TTS (免费)
+  | 'openai-tts'        // OpenAI TTS API (tts-1 / tts-1-hd)
+  | 'doubao-tts'        // 字节豆包配音 (火山语音)
+  | 'siliconflow-tts'   // 硅基流动 CosyVoice
+  | 'edge-tts'          // Microsoft Edge TTS (免费)
   | 'custom';
 
 // --- API Endpoint Config ---

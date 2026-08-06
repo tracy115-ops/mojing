@@ -202,3 +202,39 @@ function aspectRatioToDims(ratio: AspectRatio): { w: number; h: number } {
       return { w: 1024, h: 576 };
   }
 }
+
+/**
+ * 单图独立重绘：针对漫画项目的特定单格 Panel 重新跑 Image 渲染 API 并存盘更新。
+ */
+export async function rerunSingleComicPanel(
+  projectId: string,
+  panelId: string,
+): Promise<ComicPanelSpec | null> {
+  const { useComicStore } = await import('@/stores/comicStore');
+  const store = useComicStore.getState();
+  const proj = store.projects[projectId];
+  if (!proj || !proj.spec) return null;
+
+  const panel = proj.spec.panels.find((p) => p.id === panelId);
+  if (!panel) return null;
+
+  const dims = aspectRatioToDims(proj.aspectRatio);
+  const charById = new Map((proj.spec.characters ?? []).map((c) => [c.id, c]));
+
+  const ctx: PanelImageContext = {
+    characters: proj.spec.characters ?? [],
+    aspectRatio: proj.aspectRatio,
+    style: proj.style,
+    novelProjectId: projectId,
+  };
+
+  try {
+    const updated = await generatePanel(panel, ctx, charById, dims);
+    store.upsertPanel(projectId, updated);
+    return updated;
+  } catch (err) {
+    void logger.warn(`[comic] rerunSingleComicPanel failed panelId=${panelId}: ${String(err)}`, 'comic');
+    return null;
+  }
+}
+

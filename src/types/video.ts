@@ -17,6 +17,61 @@ import type { VideoProviderId, ImageProviderId } from './providers';
 
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 
+// --- Visual Style & Quality Presets ---
+
+export interface StylePreset {
+  id: string;
+  name: string;
+  description: string;
+  promptPrefix: string;
+  promptSuffix: string;
+  negativePrompt: string;
+}
+
+export const VISUAL_STYLE_PRESETS: StylePreset[] = [
+  {
+    id: 'cinematic',
+    name: '电影大片 (Cinematic)',
+    description: '真实质感，电影级景深，专业构图与光影',
+    promptPrefix: 'Cinematic film shot, 8k resolution, photorealistic, highly detailed, masterwork, ',
+    promptSuffix: ', dynamic lighting, shallow depth of field, 35mm lens, volumetric light, shot on ARRI Alexa',
+    negativePrompt: 'blurry, noisy, low quality, distorted, cartoon, anime, rendered, 3d, extra limbs, bad anatomy',
+  },
+  {
+    id: 'anime',
+    name: '日漫风 (Anime Shinkai Style)',
+    description: '新海诚唯美日漫，明亮天空，色彩鲜艳，情感细腻',
+    promptPrefix: 'Makoto Shinkai style anime, vibrant colors, beautiful detailed background, high quality anime art, ',
+    promptSuffix: ', emotional atmosphere, lens flare, clouds in blue sky, studio ghibli inspired',
+    negativePrompt: 'photorealistic, 3d render, live action, realistic skin, ugly, deformed, blurry',
+  },
+  {
+    id: 'cyberpunk',
+    name: '赛博朋克 (Cyberpunk Neon)',
+    description: '霓虹灯影，高科技低生活，雨夜街景，金属质感',
+    promptPrefix: 'Cyberpunk style, neon glow, futuristic city, rainy night, wet reflection, ',
+    promptSuffix: ', cyan and magenta color palette, highly detailed, octane render, unreal engine 5',
+    negativePrompt: 'daylight, rural, countryside, historical, traditional, lowres, poorly drawn',
+  },
+  {
+    id: 'ink_wash',
+    name: '国风水墨 (Chinese Ink Wash)',
+    description: '东方韵味，水墨留白，意境悠远，仙侠古风',
+    promptPrefix: 'Traditional Chinese ink wash painting, elegant brush strokes, ethereal atmosphere, ',
+    promptSuffix: ', artistic composition, mist and mountains, oriental aesthetics, masterpiece',
+    negativePrompt: 'western, modern, neon, saturated digital art, photorealistic, 3d render',
+  },
+  {
+    id: 'vintage',
+    name: '胶片复古 (Vintage 80s Film)',
+    description: '80年代复古胶片感，暖色调，复古颗粒，怀旧氛围',
+    promptPrefix: '1980s vintage film grain, retro aesthetics, warm color grading, nostalgic, ',
+    promptSuffix: ', kodak portra 400, muted colors, soft focus, film photography',
+    negativePrompt: 'digital, ultra crisp, modern, neon, futuristic, overly saturated',
+  },
+];
+
+
 // --- Source Mode ---
 
 /** Direct modal 的三种模式 */
@@ -36,7 +91,8 @@ export type VideoStage =
   | 'keyframe_image'        // 步 9:镜头关键帧(新)
   | 'video_generation'      // 步 10:T2V / I2V
   | 'audio_merge'           // 步 11:音视合并(新)
-  | 'composing'             // 步 12-14:FFmpeg 拼接 + 字幕 + 导出
+  | 'composing'             // 步 12:FFmpeg 拼接 + 字幕 + 导出
+  | 'video_review'          // 步 13:AI 质检与画质评测
   | 'complete'
   | 'error';
 
@@ -191,10 +247,31 @@ export interface ShotSpec {
   location?: string;
   mood?: string;
   cameraMovement?: string;
-  durationSeconds: 3 | 5 | 10 | 18;
+  durationSeconds: 3 | 5 | 10 | 15 | 18;
   /** 步 8 产物:TTS 音频路径/URL */
   audioTrack?: string;
 }
+
+export type CameraMovementOption =
+  | 'static'
+  | 'zoom_in'
+  | 'zoom_out'
+  | 'pan_left'
+  | 'pan_right'
+  | 'orbit'
+  | 'crane_up'
+  | 'tracking';
+
+export const CAMERA_MOVEMENTS: { value: CameraMovementOption; label: string; prompt: string }[] = [
+  { value: 'static', label: '📷 静止镜头 (Static Shot)', prompt: 'static camera, locked-off shot' },
+  { value: 'zoom_in', label: '🔍 缓慢推进 (Dolly/Zoom In)', prompt: 'slow camera zoom in, pushing in close' },
+  { value: 'zoom_out', label: '🔍 缓慢拉远 (Zoom Out)', prompt: 'camera zooming out, revealing environment' },
+  { value: 'pan_left', label: '⬅️ 左摇镜头 (Pan Left)', prompt: 'smooth camera panning left' },
+  { value: 'pan_right', label: '➡️ 右摇镜头 (Pan Right)', prompt: 'smooth camera panning right' },
+  { value: 'orbit', label: '🔄 360° 环绕 (Orbit Shot)', prompt: 'cinematic 360 degree orbit shot around character' },
+  { value: 'crane_up', label: '⬆️ 摇臂升起 (Crane Up)', prompt: 'crane shot rising up slowly, high angle view' },
+  { value: 'tracking', label: '🏃 跟随镜头 (Tracking Shot)', prompt: 'dynamic tracking shot following the motion' },
+];
 
 /**
  * 跨通道共享的剧本表示。不管来源是小说章节还是手写 prompt,
@@ -210,7 +287,7 @@ export interface SceneSpec {
     style?: string;
     genre?: string;
     aspectRatio: AspectRatio;
-    defaultShotDuration: 3 | 5 | 10 | 18;
+    defaultShotDuration: 3 | 5 | 10 | 15 | 18;
     /** 来源模式(Novel 通道填 'multishot' 语义;Direct 按用户选择) */
     sourceMode: DirectSourceMode;
     /** 'novel' | 'direct' */
@@ -290,6 +367,7 @@ export interface StoryboardShot {
     emotion?: string;
   }[];
   characters: string[];
+  characterIds?: string[];
   location?: string;
   mood?: string;
   cameraMovement?: string;

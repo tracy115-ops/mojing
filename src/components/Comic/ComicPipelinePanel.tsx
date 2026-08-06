@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Button, Card, Empty, Tag, Typography, Progress, message, Tooltip, Space } from 'antd';
+import { Button, Card, Empty, Tag, Typography, Progress, message, Tooltip, Space, Input } from 'antd';
 import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useComicStore } from '@/stores/comicStore';
@@ -429,7 +429,7 @@ const StageArtifacts: React.FC<StageArtifactsProps> = ({ stage, project }) => {
           }}
         >
           {panels.map((panel) => (
-            <PanelCard key={panel.id} panel={panel} />
+            <PanelCard key={panel.id} projectId={project.id} panel={panel} />
           ))}
         </div>
       )}
@@ -440,11 +440,40 @@ const StageArtifacts: React.FC<StageArtifactsProps> = ({ stage, project }) => {
 // --- 单个分镜卡 ---
 
 interface PanelCardProps {
+  projectId: string;
   panel: import('@/types/comic').ComicPanelSpec;
 }
 
-const PanelCard: React.FC<PanelCardProps> = ({ panel }) => {
+const PanelCard: React.FC<PanelCardProps> = ({ projectId, panel }) => {
   const { t } = useTranslation();
+  const updatePanelSpec = useComicStore((s) => s.updatePanelSpec);
+  const [rerunning, setRerunning] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [promptText, setPromptText] = useState(panel.promptOverride || panel.description);
+
+  const handleRerun = async () => {
+    setRerunning(true);
+    try {
+      const { rerunSingleComicPanel } = await import('@/services/comic/core/step-panel-image');
+      const res = await rerunSingleComicPanel(projectId, panel.id);
+      if (res) {
+        message.success(t('common.success'));
+      } else {
+        message.error(t('common.error'));
+      }
+    } catch (err) {
+      message.error(String(err));
+    } finally {
+      setRerunning(false);
+    }
+  };
+
+  const handleSavePrompt = () => {
+    updatePanelSpec(projectId, panel.id, { promptOverride: promptText.trim() });
+    setEditing(false);
+    message.success(t('common.saved'));
+  };
+
   return (
     <Card
       size="small"
@@ -472,19 +501,51 @@ const PanelCard: React.FC<PanelCardProps> = ({ panel }) => {
         )
       }
     >
-      <Text strong style={{ fontSize: 12 }}>
-        #{panel.index + 1}
-      </Text>{' '}
-      <Text type="secondary" style={{ fontSize: 11 }}>
-        {panel.shotType}
-      </Text>
-      {panel.dialogue && (
-        <Paragraph
-          style={{ marginTop: 4, marginBottom: 0, fontSize: 12, color: 'var(--text-secondary)' }}
-          ellipsis={{ rows: 2 }}
-        >
-          「{panel.dialogue}」
-        </Paragraph>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <Text strong style={{ fontSize: 12 }}>
+            #{panel.index + 1}
+          </Text>{' '}
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {panel.shotType}
+          </Text>
+        </div>
+        <Space size={4}>
+          <Tooltip title="微调 Prompt">
+            <Button size="small" type="text" onClick={() => setEditing(true)}>
+              ✏️
+            </Button>
+          </Tooltip>
+          <Tooltip title="重新生成此格">
+            <Button size="small" type="text" loading={rerunning} onClick={handleRerun}>
+              🔄
+            </Button>
+          </Tooltip>
+        </Space>
+      </div>
+
+      {editing ? (
+        <div style={{ marginTop: 6 }}>
+          <Input.TextArea
+            rows={2}
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            style={{ fontSize: 11, marginBottom: 4 }}
+          />
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+            <Button size="small" type="primary" onClick={handleSavePrompt}>{t('common.save')}</Button>
+            <Button size="small" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+          </div>
+        </div>
+      ) : (
+        panel.dialogue && (
+          <Paragraph
+            style={{ marginTop: 4, marginBottom: 0, fontSize: 12, color: 'var(--text-secondary)' }}
+            ellipsis={{ rows: 2 }}
+          >
+            「{panel.dialogue}」
+          </Paragraph>
+        )
       )}
     </Card>
   );

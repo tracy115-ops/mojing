@@ -115,14 +115,15 @@ async function generateOne(
   enableI2V: boolean,
 ): Promise<GeneratedClip> {
   const [w, h] = parseResolution(options.spec.resolution);
-  const useI2V = enableI2V && !!shot.keyframeImage;
-
   // Agnes / 部分其他 provider 的 image 字段要 base64,不接受 URL。
   // asset-store 落盘后 keyframe 可能是 webview URL,这里读盘转回 data URI。
   let referenceImages: string[] = [];
-  if (useI2V && shot.keyframeImage) {
-    const dataUri = await readAsDataUri(shot.keyframeImage);
-    referenceImages = [dataUri];
+  const refSource = shot.keyframeImage;
+  if (enableI2V && refSource) {
+    const dataUri = await readAsDataUri(refSource);
+    if (dataUri) {
+      referenceImages = [dataUri];
+    }
   }
 
   const response = await providerRouter.generateVideo({

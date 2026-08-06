@@ -9,7 +9,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Typography, Tag, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu,
-  Alert, Popconfirm, Tooltip, Steps,
+  Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal,
 } from 'antd';
 import {
   VideoCameraOutlined, PlayCircleOutlined,
@@ -27,7 +27,6 @@ import ExportVideoModal from './ExportVideoModal';
 import { VideoPipeline } from '@/services/video/pipeline';
 import { logger } from '@/services/log';
 import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
-import { message } from 'antd';
 
 const { Text, Title } = Typography;
 
@@ -43,19 +42,126 @@ function getShotStatus(
 }
 
 const ShotRow: React.FC<{
+  pid: string;
   shot: StoryboardShot;
   status: 'pending' | 'running' | 'done' | 'error';
-}> = ({ shot, status }) => {
+}> = ({ pid, shot, status }) => {
   const { t } = useTranslation();
+  const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
+  const [editing, setEditing] = useState(false);
+  const [promptText, setPromptText] = useState(shot.videoPrompt || shot.sourceText);
+  const [rerunning, setRerunning] = useState(false);
+
+  const handleSavePrompt = () => {
+    updateSceneSpecShot(pid, shot.id, { videoPrompt: promptText.trim() });
+    setEditing(false);
+    message.success(t('common.saved'));
+  };
+
+  const handleRerun = async () => {
+    setRerunning(true);
+    try {
+      const { rerunSingleShot } = await import('@/services/video/core/pipeline-runner');
+      const res = await rerunSingleShot(pid, shot.id);
+      if (res) {
+        message.success(t('video.pipeline.rerunDone'));
+      } else {
+        message.error(t('video.pipeline.rerunFailed'));
+      }
+    } catch (err) {
+      message.error(String(err));
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   return (
     <Card size="small" style={{ marginBottom: 6 }} bodyStyle={{ padding: '8px 12px' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : 'default'}>
+        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : status === 'error' ? 'error' : 'default'}>
           {t('video.gen.shot')} {shot.index + 1}
         </Tag>
-        <Text style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
-          {shot.videoPrompt || shot.sourceText.slice(0, 100)}
-        </Text>
+
+        {editing ? (
+          <div style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Input
+              size="small"
+              value={promptText}
+              onChange={(e) => setPromptText(e.target.value)}
+              onPressEnter={handleSavePrompt}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <Select
+              size="small"
+              placeholder="运镜"
+              style={{ width: 120 }}
+              allowClear
+              onChange={(moveVal) => {
+                if (!moveVal) return;
+                import('@/types/video').then(({ CAMERA_MOVEMENTS }) => {
+                  const item = CAMERA_MOVEMENTS.find((m) => m.value === moveVal);
+                  if (item) {
+                    setPromptText((prev) => `${prev.trim()}, ${item.prompt}`);
+                  }
+                });
+              }}
+              options={[
+                { value: 'zoom_in', label: '🔍 缓慢推进' },
+                { value: 'zoom_out', label: '🔍 缓慢拉远' },
+                { value: 'pan_left', label: '⬅️ 左摇镜头' },
+                { value: 'pan_right', label: '➡️ 右摇镜头' },
+                { value: 'orbit', label: '🔄 360° 环绕' },
+                { value: 'crane_up', label: '⬆️ 摇臂升起' },
+                { value: 'tracking', label: '🏃 跟随镜头' },
+              ]}
+            />
+            <Button size="small" type="primary" onClick={handleSavePrompt}>{t('common.save')}</Button>
+            <Button size="small" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+          </div>
+        ) : (
+          <>
+            <Text style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
+              {shot.videoPrompt || shot.sourceText.slice(0, 100)}
+            </Text>
+            <Space size={4}>
+              <Tooltip title={t('video.direct.editPrompt')}>
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<ReloadOutlined style={{ display: 'none' }} />} // placeholder icon if needed
+                  onClick={() => setEditing(true)}
+                  style={{ fontSize: 11 }}
+                >
+                  ✏️
+                </Button>
+              </Tooltip>
+              <Tooltip title={t('video.pipeline.rerunSingleShot')}>
+                <Button
+                  size="small"
+                  type="text"
+                  loading={rerunning}
+                  disabled={rerunning}
+                  onClick={handleRerun}
+                  style={{ fontSize: 11 }}
+                >
+                  🔄
+                </Button>
+              </Tooltip>
+              <Popconfirm
+                title="确定删除此镜头分镜？"
+                onConfirm={() => useVideoStore.getState().deleteSceneSpecShot(pid, shot.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Tooltip title="删除分镜">
+                  <Button size="small" type="text" danger style={{ fontSize: 11 }}>
+                    🗑️
+                  </Button>
+                </Tooltip>
+              </Popconfirm>
+            </Space>
+          </>
+        )}
       </div>
     </Card>
   );
@@ -82,6 +188,22 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const [exportOpen, setExportOpen] = useState(false);
   /** 断点续跑中标志(禁用重试按钮防重复点击) */
   const [retrying, setRetrying] = useState(false);
+  const [addShotModalOpen, setAddShotModalOpen] = useState(false);
+  const [newShotPrompt, setNewShotPrompt] = useState('');
+
+  const handleAddShotConfirm = () => {
+    if (!pipelineId || !newShotPrompt.trim()) return;
+    useVideoStore.getState().addSceneSpecShot(pipelineId, {
+      videoPrompt: newShotPrompt.trim(),
+      sourceText: newShotPrompt.trim(),
+      durationSeconds: 5,
+      characters: [],
+      characterIds: [],
+    });
+    setNewShotPrompt('');
+    setAddShotModalOpen(false);
+    message.success(t('common.success'));
+  };
   /** 当前 pipeline 产物占用(字节数),用于显示「已缓存 X MB」 */
   const [assetBytes, setAssetBytes] = useState(0);
   const [cleaningAssets, setCleaningAssets] = useState(false);
@@ -259,6 +381,11 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          <Tooltip title="导出 4K 高帧率超分增强版本">
+            <Tag color="gold" style={{ cursor: 'pointer', fontSize: 11 }}>
+              ⚡ 4K 超分渲染已就绪
+            </Tag>
+          </Tooltip>
           {finalVideoUrl && (
             <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setExportOpen(true)}>
               {t('video.export.button')}
@@ -522,12 +649,39 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                 <span>
                   {t('video.gen.shots')} ({clips.length}/{shots.length})
                 </span>
-                {overall === 'running' && <Spin size="small" />}
+                <Space size={8}>
+                  <Button size="small" type="primary" onClick={() => setAddShotModalOpen(true)}>
+                    ➕ 添加分镜
+                  </Button>
+                  {overall === 'running' && <Spin size="small" />}
+                </Space>
               </div>
+
+              <Modal
+                title="➕ 手动追加分镜"
+                open={addShotModalOpen}
+                onOk={handleAddShotConfirm}
+                onCancel={() => setAddShotModalOpen(false)}
+                okText="追加镜头"
+                cancelText="取消"
+              >
+                <div style={{ marginTop: 8 }}>
+                  <Text style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
+                    输入新分镜的画面描述 (Video Prompt):
+                  </Text>
+                  <Input.TextArea
+                    rows={4}
+                    value={newShotPrompt}
+                    onChange={(e) => setNewShotPrompt(e.target.value)}
+                    placeholder="例如: 镜头从主角侧面推近，环境光影交织，气势磅礴..."
+                  />
+                </div>
+              </Modal>
               <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px' }}>
                 {shots.map((shot) => (
                   <ShotRow
                     key={shot.id}
+                    pid={pipelineId}
                     shot={shot}
                     status={getShotStatus(clips, currentStage, shot)}
                   />

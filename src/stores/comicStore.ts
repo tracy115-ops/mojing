@@ -100,6 +100,8 @@ interface ComicStoreState {
   setSceneSpec: (id: string, spec: ComicSceneSpec) => void;
   /** upsert 单个 panel(有同 id 替换,无则追加) */
   upsertPanel: (id: string, panel: ComicPanelSpec) => void;
+  /** 更新单个 panel(按 panelId 精准修改 prompt / image 等) */
+  updatePanelSpec: (id: string, panelId: string, updates: Partial<ComicPanelSpec>) => void;
   /** 批量替换 panels(panel_script 阶段产物) */
   setPanels: (id: string, panels: ComicPanelSpec[]) => void;
   /** 批量替换 pages(page_compose 阶段产物) */
@@ -283,6 +285,24 @@ export const useComicStore = create<ComicStoreState>()(
           const panels = exists
             ? proj.spec.panels.map((p) => (p.id === panel.id ? panel : p))
             : [...proj.spec.panels, panel];
+          return {
+            projects: {
+              ...s.projects,
+              [id]: touch({
+                ...proj,
+                spec: { ...proj.spec, panels },
+              }),
+            },
+          };
+        }),
+
+      updatePanelSpec: (id, panelId, updates) =>
+        set((s) => {
+          const proj = s.projects[id];
+          if (!proj) return s;
+          const panels = proj.spec.panels.map((p) =>
+            p.id === panelId ? { ...p, ...updates } : p,
+          );
           return {
             projects: {
               ...s.projects,

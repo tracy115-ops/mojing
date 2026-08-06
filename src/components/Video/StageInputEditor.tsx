@@ -180,6 +180,25 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
         borderRadius: 4,
         border: '1px solid var(--border-secondary)',
       }}>
+        {stage === 'composing' && (
+          <div style={{ marginBottom: 8 }}>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
+              🎼 BGM 背景音乐氛围挂载:
+            </Text>
+            <Radio.Group
+              defaultValue="epic"
+              size="small"
+              onChange={(e) => setStageInput(project.novelProjectId, stage, { bgmStyle: e.target.value } as any)}
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
+            >
+              <Radio.Button value="none">无 BGM</Radio.Button>
+              <Radio.Button value="epic">🎻 史诗交响</Radio.Button>
+              <Radio.Button value="piano">🎹 治愈钢琴</Radio.Button>
+              <Radio.Button value="cyber">⚡ 赛博朋克</Radio.Button>
+              <Radio.Button value="oriental">🏮 华风古韵</Radio.Button>
+            </Radio.Group>
+          </div>
+        )}
         {fields.map((f) => {
           const value = input[f.key];
           const label = t(f.label);

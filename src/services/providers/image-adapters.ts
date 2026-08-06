@@ -480,6 +480,115 @@ export class AgnesImageProvider extends BaseImageProvider {
   }
 }
 
+// --- Leonardo.ai Image API ---
+// 文档: https://docs.leonardo.ai/
+// POST {baseUrl}/rest/v1/generations  (baseUrl 通常为 https://api.leonardo.ai/v1)
+// 鉴权: Bearer apiKey
+// 异步任务: 返回 generationId,轮询 GET /rest/v1/generations/{id} 至 status=COMPLETE
+// 结果字段: generations[0].url (公网 URL,临时有效)
+//
+// 字段名参考 Wanx 的 submit+poll 骨架;Leonardo 实际响应字段
+// (generationId / generations / status) 在官方 SDK 与 REST 之间有大小写差异,
+// 这里对结果做多名兼容,接入后建议用真实 key 跑一次校对。
+
+export class LeonardoImageProvider extends BaseImageProvider {
+  readonly providerId = 'leonardo';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    // Leonardo 用 modelId (UUID),不是 model 名。用户可在设置里填推荐 UUID。
+    const modelId = request.model || 'b24a42c0-7a00-4cc4-9753-ca0962555099';
+
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    // 兼容用户填 `https://api.leonardo.ai/v1` 或 `.../v1/` 或不带版本。
+    // 提交/轮询路径都挂在 /rest/v1 下。
+    const base = /\/v\d+$/.test(baseUrl) ? baseUrl.replace(/\/v\d+$/, '/v1') : `${baseUrl}/v1`;
+
+    const body: Record<string, unknown> = {
+      prompt: request.prompt,
+      modelId,
+      width,
+      height,
+      num_images: 1,
+      num_inference_steps: 30,
+      guidance_scale: 7,
+    };
+    if (request.negativePrompt) {
+      body.negative_prompt = request.negativePrompt;
+    }
+    if (request.seed !== undefined) {
+      body.seed = request.seed;
+    }
+
+    const submitResp = await httpFetch(`${base}/rest/v1/generations`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(60_000),
+    });
+
+    if (!submitResp.ok) {
+      const text = await submitResp.text().catch(() => '');
+      throw new Error(`Leonardo submit error ${submitResp.status}: ${text.slice(0, 500)}`);
+    }
+
+    const submitData = await submitResp.json();
+    // 兼容字段名:generationId / sd_generation_job.generation_id
+    const generationId =
+      submitData.generationId ??
+      submitData.sd_generation_job?.generation_id ??
+      submitData.id;
+    if (!generationId) {
+      throw new Error(`Leonardo: no generationId returned (got ${JSON.stringify(submitData).slice(0, 200)})`);
+    }
+
+    // 轮询任务状态 —— 完全照搬 Wanx 的 while 循环。
+    const deadline = startTime + 180_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const statusResp = await httpFetch(`${base}/rest/v1/generations/${generationId}`, {
+        method: 'GET',
+        headers: this.getHeaders(),
+        signal: this.timeoutSignal(30_000),
+      });
+      if (!statusResp.ok) {
+        const text = await statusResp.text().catch(() => '');
+        throw new Error(`Leonardo status error ${statusResp.status}: ${text.slice(0, 500)}`);
+      }
+      const statusData = await statusResp.json();
+      const status = String(statusData.status ?? '').toUpperCase();
+      if (status === 'COMPLETE') {
+        // 兼容 generations / generated_images 两种结果字段名
+        const gen = statusData.generations?.[0] ?? statusData.generated_images?.[0];
+        const url = gen?.url ?? '';
+        if (!url) {
+          throw new Error('Leonardo: generation complete but no image url returned');
+        }
+        return {
+          imageData: this.normalizeImageSrc(url),
+          width,
+          height,
+          model: modelId,
+          provider: 'leonardo',
+          latencyMs: Date.now() - startTime,
+        };
+      }
+      if (status === 'FAILED') {
+        const reason =
+          statusData.error?.message ||
+          statusData.failure_reason ||
+          statusData.error_details ||
+          JSON.stringify(statusData).slice(0, 300);
+        throw new Error(`Leonardo task failed: ${reason}`);
+      }
+      // PENDING / RUNNING 继续轮询
+    }
+    throw new Error('Leonardo task timed out (180s)');
+  }
+}
+
 // --- Factory ---
 
 export function createImageProvider(
@@ -505,6 +614,8 @@ export function createImageProvider(
       return new IdeogramProvider(endpoint);
     case 'agnes-image':
       return new AgnesImageProvider(endpoint);
+    case 'leonardo':
+      return new LeonardoImageProvider(endpoint);
     default:
       // Assume OpenAI-compatible image API
       return new DALLEProvider(endpoint);

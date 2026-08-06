@@ -148,6 +148,13 @@ interface VideoStoreState {
     patch: Partial<StageInput>,
   ) => void;
 
+  // --- Granular Manual Interventions (Human-in-the-Loop) ---
+  updateSceneSpecShot: (novelProjectId: string, shotId: string, updates: Partial<StoryboardShot>) => void;
+  addSceneSpecShot: (novelProjectId: string, shot: Omit<StoryboardShot, 'id' | 'index'>) => void;
+  deleteSceneSpecShot: (novelProjectId: string, shotId: string) => void;
+  updateSceneSpecCharacter: (novelProjectId: string, characterId: string, updates: { portraitImage?: string; appearance?: string; name?: string }) => void;
+  updateSceneSpecScene: (novelProjectId: string, sceneId: string, updates: { backgroundImage?: string; description?: string; name?: string }) => void;
+
   // --- direct (no-novel) mode ---
   setDirectGenerating: (inProgress: boolean) => void;
   setDirectError: (error: string | undefined) => void;
@@ -644,6 +651,119 @@ export const useVideoStore = create<VideoStoreState>()(
         projects: {
           ...s.projects,
           [novelProjectId]: touch({ ...proj, sceneSpec: spec }),
+        },
+      };
+    });
+  },
+
+  updateSceneSpecShot: (novelProjectId, shotId, updates) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const shots = proj.shots.map((sh) => (sh.id === shotId ? ({ ...sh, ...updates } as StoryboardShot) : sh));
+      let sceneSpec = proj.sceneSpec;
+      if (sceneSpec?.shots) {
+        sceneSpec = {
+          ...sceneSpec,
+          shots: sceneSpec.shots.map((sh) => (sh.id === shotId ? ({ ...sh, ...updates } as any) : sh)),
+        };
+      }
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, shots, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  addSceneSpecShot: (novelProjectId, newShotData) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const newId = `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const index = proj.shots.length;
+      const newShot: StoryboardShot = {
+        ...newShotData,
+        id: newId,
+        index,
+        sourceText: newShotData.sourceText || newShotData.videoPrompt || '',
+        videoPrompt: newShotData.videoPrompt || '',
+        durationSeconds: newShotData.durationSeconds || 5,
+        characters: newShotData.characters || newShotData.characterIds || [],
+        characterIds: newShotData.characterIds || newShotData.characters || [],
+      };
+      const shots = [...proj.shots, newShot];
+      let sceneSpec = proj.sceneSpec;
+      if (sceneSpec) {
+        sceneSpec = {
+          ...sceneSpec,
+          shots: [...(sceneSpec.shots || []), newShot as any],
+        };
+      }
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, shots, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  deleteSceneSpecShot: (novelProjectId, shotId) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const shots = proj.shots
+        .filter((sh) => sh.id !== shotId)
+        .map((sh, i) => ({ ...sh, index: i }));
+      let sceneSpec = proj.sceneSpec;
+      if (sceneSpec?.shots) {
+        sceneSpec = {
+          ...sceneSpec,
+          shots: sceneSpec.shots
+            .filter((sh) => sh.id !== shotId)
+            .map((sh, i) => ({ ...sh, index: i } as any)),
+        };
+      }
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, shots, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  updateSceneSpecCharacter: (novelProjectId, characterId, updates) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj || !proj.sceneSpec) return s;
+      const characters = proj.sceneSpec.characters?.map((c) =>
+        c.id === characterId ? { ...c, ...updates } : c,
+      );
+      const sceneSpec = { ...proj.sceneSpec, characters };
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  updateSceneSpecScene: (novelProjectId, sceneId, updates) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj || !proj.sceneSpec) return s;
+      const scenes = proj.sceneSpec.scenes?.map((sc) =>
+        sc.id === sceneId ? { ...sc, ...updates } : sc,
+      );
+      const sceneSpec = { ...proj.sceneSpec, scenes };
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec }),
         },
       };
     });

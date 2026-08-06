@@ -37,8 +37,10 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
   cogview: 'image',
   wanx: 'image',
   jimeng: 'image',
+  'siliconflow-image': 'image',
   ideogram: 'image',
   'agnes-image': 'image',
+  leonardo: 'image',
   // Video
   sora: 'video',
   runway: 'video',
@@ -47,9 +49,15 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
   pika: 'video',
   'agnes-video': 'video',
   'doubao-video': 'video',
+  'minimax-video': 'video',
+  cogvideo: 'video',
+  '302ai-video': 'video',
+  'siliconflow-video': 'video',
+  'leonardo-video': 'video',
   // TTS
   'openai-tts': 'tts',
   'doubao-tts': 'tts',
+  'siliconflow-tts': 'tts',
   'edge-tts': 'tts',
   // Custom — default LLM; if user sets up a custom image/video/tts endpoint they
   // should bind it explicitly via Settings → Provider primary endpoint selector.

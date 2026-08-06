@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown } from 'antd';
+import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select } from 'antd';
 import {
   ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined,
   ZoomInOutlined, ZoomOutOutlined, LineChartOutlined, ExperimentOutlined,
@@ -40,6 +40,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [showOutlineRef, setShowOutlineRef] = useState(true);
   const [editingRef, setEditingRef] = useState(false);
   const [refText, setRefText] = useState(chapter.outline ?? '');
+  const [novelGenre, setNovelGenre] = useState<string>('xuanhuan');
+  const [novelPOV, setNovelPOV] = useState<string>('third_person');
+  const [novelPacing, setNovelPacing] = useState<string>('standard');
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
@@ -128,18 +131,42 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         .map((c) => c.content.slice(-500))
         .join('\n');
 
+      const genrePrompts: Record<string, string> = {
+        xuanhuan: '玄幻热血风格：强调气场压迫感、招式光影、境界突破的震撼细节，动作打斗干净利落，充满爽点。',
+        urban_romance: '都市细腻风格：强调人物眼神拉扯、微表情、心理活动与柔光氛围感，台词带有潜台词。',
+        suspense: '悬疑冷酷风格：强调冷色调环境描摹、细节伏笔、心理压迫感与出人意料的反转。',
+        cyberpunk: '赛博朋克风格：强调霓虹霓影、机械质感、高科技低生活氛围与冷峻叙事。',
+        wuxia: '古风武侠风格：强调诗意环境描摹、侠义风骨、招式意境与古风用词韵味。',
+      };
+
+      const styleGuide = genrePrompts[novelGenre] ?? genrePrompts.xuanhuan;
+      const povGuide = novelPOV === 'first_person' ? '使用第一人称("我")沉浸式叙述。' : '使用第三人称全知视角叙述。';
+      const pacingGuide =
+        novelPacing === 'climax' ? '高潮爆发节奏：动作紧凑，单句篇幅简练，制造极强剧情张力与爽点。' :
+        novelPacing === 'buildup' ? '铺垫蓄力节奏：注重环境细节烘托、眼神心理描写，为后续冲突蓄势。' :
+        '标准叙事节奏：张弛有度，情节与描写交替推进。';
+
+      const systemPrompt = `你是一位顶尖的大神级网络小说作家。请根据大纲创作文学品质极高、极具吸引力的章节正文。
+
+【流派文风指导】：${styleGuide}
+【叙事视角】：${povGuide}
+【叙事节奏】：${pacingGuide}
+
+【顶级写作与反 AI 规则（必须严格遵守）】：
+1. 严禁出现“首先...其次...总而言之”等机械连接词。
+2. 严禁在章节结尾写空洞的鸡汤感升华总结（如“这一刻他明白了生活的真谛”），直接停留在具体的情节动作或悬念留白处。
+3. 拒绝平铺直叙，对话中必须插入人物神态、无意识动作或心理活动潜台词（如“他压低眼帘，指尖捏紧杯沿”）。
+4. 语言要富有画面感与镜头感，拒绝假大空的修饰词。
+5. 目标字数：2500 - 4500 字。
+
+小说名称：《${novelTitle}》`;
+
       const request: LLMGenerateRequest = {
         taskType: 'generation',
-        systemPrompt: `你是一个优秀的小说作家。根据大纲写出精彩的章节正文。
-要求：
-- 文笔流畅，描写生动
-- 对话自然，符合人物性格
-- 情节紧凑，有张力
-- 字数 2000-4000 字
-小说名称：${novelTitle}`,
-        userPrompt: `${prevSummary ? `上一章结尾：\n${prevSummary}\n\n` : ''}大纲：\n${chapter.outline}\n\n请写出第${chapter.order + 1}章 "${chapter.title}" 的正文。`,
-        temperature: 0.85,
-        maxTokens: 4096,
+        systemPrompt,
+        userPrompt: `${prevSummary ? `上一章结尾接续：\n${prevSummary}\n\n` : ''}本章大纲：\n${chapter.outline}\n\n请开始创作第${chapter.order + 1}章 "${chapter.title}" 的精彩正文：`,
+        temperature: 0.88,
+        maxTokens: 6000,
       };
 
       let fullContent = '';
@@ -176,7 +203,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
 
   // --- AI Rewrite / Polish / Expand / Summarize ---
 
-  const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize') => {
+  const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize' | 'consistency_check') => {
     if (!hasEndpoint) {
       message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
       return;
@@ -207,9 +234,13 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
           system: '你是一位小说编辑助手。请为以下章节内容生成摘要，包含：核心事件、角色行动、情感走向。100-200字。',
           user: `请总结以下章节：\n\n${content.slice(0, 6000)}`,
         },
+        consistency_check: {
+          system: '你是一位严苛的小说主编。请针对以下小说文本进行【剧情逻辑、角色人设一致性、伏笔闭环】的质检，给出综合评分（100分制），并列出可能存在的吃书/逻辑冲突/细节漏洞。格式要清晰明了。',
+          user: `小说名称：《${novelTitle}》\n章节：${chapter.title}\n大纲：${chapter.outline ?? '无'}\n正文内容：\n${content.slice(0, 5000)}`,
+        },
       };
 
-      const { system, user } = prompts[mode];
+      const { system, user } = prompts[mode as keyof typeof prompts];
       const request: LLMGenerateRequest = {
         taskType: 'generation',
         systemPrompt: system,
@@ -224,6 +255,17 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         // Update outline with summary
         onUpdate({ outline: response.content });
         message.success(t('editor.summaryDone'));
+      } else if (mode === 'consistency_check') {
+        Modal.info({
+          title: '🔍 AI 剧情逻辑与人设一致性质检报告',
+          width: 680,
+          content: (
+            <div style={{ maxHeight: 450, overflowY: 'auto', whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6 }}>
+              {response.content}
+            </div>
+          ),
+          okText: '收到并优化',
+        });
       } else {
         // Replace content with rewritten/polished/expanded version
         onUpdate({ content: response.content, wordCount: response.content.length });
@@ -299,6 +341,12 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
       icon: <FileSearchOutlined />,
       label: t('editor.aiSummarize'),
       onClick: () => handleAITool('summarize'),
+    },
+    {
+      key: 'consistency_check',
+      icon: <FileSearchOutlined />,
+      label: '🔍 AI 剧情与人设一致性检查',
+      onClick: () => handleAITool('consistency_check'),
     },
   ];
 
@@ -428,6 +476,47 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                       </Button>
                     ) : (
                       <>
+                        <Select
+                          size="small"
+                          value={novelGenre}
+                          onChange={(v) => setNovelGenre(v)}
+                          style={{ width: 110 }}
+                          options={[
+                            { value: 'xuanhuan', label: '🔥 玄幻热血' },
+                            { value: 'urban_romance', label: '🌸 都市细腻' },
+                            { value: 'suspense', label: '🔍 悬疑反转' },
+                            { value: 'cyberpunk', label: '⚡ 赛博朋克' },
+                            { value: 'wuxia', label: '🏮 古风武侠' },
+                          ]}
+                        />
+                        <Select
+                          size="small"
+                          value={novelPOV}
+                          onChange={(v) => setNovelPOV(v)}
+                          style={{ width: 90 }}
+                          options={[
+                            { value: 'third_person', label: '👁️ 第三人称' },
+                            { value: 'first_person', label: '🙋 第一人称' },
+                          ]}
+                        />
+                        <Button
+                          size="small"
+                          icon={<FormatPainterOutlined />}
+                          loading={generating === 'polish'}
+                          disabled={!chapter.content || generating !== null}
+                          onClick={() => handleAITool('polish')}
+                        >
+                          {t('editor.aiPolish')}
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<ReloadOutlined />}
+                          loading={generating === 'rewrite'}
+                          disabled={!chapter.content || generating !== null}
+                          onClick={() => handleAITool('rewrite')}
+                        >
+                          {t('editor.aiRewrite')}
+                        </Button>
                         <Dropdown menu={{ items: aiToolItems }} trigger={['click']}>
                           <Button size="small" icon={<ExperimentOutlined />} loading={generating !== null}>
                             {t('editor.aiTools')}

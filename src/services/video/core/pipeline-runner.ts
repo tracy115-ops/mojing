@@ -395,3 +395,71 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
   store.setSceneSpec(pid, workingSpec);
   return allOk;
 }
+
+/**
+ * 单镜头独立重试/重新生成：仅针对单个 Shot 重新跑 T2V / I2V 生成 Clip。
+ */
+export async function rerunSingleShot(pid: string, shotId: string): Promise<GeneratedClip | null> {
+  void logger.info(`[pipeline] rerunSingleShot pid=${pid} shotId=${shotId}`, 'pipeline');
+  const store = useVideoStore.getState();
+  const proj = store.getProject(pid);
+  if (!proj || !proj.sceneSpec) {
+    void logger.warn(`[pipeline] rerunSingleShot fail: project not found pid=${pid}`, 'pipeline');
+    return null;
+  }
+
+  const shot = proj.sceneSpec.shots.find((s) => s.id === shotId);
+  if (!shot) {
+    void logger.warn(`[pipeline] rerunSingleShot fail: shot not found id=${shotId}`, 'pipeline');
+    return null;
+  }
+
+  const stage: VideoStage = 'video_generation';
+  store.setStageStatus(pid, stage, 'running');
+  const { providerRouter } = await import('@/services/providers');
+  const { pushStageContext, popStageContext } = await import('@/services/providers/invocation-context');
+
+  pushStageContext({ novelProjectId: pid, stage });
+
+  try {
+    const is916 = proj.spec.aspectRatio === '9:16';
+    const is11 = proj.spec.aspectRatio === '1:1';
+    const w = is916 ? 1080 : is11 ? 1080 : 1920;
+    const h = is916 ? 1920 : is11 ? 1080 : 1080;
+
+    const response = await providerRouter.generateVideo({
+      taskType: 'clip',
+      prompt: shot.videoPrompt || shot.sourceText || 'Cinematic video shot',
+      referenceImages: shot.keyframeImage ? [shot.keyframeImage] : undefined,
+      width: w,
+      height: h,
+      durationSeconds: (shot.durationSeconds as 5 | 10) || 5,
+      fps: proj.spec.fps || 24,
+    });
+
+    const clip: GeneratedClip = {
+      shotId: shot.id,
+      videoUrl: response.videoData,
+      durationSeconds: (shot.durationSeconds as 5 | 10) || 5,
+      provider: response.provider,
+      model: response.model,
+      hasAudio: false,
+      generatedAt: new Date().toISOString(),
+      sceneSource: 'direct',
+      directProjectId: pid,
+    };
+
+    store.addClip(pid, clip);
+    store.setStageStatus(pid, stage, 'completed');
+    void logger.info(`[pipeline] rerunSingleShot SUCCESS shotId=${shotId} provider=${response.provider}`, 'pipeline');
+    return clip;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    void logger.error(`[pipeline] rerunSingleShot FAIL shotId=${shotId}: ${msg}`, 'pipeline');
+    store.setStageStatus(pid, stage, 'error', { error: msg });
+    return null;
+  } finally {
+    popStageContext();
+  }
+}
+

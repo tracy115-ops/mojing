@@ -131,37 +131,41 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
           <Form.Item name="style" label={t('comic.style')} style={{ flex: 1 }}>
             <Select
               options={[
-                { value: 'manga', label: t('comic.style.manga') },
-                { value: 'western', label: t('comic.style.western') },
-                { value: 'watercolor', label: t('comic.style.watercolor') },
-                { value: 'pixel', label: t('comic.style.pixel') },
+                { value: 'manga', label: '🎌 日式热血黑白/彩漫' },
+                { value: 'shinkai', label: '🌸 新海诚精致唯美风' },
+                { value: 'western', label: '💥 美式英雄美漫' },
+                { value: 'ink', label: '🏮 国风水墨大写意' },
+                { value: 'cyberpunk', label: '⚡ 赛博朋克霓虹' },
+                { value: 'watercolor', label: '🎨 治愈水彩插画' },
+                { value: 'pixel', label: '👾 像素复古风' },
               ]}
             />
           </Form.Item>
           <Form.Item name="aspectRatio" label={t('comic.aspectRatio')} style={{ flex: 1 }}>
             <Select
               options={[
-                { value: '16:9', label: '16:9' },
-                { value: '9:16', label: '9:16' },
-                { value: '1:1', label: '1:1' },
+                { value: '16:9', label: '16:9 (横屏大图)' },
+                { value: '9:16', label: '9:16 (手机条漫)' },
+                { value: '1:1', label: '1:1 (正方形卡片)' },
               ]}
             />
           </Form.Item>
         </div>
 
         <div style={{ display: 'flex', gap: 16 }}>
-          <Form.Item name="panelLayout" label={t('comic.panelLayout')} style={{ flex: 1 }}>
+          <Form.Item name="panelLayout" label="📐 漫画网格版式预设" style={{ flex: 1 }}>
             <Select
               options={[
-                { value: 'single', label: t('comic.panelLayout.grid') },
-                { value: 'grid-2', label: t('comic.panelLayout.grid') },
-                { value: 'grid-4', label: t('comic.panelLayout.grid') },
-                { value: 'manga-row', label: t('comic.panelLayout.manga-row') },
+                { value: 'yonkoma', label: '📱 4格经典四格条漫' },
+                { value: 'grid-9', label: '🖼️ 9格典藏版网格画册' },
+                { value: 'manga-splash', label: '💥 热血日漫跨页破框' },
+                { value: 'webtoon', label: '📜 手机端全景长图条漫' },
+                { value: 'grid-2', label: '🖼️ 双格双列对比' },
               ]}
             />
           </Form.Item>
-          <Form.Item name="panelCount" label={t('comic.panelCount')} style={{ flex: 1 }}>
-            <InputNumber min={1} max={20} style={{ width: '100%' }} />
+          <Form.Item name="panelCount" label="每页分镜格数" style={{ flex: 1 }}>
+            <InputNumber min={1} max={16} style={{ width: '100%' }} />
           </Form.Item>
         </div>
       </Form>

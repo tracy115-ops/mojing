@@ -54,35 +54,43 @@ const LLM_PROVIDER_OPTIONS: { value: LLMProviderId; label: string }[] = [
 ];
 
 const IMAGE_PROVIDER_OPTIONS: { value: ImageProviderId; label: string }[] = [
+  { value: 'jimeng', label: '即梦 Seedream (火山方舟 / 字节)' },
+  { value: 'wanx', label: '通义万相 (Wanx / 阿里)' },
+  { value: 'siliconflow-image', label: '硅基流动 (Kolors / FLUX)' },
   { value: 'dalle', label: 'DALL-E (OpenAI)' },
   { value: 'cogview', label: 'CogView (智谱 GLM)' },
-  { value: 'wanx', label: 'Wanx (通义万相 / 阿里)' },
-  { value: 'jimeng', label: 'Jimeng (即梦 / 字节)' },
-  { value: 'kling-image', label: 'Kling (可灵)' },
+  { value: 'kling-image', label: 'Kling (可灵图生图)' },
   { value: 'ideogram', label: 'Ideogram' },
   { value: 'agnes-image', label: 'Agnes Image (免费)' },
+  { value: 'leonardo', label: 'Leonardo.ai' },
   { value: 'stable-diffusion', label: 'Stable Diffusion (本地)' },
   { value: 'flux', label: 'Flux (本地)' },
   { value: 'comfyui', label: 'ComfyUI (本地)' },
-  { value: 'custom', label: 'Custom' },
+  { value: 'custom', label: 'Custom (自定义 OpenAI 兼容 API)' },
 ];
 
 const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
+  { value: 'doubao-video', label: '即梦 Seedance (火山引擎 / 豆包)' },
+  { value: 'minimax-video', label: '海螺 MiniMax (Video-01)' },
+  { value: 'vidu', label: 'Vidu (生数科技)' },
+  { value: 'cogvideo', label: '智谱 CogVideoX' },
+  { value: '302ai-video', label: '302.AI Video' },
+  { value: 'siliconflow-video', label: '硅基流动 (Wan 2.1)' },
+  { value: 'kling', label: 'Kling (可灵视频)' },
   { value: 'sora', label: 'Sora' },
-  { value: 'runway', label: 'Runway' },
-  { value: 'kling', label: 'Kling (可灵)' },
-  { value: 'vidu', label: 'Vidu' },
+  { value: 'runway', label: 'Runway (Gen-3 / Gen-4)' },
   { value: 'pika', label: 'Pika' },
   { value: 'agnes-video', label: 'Agnes Video (免费)' },
-  { value: 'doubao-video', label: 'Doubao Video (豆包 Seedance)' },
-  { value: 'custom', label: 'Custom' },
+  { value: 'leonardo-video', label: 'Leonardo Motion' },
+  { value: 'custom', label: 'Custom (自定义视频 API)' },
 ];
 
 const TTS_PROVIDER_OPTIONS: { value: TTSProviderId; label: string }[] = [
+  { value: 'doubao-tts', label: '字节豆包配音 (火山语音 / Doubao TTS)' },
+  { value: 'siliconflow-tts', label: '硅基流动 CosyVoice (SiliconFlow)' },
   { value: 'openai-tts', label: 'OpenAI TTS (tts-1 / tts-1-hd)' },
-  { value: 'doubao-tts', label: 'Doubao TTS (豆包)' },
-  { value: 'edge-tts', label: 'Edge TTS (免费,微软)' },
-  { value: 'custom', label: 'Custom (OpenAI-compatible)' },
+  { value: 'edge-tts', label: 'Edge TTS (微软免费配音)' },
+  { value: 'custom', label: 'Custom (自定义配音 API)' },
 ];
 
 
@@ -124,24 +132,29 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   dalle: ['dall-e-3', 'dall-e-2'],
   'kling-image': ['kling-v1', 'kling-v1-5', 'kling-v2'],
   cogview: ['cogview-3-plus', 'cogview-3-flash'],
-  wanx: ['wanx-v1', 'wanx-2.1'],
+  wanx: ['wanx-v1', 'wanx-2.1-t2i-turbo', 'wanx-2.1-t2i-plus'],
   jimeng: ['doubao-seedream-3-0-t2i-250415', 'doubao-seedream-3-0-i2i-250415'],
+  'siliconflow-image': ['Kwai-Kolors/Kolors', 'black-forest-labs/FLUX.1-schnell', 'black-forest-labs/FLUX.1-dev'],
   ideogram: ['V_3', 'V_2'],
   'agnes-image': ['agnes-image-2.1-flash', 'agnes-image-2.0-flash'],
+  leonardo: ['b24a42c0-7a00-4cc4-9753-ca0962555099', '2067ae52-fafc-4a4c-9bbf-75c2b2cbb4c2'],
   // Video
   kling: ['kling-v2', 'kling-v2-pro', 'kling-v2-master', 'kling-v1-6'],
   runway: ['gen4_turbo', 'gen3-alpha'],
-  vidu: ['vidu-1.5', 'vidu-1.0'],
+  vidu: ['vidu-1.5', 'vidu-1.0', 'vidu-q2'],
   pika: ['pika-1.5', 'pika-1.0'],
   'agnes-video': ['agnes-video-v2.0'],
-  'doubao-video': [
-    'doubao-seedance-2-0-260128',
-    'doubao-seedance-2-0-fast-260128',
-  ],
+  'doubao-video': ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128'],
+  'minimax-video': ['video-01', 'video-01-live'],
+  cogvideo: ['cogvideox_5b', 'cogvideox_flash'],
+  '302ai-video': ['sora-302', 'kling-302', 'runway-302', 'minimax-302'],
+  'siliconflow-video': ['Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-14B'],
+  'leonardo-video': ['leonardo-motion'],
   // TTS
   'openai-tts': ['tts-1', 'tts-1-hd'],
-  'doubao-tts': ['doubao-tts'],
-  'edge-tts': ['edge-tts'],
+  'doubao-tts': ['doubao-tts-v1', 'doubao-voice-standard'],
+  'siliconflow-tts': ['FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct'],
+  'edge-tts': ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
 };
 
 /** Return the suggestion list for the *primary* provider of a given category.
@@ -173,8 +186,10 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   cogview: 'https://open.bigmodel.cn/api/paas/v4',
   wanx: 'https://dashscope.aliyuncs.com/api/v1',
   jimeng: 'https://ark.cn-beijing.volces.com',
+  'siliconflow-image': 'https://api.siliconflow.cn/v1',
   ideogram: 'https://api.ideogram.ai/v1',
   'agnes-image': 'https://apihub.agnes-ai.com',
+  leonardo: 'https://api.leonardo.ai/v1',
   sora: 'https://api.openai.com/v1',
   runway: 'https://api.runwayml.com',
   kling: 'https://api-beijing.klingai.com',
@@ -182,8 +197,14 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   pika: 'https://api.pika.art',
   'agnes-video': 'https://apihub.agnes-ai.com',
   'doubao-video': 'https://ark.cn-beijing.volces.com',
+  'minimax-video': 'https://api.minimax.chat/v1',
+  cogvideo: 'https://open.bigmodel.cn/api/paas/v4',
+  '302ai-video': 'https://api.302.ai/v1',
+  'siliconflow-video': 'https://api.siliconflow.cn/v1',
+  'leonardo-video': 'https://api.leonardo.ai/v1',
   'openai-tts': 'https://api.openai.com/v1',
   'doubao-tts': 'https://ark.cn-beijing.volces.com/api/v3',
+  'siliconflow-tts': 'https://api.siliconflow.cn/v1',
   'edge-tts': 'https://speech.platform.bing.com',
 };
 

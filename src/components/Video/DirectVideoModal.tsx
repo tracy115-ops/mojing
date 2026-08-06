@@ -481,6 +481,34 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
           />
         </Form.Item>
 
+        {/* 画面风格与画质预设 */}
+        <Form.Item label={t('video.style')} style={{ marginBottom: 12 }}>
+          <Select
+            placeholder="选择画面风格与画质预设"
+            allowClear
+            onChange={(styleId) => {
+              if (!styleId) return;
+              import('@/types/video').then(({ VISUAL_STYLE_PRESETS }) => {
+                const preset = VISUAL_STYLE_PRESETS.find((s) => s.id === styleId);
+                if (preset) {
+                  setPrompt((prev) => {
+                    const clean = prev.trim();
+                    if (clean.includes(preset.promptPrefix.trim())) return clean;
+                    return `${preset.promptPrefix}${clean}${preset.promptSuffix}`;
+                  });
+                }
+              });
+            }}
+            options={[
+              { value: 'cinematic', label: '🎬 电影大片 (Cinematic) — 真实质感, 35mm 景深光影' },
+              { value: 'anime', label: '🌸 日漫风 (Anime Shinkai) — 唯美二次元, 细腻色彩' },
+              { value: 'cyberpunk', label: '🏙️ 赛博朋克 (Cyberpunk) — 霓虹灯影, 雨夜街景' },
+              { value: 'ink_wash', label: '🖌️ 国风水墨 (Ink Wash) — 东方水墨留白, 意境山水' },
+              { value: 'vintage', label: '🎞️ 胶片复古 (80s Vintage) — 暖调胶片颗粒, 怀旧氛围' },
+            ]}
+          />
+        </Form.Item>
+
         {/* 模式选择 */}
         <Form.Item label={t('video.direct.mode')} style={{ marginBottom: 12 }}>
           <Radio.Group
@@ -619,8 +647,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         </div>
 
         {/* Aspect/Duration */}
-        <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-          <Form.Item label={t('video.direct.aspectRatio')} style={{ flex: 1, marginBottom: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 8 }}>
+          <Form.Item label={t('video.direct.aspectRatio')} style={{ marginBottom: 0 }}>
             <Select
               value={aspectRatio}
               onChange={(v) => setAspectRatio(v)}
@@ -633,7 +661,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               ]}
             />
           </Form.Item>
-          <Form.Item label={t('video.direct.duration')} style={{ flex: 1, marginBottom: 0 }}>
+          <Form.Item label={t('video.direct.duration')} style={{ marginBottom: 0 }}>
             <Select
               value={shotDuration}
               onChange={(v) => setShotDuration(v)}
@@ -642,6 +670,20 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               options={[
                 { value: 5, label: t('video.direct.seconds', { n: 5 }) },
                 { value: 10, label: t('video.direct.seconds', { n: 10 }) },
+                { value: 15, label: '15 秒 (长镜头)' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item label="🎬 成片目标总时长" style={{ marginBottom: 0 }}>
+            <Select
+              defaultValue={15}
+              disabled={generating}
+              style={{ width: '100%' }}
+              options={[
+                { value: 5, label: '⚡ 5 秒 (单镜头精特写)' },
+                { value: 15, label: '🎬 15 秒 (3镜头连贯短片)' },
+                { value: 30, label: '📽️ 30 秒 (6镜头宣传短片)' },
+                { value: 60, label: '🎞️ 60 秒 (12镜头连续剧)' },
               ]}
             />
           </Form.Item>
