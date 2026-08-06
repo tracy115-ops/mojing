@@ -20,6 +20,7 @@ import {
 import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
 import { providerRouter } from '@/services/providers';
@@ -214,7 +215,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       setLastDirectProjectId(directProjectId);
       // 标题:优先用用户填的任务名;若当前在某项目下发起的,自动挂载 [项目名] 前缀实现关联
       const activeProjId = useProjectStore.getState().activeProjectId;
-      const activeProj = activeProjId ? useProjectStore.getState().projects.find((p) => p.id === activeProjId) : undefined;
+      const activeProj = activeProjId ? useProjectStore.getState().projects.find((p: { id: string; title: string }) => p.id === activeProjId) : undefined;
       const trimmedName = taskName.trim();
       const trimmedPromptForTitle = trimmed.length > 30 ? `${trimmed.slice(0, 30).trim()}…` : trimmed;
       const baseTitle = trimmedName || trimmedPromptForTitle;

@@ -16,6 +16,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { useShallow } from 'zustand/react/shallow';
 import ExportVideoModal from './ExportVideoModal';
 
