@@ -88,10 +88,16 @@ export async function runKeyframe(
       if (sc?.backgroundImage) sceneRefs.push({ url: sc.backgroundImage });
     }
 
-    // 顺序:场景背景优先(provider 通常只取 referenceImages[0]),
-    // 角色立绘跟在后面 — 角色外貌靠 prompt 里的描述锁定,
-    // 场景构图靠第一张参考图定调。Agnes 等支持多图的 provider 会拿到完整数组。
-    const rawReferences: CollectedRef[] = [...sceneRefs, ...charRefs];
+    // 顺序优化(核心关键):
+    // 1. 角色立绘必须排在最前面(Index 0)！因为多数 AI 绘图/多图参考 API(FLUX / DALL-E / Kolors)
+    //    优先使用 referenceImages[0] 锁定人物人脸与服饰细节。之前把场景图插在 [0]，导致人脸参考图被直接忽略！
+    // 2. 前一镜头关键帧(若存在且同一场景)跟在后面，确保前后镜头连贯性。
+    // 3. 场景背景图跟在末尾提供环境调性。
+    const prevKeyframeRef: CollectedRef[] = (i > 0 && result[i - 1]?.keyframeImage)
+      ? [{ url: result[i - 1].keyframeImage! }]
+      : [];
+
+    const rawReferences: CollectedRef[] = [...charRefs, ...prevKeyframeRef, ...sceneRefs];
 
     // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
     // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。
@@ -158,38 +164,31 @@ function buildKeyframePrompt(
     .map((id) => charById.get(id))
     .filter((c): c is CharacterAnchor => !!c);
 
-  const charBlock = presentChars.length
-    ? presentChars
-        .map((c) => {
-          const variantId = shot.costumeVariantRefs?.[c.id];
-          const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-          const look = variant ? `${c.appearance}, wearing ${variant.description}` : c.appearance;
-          return `- ${c.name}: ${look}`;
-        })
-        .join('\n')
-    : '';
+  const charDescriptions = presentChars.map((c) => {
+    const variantId = shot.costumeVariantRefs?.[c.id];
+    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+    return variant
+      ? `${c.name} (${c.appearance}, wearing ${variant.description})`
+      : `${c.name} (${c.appearance})`;
+  }).join(' and ');
 
-  // 如果有角色带了三视图,显式提示 provider 怎么用这些参考图
-  const hasTurnaround = presentChars.some((c) => c.turnaroundImage);
-  const turnaroundHint = hasTurnaround
-    ? '\nReference image guide: the wide image with three views is a character model sheet (front/side/back); the single front-view image is the same character\'s face reference. Use them together to preserve identity.'
-    : '';
+  const charText = presentChars.length
+    ? `main characters in frame: ${charDescriptions}, maintain 100% facial features and clothing consistency with reference image`
+    : 'no humans, no people, empty scene, background scenery shot';
 
-  const noPeopleHint = presentChars.length === 0 ? 'no humans, no people, empty scene, background scenery shot' : '';
-
-  return [
-    'cinematic keyframe for a video shot',
+  const parts = [
+    'cinematic movie keyframe storyboard',
     shot.videoPrompt,
-    charBlock ? `\nCharacters in frame (use provided reference images; preserve face and costume exactly):\n${charBlock}` : noPeopleHint,
-    turnaroundHint,
-    shot.location ? `Location: ${shot.location}` : '',
-    shot.mood ? `Mood: ${shot.mood}` : '',
-    shot.cameraMovement ? `Camera: ${shot.cameraMovement}` : '',
+    charText,
+    shot.location ? `location: ${shot.location}` : '',
+    shot.mood ? `mood: ${shot.mood}` : '',
+    shot.cameraMovement ? `camera angle: ${shot.cameraMovement}` : '',
     style ? `${style} style` : 'cinematic style',
-    'rule of thirds, no text, no watermark, no signature',
-  ]
-    .filter(Boolean)
-    .join(', ');
+    'masterpiece, 8k resolution, highly detailed, perfect composition',
+    'no text, no watermark, no signature, no bad anatomy',
+  ].filter(Boolean);
+
+  return parts.join(', ');
 }
 
 function aspectRatioToDims(ar: AspectRatio): { w: number; h: number } {
