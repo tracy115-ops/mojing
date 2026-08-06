@@ -12,7 +12,7 @@ import {
   Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal,
 } from 'antd';
 import {
-  VideoCameraOutlined, PlayCircleOutlined,
+  VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
   DeleteOutlined,
 } from '@ant-design/icons';
@@ -25,7 +25,7 @@ import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
 import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import { VideoPipeline } from '@/services/video/pipeline';
-import { runFromFirstFailedStage, runFromStage } from '@/services/video/core/pipeline-runner';
+import { runFromFirstFailedStage, runFromStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { logger } from '@/services/log';
 import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
 
@@ -382,6 +382,28 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          {overall === 'running' && (
+            <Popconfirm
+              title="确定要立即强行终止当前视频生成流程吗？"
+              okText="终止生成"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => {
+                if (!pipelineId) return;
+                abortPipeline(pipelineId);
+                message.warning('已收到终止请求，正在强行停止当前生成任务...');
+              }}
+            >
+              <Button
+                type="primary"
+                danger
+                size="small"
+                icon={<StopOutlined />}
+              >
+                ⏹️ 强行终止生成
+              </Button>
+            </Popconfirm>
+          )}
           {overall === 'error' && (
             <Button
               type="primary"

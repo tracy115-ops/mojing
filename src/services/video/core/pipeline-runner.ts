@@ -34,12 +34,29 @@ export interface RunPipelineArgs {
   shouldAbort?: () => boolean;
 }
 
+const activeAborts = new Map<string, boolean>();
+
+/**
+ * 终止指定项目的流水线生成
+ */
+export function abortPipeline(pid: string): void {
+  void logger.info(`[pipeline] abortPipeline request pid=${pid}`, 'pipeline');
+  activeAborts.set(pid, true);
+  const store = useVideoStore.getState();
+  const proj = store.getProject(pid);
+  if (proj && proj.currentStage && proj.currentStage !== 'complete' && proj.currentStage !== 'idle') {
+    store.setStageStatus(pid, proj.currentStage, 'error', { error: '已被用户强行终止生成' });
+  }
+}
+
 /**
  * 14 步流水线入口。返回最终 VideoProjectState。
  * 异常不中断整条流水线,只标记单步失败。
  */
 export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectState | null> {
   const { novelProjectId, spec, options, callbacks, videoGen, shouldAbort } = args;
+  activeAborts.delete(novelProjectId);
+  const checkAbort = () => !!activeAborts.get(novelProjectId) || (shouldAbort ? shouldAbort() : false);
   void logger.info(`[pipeline] RUN start pid=${novelProjectId} shots=${spec.shots.length} chars=${spec.characters?.length ?? 0} scenes=${spec.scenes?.length}`, 'pipeline');
   const store = useVideoStore.getState();
 
@@ -87,7 +104,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
   let clips: GeneratedClip[] = [];
 
   for (const stage of RUNTIME_STAGE_ORDER) {
-    if (shouldAbort?.()) break;
+    if (checkAbort()) break;
 
     // composing 需要 clips 非空
     if (stage === 'composing' && clips.length === 0) {
@@ -127,7 +144,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
       options,
       videoGen,
       callbacks,
-      shouldAbort,
+      shouldAbort: checkAbort,
       // video_generation 用 preExistingClips 做增量;auido_merge/composing 用累积 clips
       clips: stage === 'video_generation' ? (existingProj?.clips ?? []) : clips,
     });
@@ -349,8 +366,15 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
     return false;
   }
 
+  activeAborts.delete(pid);
+  const checkAbort = () => !!activeAborts.get(pid);
+
   let allOk = true;
   for (let i = startIdx; i < RUNTIME_STAGE_ORDER.length; i++) {
+    if (checkAbort()) {
+      allOk = false;
+      break;
+    }
     const s = RUNTIME_STAGE_ORDER[i];
 
     // composing 需要 clips 非空
