@@ -18,9 +18,15 @@ export class OpenAITTSProvider extends BaseTTSProvider {
   async generate(request: TTSRequest): Promise<TTSResponse> {
     const startTime = Date.now();
     const isOfficialOpenAI = this.endpoint.baseUrl.includes('api.openai.com');
-    const voice = request.voice || 'alloy';
+    const isSiliconFlow = this.endpoint.baseUrl.includes('siliconflow.cn');
     const format = request.format || 'mp3';
     const speed = request.speed ?? 1.0;
+
+    let voice = request.voice || 'alloy';
+    // 硅基流动要求特定的预设音色(如 alex, anna, benjamin, bella),如果传入 OpenAI 默认音色 alloy 等,自动映射为 alex
+    if (isSiliconFlow && (!voice || ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].includes(voice.toLowerCase()))) {
+      voice = 'alex';
+    }
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     const url = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/audio/speech` : `${baseUrl}/v1/audio/speech`;
@@ -28,17 +34,21 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     // 备选模型重试序列
     const defaultCandidates = isOfficialOpenAI
       ? ['tts-1', 'tts-1-hd']
-      : ['FunAudioLLM/CosyVoice-300M', 'FunAudioLLM/CosyVoice-300M-Instruct', 'cosyvoice-v1', 'tts-1', 'doubao-tts-v1'];
+      : isSiliconFlow
+      ? ['FunAudioLLM/CosyVoice2-0.5B', 'FunAudioLLM/CosyVoice-300M-Instruct', 'fishaudio/fish-speech-1.5', 'cosyvoice-v1', 'tts-1']
+      : ['FunAudioLLM/CosyVoice2-0.5B', 'FunAudioLLM/CosyVoice-300M-Instruct', 'cosyvoice-v1', 'tts-1', 'doubao-tts-v1'];
 
     let specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
     
-    // 如果历史保存了语音识别模型 FunAudioLLM/SenseVoiceSmall，自动更正为 TTS 配音模型 CosyVoice-300M
-    if (specifiedModel === 'FunAudioLLM/SenseVoiceSmall') {
-      specifiedModel = 'FunAudioLLM/CosyVoice-300M';
+    // 如果保存的是下线旧模型(CosyVoice-300M)或识别模型(SenseVoiceSmall)，自动升级更正为 SiliconFlow 最新的 CosyVoice2-0.5B
+    if (specifiedModel === 'FunAudioLLM/SenseVoiceSmall' || specifiedModel === 'FunAudioLLM/CosyVoice-300M') {
+      specifiedModel = isSiliconFlow ? 'FunAudioLLM/CosyVoice2-0.5B' : 'FunAudioLLM/CosyVoice-300M-Instruct';
     }
 
-    // 如果用户在设置里明确指定了模型，就使用用户指定的模型(经更正)
-    const candidateModels = specifiedModel ? [specifiedModel] : defaultCandidates;
+    // 组合重试序列:如果有指定模型优先尝试指定模型;若报错400(模型不存在/不可用),自动倒扣重试后续候选模型
+    const candidateModels = specifiedModel
+      ? Array.from(new Set([specifiedModel, ...defaultCandidates]))
+      : defaultCandidates;
 
     let lastError: Error | null = null;
 

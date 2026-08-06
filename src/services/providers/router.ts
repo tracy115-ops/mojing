@@ -437,10 +437,10 @@ class ProviderRouter {
     let resolvedModel = request.model
       || (endpoint.models && endpoint.models.length > 0 ? endpoint.models[0] : undefined);
 
-    if (!resolvedModel || resolvedModel === 'FunAudioLLM/SenseVoiceSmall') {
-      resolvedModel = config.defaultModel && config.defaultModel !== 'FunAudioLLM/SenseVoiceSmall'
+    if (!resolvedModel || resolvedModel === 'FunAudioLLM/SenseVoiceSmall' || resolvedModel === 'FunAudioLLM/CosyVoice-300M') {
+      resolvedModel = (config.defaultModel && config.defaultModel !== 'FunAudioLLM/SenseVoiceSmall' && config.defaultModel !== 'FunAudioLLM/CosyVoice-300M')
         ? config.defaultModel
-        : (isOfficialOpenAI ? 'tts-1' : 'FunAudioLLM/CosyVoice-300M');
+        : (isOfficialOpenAI ? 'tts-1' : 'FunAudioLLM/CosyVoice2-0.5B');
     }
 
     const requestWithDefaults: TTSRequest = {
