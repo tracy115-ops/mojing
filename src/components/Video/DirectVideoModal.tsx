@@ -212,10 +212,14 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       // 让"查看步骤账本"入口能读到。
       const directProjectId = `direct_${Date.now()}`;
       setLastDirectProjectId(directProjectId);
-      // 标题:优先用用户填的任务名;没填就用 prompt 前 30 字兜底
+      // 标题:优先用用户填的任务名;若当前在某项目下发起的,自动挂载 [项目名] 前缀实现关联
+      const activeProjId = useProjectStore.getState().activeProjectId;
+      const activeProj = activeProjId ? useProjectStore.getState().projects.find((p) => p.id === activeProjId) : undefined;
       const trimmedName = taskName.trim();
       const trimmedPromptForTitle = trimmed.length > 30 ? `${trimmed.slice(0, 30).trim()}…` : trimmed;
-      const taskTitle = trimmedName || trimmedPromptForTitle;
+      const baseTitle = trimmedName || trimmedPromptForTitle;
+      const taskTitle = activeProj ? `[${activeProj.title}] ${baseTitle}` : baseTitle;
+
       initProject(directProjectId, [], {
         aspectRatio,
         resolution: `${dims[aspectRatio].w}x${dims[aspectRatio].h}`,
@@ -228,7 +232,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         bgmStyle: 'cinematic',
       }, taskTitle);
 
-      // 切到主面板的流水线 tab,然后立即关闭 Modal —— 执行过程改由 VideoPipelinePanel 展示。
+      // 切到主面板的流水线 tab,并清理 top list 的高亮(保持单选高亮同步)
+      useProjectStore.getState().setActiveProject(null);
       useVideoStore.getState().setActivePipelineId(directProjectId);
       onClose();
 

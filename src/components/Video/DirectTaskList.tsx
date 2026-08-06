@@ -225,7 +225,10 @@ const DirectTaskList: React.FC = () => {
           return (
             <Dropdown key={id} menu={contextMenu} trigger={['contextMenu']}>
             <div
-              onClick={() => setActivePipelineId(id)}
+              onClick={() => {
+                setActivePipelineId(id);
+                useProjectStore.getState().setActiveProject(null);
+              }}
               style={{
                 padding: '6px 8px',
                 marginBottom: 4,
