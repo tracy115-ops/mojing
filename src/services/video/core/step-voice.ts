@@ -78,7 +78,7 @@ const REAL_VOICES: Record<string, {
 /** 从角色名字 / 提示词 / 描述中智能识别男女性别 */
 function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
   if (c.gender === 'female' || c.gender === 'male') return c.gender;
-  const raw = c as Record<string, unknown>;
+  const raw = c as unknown as Record<string, unknown>;
   const text = `${c.name} ${c.appearance || ''} ${raw.prompt || ''} ${raw.description || ''}`;
   if (/女|姐|妹|母|妇|娘|姬|婷|美|莉|雪|雅|静|芳|萍|姿|靓|丫|媳|仙|妃|姑娘|丫鬟|公主|千金|female|girl|woman|lady|mother|sister|queen/i.test(text)) {
     return 'female';
