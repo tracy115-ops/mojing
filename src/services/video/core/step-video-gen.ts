@@ -202,7 +202,43 @@ export function tierToDefaultModel(_tier: VideoSpec['videoTier']): string {
   return '';
 }
 
-function buildEnhancedVideoPrompt(shot: ShotSpec): string {
+/**
+ * 智能画面风格增强矩阵：根据用户选择的风格预设与提示词语境，动态匹配最佳画质与艺术调色词，
+ * 彻底消除硬编码风格冲突（如给二次元动漫强加 8K 写实数码、给复古老电影强加现代 ARRI 镜头）。
+ */
+export function getStyleEnhancers(promptText: string, stylePreset?: string): string {
+  const text = (promptText + ' ' + (stylePreset || '')).toLowerCase();
+
+  // 1. 二次元 / 动漫 / 漫画
+  if (stylePreset === 'anime' || /anime|2d|comic|manga|二次元|动漫|动画|手绘|新海诚|日漫/i.test(text)) {
+    return 'vibrant anime visual style, Makoto Shinkai aesthetic, clean cel shading, high quality 2D animation, detailed background artwork, masterpiece anime keyframe, smooth animation movement';
+  }
+
+  // 2. 复古胶片 / 80-90年代港片 / 邵氏武侠
+  if (stylePreset === 'retro_film' || /80年代|90年代|邵氏|港产|武侠|胶片|复古|老电影|黄调|颗粒|色散|软焦|晕光|vintage|retro|film|grain|1980s|1990s|shaw brothers/i.test(text)) {
+    return '1980s vintage 35mm film aesthetic, Shaw Brothers wuxia movie style, warm saturated retro film color grading, soft glow halation, nostalgic analog film texture, optical lens dispersion';
+  }
+
+  // 3. 国风水墨 / 仙侠古风
+  if (/国风|水墨|仙侠|古风|水墨画|汉服|wuxia|xianxia|ink wash|chinese aesthetic/i.test(text)) {
+    return 'traditional Chinese aesthetic, elegant wuxia movie atmosphere, soft atmospheric lighting, graceful oriental artistic composition, cinematic color harmony';
+  }
+
+  // 4. 赛博朋克 / 科幻
+  if (/cyberpunk|sci-fi|neon|futuristic|赛博朋克|科幻|霓虹|机甲/i.test(text)) {
+    return 'cyberpunk aesthetic, vibrant neon reflections, volumetric fog, atmospheric futuristic lighting, cinematic sci-fi composition';
+  }
+
+  // 5. 真实纪录片 / 自然风光
+  if (stylePreset === 'documentary' || /documentary|realistic|nature|real life|纪录片|真实|写实|自然/i.test(text)) {
+    return 'National Geographic documentary style, natural daylight, photorealistic textures, realistic physical details, true-to-life color balance, crisp focus';
+  }
+
+  // 6. 默认: 现代商业级电影大片 (Cinematic)
+  return 'cinematic movie lighting, 35mm lens depth of field, natural motion, high detail, masterpiece composition, no artifact, clean focus';
+}
+
+function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string {
   const basePrompt = shot.videoPrompt.trim();
   const camera = shot.cameraMovement
     ? `${shot.cameraMovement} camera movement, cinematic camera control`
@@ -225,14 +261,8 @@ function buildEnhancedVideoPrompt(shot: ShotSpec): string {
     ? 'seamless motion continuation, consistent lighting and character appearance from previous scene'
     : '';
 
-  // 检测是否属于复古/胶片/80年代/邵氏武侠等老电影风格，避免强制叠加现代 8k ARRI 破损风格
-  const isRetroStyle = /80年代|90年代|邵氏|港产|武侠|胶片|复古|老电影|黄调|颗粒|色散|软焦|晕光|vintage|retro|film|grain|1980s|1990s|shaw brothers/i.test(
-    basePrompt + ' ' + (shot.mood || ''),
-  );
-
-  const styleEnhancers = isRetroStyle
-    ? '1980s Shaw Brothers Hong Kong wuxia movie aesthetic, vintage 35mm film grain, warm saturated retro film color grading, soft glow halation, nostalgic analog film texture, optical lens dispersion, cinematic retro wuxia lighting'
-    : 'shot on 35mm ARRI Alexa LF, masterpiece photorealistic UHD, volumetric lighting, raytracing ambient occlusion, smooth fluid physical motion, natural realistic movement, ultra-detailed textures, crisp focus, no artifact, no face distortion, no flickering, no noise';
+  // 动态匹配多剧种智能画质与美学调色强化词
+  const styleEnhancers = getStyleEnhancers(basePrompt + ' ' + (shot.mood || ''), stylePreset);
 
   const parts = [
     basePrompt,

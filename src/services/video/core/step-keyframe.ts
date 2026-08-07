@@ -13,6 +13,7 @@ import type {
   ModelTier,
 } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
+import { getStyleEnhancers } from './step-video-gen';
 
 export interface KeyframeResult {
   shots: ShotSpec[];
@@ -189,13 +190,7 @@ function buildKeyframePrompt(
     charText = 'no humans, no people, empty scene, background scenery shot';
   }
 
-  const isRetroStyle = /80年代|90年代|邵氏|港产|武侠|胶片|复古|老电影|黄调|颗粒|色散|软焦|晕光|vintage|retro|film|grain|1980s|1990s|shaw brothers/i.test(
-    shot.videoPrompt + ' ' + (style || ''),
-  );
-
-  const qualityTag = isRetroStyle
-    ? '1980s Shaw Brothers Hong Kong wuxia movie aesthetic, vintage 35mm film grain, warm saturated retro film color grading, soft bloom halation, nostalgic analog film texture, optical lens dispersion'
-    : 'masterpiece, 8k resolution, highly detailed, perfect composition';
+  const qualityTag = getStyleEnhancers(shot.videoPrompt + ' ' + (shot.mood || ''), style);
 
   const parts = [
     'cinematic movie keyframe storyboard',
