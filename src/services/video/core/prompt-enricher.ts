@@ -21,12 +21,13 @@ export async function enrichCharacterPromptWithLLM(
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
       systemPrompt: `You are an expert AI character portrait prompt engineer. Convert the given character features into a concise, detailed, high-quality English image generation prompt for a single centered character portrait.
-Output ONLY the raw prompt text, no explanation, no markdown quotes. Must include "solo, 1person, single centered character portrait". Keep under 100 words.`,
+CRITICAL MANDATE: You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
+Output ONLY the raw prompt text, no explanation, no markdown quotes. Must include "solo, 1person, single centered character portrait". Keep under 120 words.`,
       userPrompt: `Character Name: ${c.name}
 Features: ${c.appearance}
 Costume: ${costumeOverride || 'default'}
 Style: ${style || 'cinematic'}`,
-      temperature: 0.5,
+      temperature: 0.3,
       maxTokens: 250,
     });
 
