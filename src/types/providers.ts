@@ -88,6 +88,7 @@ export type LLMTaskType =
   | 'extraction'     // 结构化提取（摘要/三元组/伏笔）
   | 'analysis'       // 叙事分析（紧张度评分/风格检测）
   | 'translation'    // 跨模块翻译（小说→漫画脚本）
+  | 'prompt_optimization' // 提示词动态膨胀与渲染优化
   | 'embedding';     // 文本向量化
 
 export type ImageTaskType =
