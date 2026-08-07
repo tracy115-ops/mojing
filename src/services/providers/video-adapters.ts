@@ -59,6 +59,31 @@ function pickAgnesFramesTier(durationSeconds?: number): { numFrames: number; fra
   return picked;
 }
 
+/** 递归扫描任意 JSON 响应对象，精确提取合法的 HTTP/HTTPS 视频文件 URL */
+function findHttpVideoUrlInObject(obj: unknown): string | null {
+  if (!obj || typeof obj !== 'object') return null;
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findHttpVideoUrlInObject(item);
+      if (found) return found;
+    }
+    return null;
+  }
+  const record = obj as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const val = record[key];
+    if (typeof val === 'string' && /^https?:\/\//i.test(val)) {
+      if (/\.(mp4|webm|mov|mkv)(\?|$)/i.test(val) || /video|media|output|stream/i.test(key) || /video|media|mp4/i.test(val)) {
+        return val;
+      }
+    } else if (typeof val === 'object' && val !== null) {
+      const found = findHttpVideoUrlInObject(val);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 // --- Kling Video Adapter ---
 //
 // Kling 官方文档路径(https://doc.shuyanai.com/doc-9001142):
@@ -529,14 +554,27 @@ export class AgnesVideoProvider extends BaseVideoProvider {
     const state = (data.state ?? data.status ?? data.task_status ?? '').toLowerCase();
 
     if (state === 'success' || state === 'succeeded' || state === 'completed') {
-      // 文档规定最终视频 URL 在 `remixed_from_video_id` 字段(不是 video_url)。
-      // 兼容老字段名 video_url / output.video_url 以防代理站改写。
-      const videoUrl =
-        data.remixed_from_video_id ??
-        data.video_url ??
-        data.output?.video_url ??
-        data.data?.video_url ??
+      // 严禁误取 `remixed_from_video_id`(此字段为 video_xxx 格式的 ID 字符串，非播放 URL，会导致播放器显示纯文字与合成失败)。
+      // 优先从官方及各中转站的标准 HTTP(S) URL 字段中提取播放地址：
+      let videoUrl =
+        (typeof data.video_url === 'string' && /^https?:\/\//i.test(data.video_url) ? data.video_url : null) ??
+        (typeof data.url === 'string' && /^https?:\/\//i.test(data.url) ? data.url : null) ??
+        (typeof data.video === 'string' && /^https?:\/\//i.test(data.video) ? data.video : null) ??
+        (typeof data.output?.video_url === 'string' && /^https?:\/\//i.test(data.output.video_url) ? data.output.video_url : null) ??
+        (typeof data.output?.url === 'string' && /^https?:\/\//i.test(data.output.url) ? data.output.url : null) ??
+        (typeof data.data?.video_url === 'string' && /^https?:\/\//i.test(data.data.video_url) ? data.data.video_url : null) ??
+        (typeof data.data?.url === 'string' && /^https?:\/\//i.test(data.data.url) ? data.data.url : null) ??
+        (typeof data.file_url === 'string' && /^https?:\/\//i.test(data.file_url) ? data.file_url : null) ??
+        (typeof data.download_url === 'string' && /^https?:\/\//i.test(data.download_url) ? data.download_url : null) ??
+        findHttpVideoUrlInObject(data) ??
         '';
+
+      if (!videoUrl || !/^https?:\/\//i.test(videoUrl)) {
+        throw new Error(
+          `Agnes Video: 任务已成功完成，但未能解析到可用的视频播放 HTTP URL (响应片段: ${JSON.stringify(data).slice(0, 300)})`,
+        );
+      }
+
       // 用提交时的档位算实际时长(更准)。兜底 5s。
       const tier = pickAgnesFramesTier(this.requestedDurationSeconds);
       return {
