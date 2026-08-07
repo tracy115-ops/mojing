@@ -12,6 +12,7 @@ import type {
   ImageProviderId,
   VideoProviderId,
   TTSProviderId,
+  ApiEndpoint,
 } from '@/types/providers';
 import { BaseLLMProvider, BaseImageProvider, BaseVideoProvider, BaseTTSProvider } from './base';
 import { OpenAICompatibleProvider, ClaudeProvider } from './llm-adapters';
