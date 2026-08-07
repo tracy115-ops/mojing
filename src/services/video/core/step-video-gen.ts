@@ -118,7 +118,8 @@ async function generateOne(
   // Agnes / 部分其他 provider 的 image 字段要 base64,不接受 URL。
   // asset-store 落盘后 keyframe 可能是 webview URL,这里读盘转回 data URI。
   let referenceImages: string[] = [];
-  const refSource = shot.keyframeImage;
+  const refSource = shot.keyframeImage
+    || options.characters?.find((c) => shot.characterIds.includes(c.id))?.portraitImage;
   if (enableI2V && refSource) {
     const dataUri = await readAsDataUri(refSource);
     if (dataUri) {
