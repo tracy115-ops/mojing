@@ -74,10 +74,8 @@ export async function runKeyframe(
           charRefs.push({ url: variant.portraitImage });
         }
       } else if (c.portraitImage) {
-        // 优先锁死精致单图立绘！单图立绘五官无扭曲、高保真且风格绝对统一！
+        // 100% 独占锁定高清单图立绘！彻底封杀三视图对关键帧人物颜值的污染！
         charRefs.push({ url: c.portraitImage });
-      } else if (c.turnaroundImage) {
-        charRefs.push({ url: c.turnaroundImage });
       }
     }
 
@@ -199,7 +197,7 @@ function buildKeyframePrompt(
     shot.cameraMovement ? `camera angle: ${shot.cameraMovement}` : '',
     style ? `${style} style` : 'cinematic style',
     qualityTag,
-    'no text, no watermark, no signature, no bad anatomy, no extra arms, no fused limbs',
+    'no text, no watermark, no signature, no bad anatomy, no extra arms, no fused limbs, no turnaround sheet, no split screen, no multiple views of same person',
   ].filter(Boolean);
 
   return parts.join(', ');
