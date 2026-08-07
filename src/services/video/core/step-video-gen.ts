@@ -240,39 +240,41 @@ export function getStyleEnhancers(promptText: string, stylePreset?: string): str
 
 function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string {
   const basePrompt = shot.videoPrompt.trim();
-  const camera = shot.cameraMovement
-    ? `${shot.cameraMovement} camera movement, cinematic camera control`
-    : 'subtle natural camera motion, shallow depth of field';
-
-  const mood = shot.mood ? `${shot.mood} lighting and atmosphere` : 'dramatic cinematic lighting';
 
   // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)
   const lipSyncPrompt = shot.narration && shot.narration.trim().length > 0
-    ? 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation, natural facial talking motion'
+    ? 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation'
     : '';
 
   // 多角色同框镜头: 显式注入独立肢体与空间分隔提示词 (解决肢体相互污染粘连的问题)
   const multiCharIsolation = shot.characterIds && shot.characterIds.length > 1
-    ? 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement, perfect anatomy'
+    ? 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement'
     : '';
 
-  // 动效/动量补全：如果是后续镜头，指导 AI 保持与前景相同的色彩与光影过渡
-  const continuityCue = shot.index > 0
-    ? 'seamless motion continuation, consistent lighting and character appearance from previous scene'
-    : '';
+  // 关键原则：用户原始提示词第一优先！
+  // 如果用户的提示词本身已经很详细（> 50 字符），说明用户提供了精准的艺术指导，
+  // 系统绝不上串或硬加预置模板词，保持 100% 用户原意，零污染零稀释！
+  const isUserDetailedPrompt = basePrompt.length > 50;
 
-  // 动态匹配多剧种智能画质与美学调色强化词
+  if (isUserDetailedPrompt) {
+    return [
+      basePrompt,
+      lipSyncPrompt,
+      multiCharIsolation,
+    ].filter(Boolean).join(', ');
+  }
+
+  // 仅在用户提示词极其简短时，才补全默认基础镜头与风格辅助词
+  const camera = shot.cameraMovement ? `${shot.cameraMovement} camera movement` : '';
+  const mood = shot.mood ? `${shot.mood} atmosphere` : '';
   const styleEnhancers = getStyleEnhancers(basePrompt + ' ' + (shot.mood || ''), stylePreset);
 
-  const parts = [
+  return [
     basePrompt,
     camera,
     mood,
     lipSyncPrompt,
     multiCharIsolation,
-    continuityCue,
     styleEnhancers,
-  ].filter(Boolean);
-
-  return parts.join(', ');
+  ].filter(Boolean).join(', ');
 }
