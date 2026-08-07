@@ -35,10 +35,10 @@ const VOICE_PRESETS: VoicePreset[] = [
 
 /** 各 TTS provider 的真实音色 ID(按性别 + 年龄档)。
  *  这些是 provider API 实际接受的字符串。 */
-const REAL_VOICES: Partial<Record<TTSProviderId, {
+const REAL_VOICES: Record<string, {
   female: { child?: string; teen?: string; young: string; middle: string; elder?: string };
   male: { child?: string; teen?: string; young: string; middle: string; elder?: string };
-}>> = {
+}> = {
   // OpenAI TTS 标准 6 个音色:alloy(中性偏男)、echo(男)、fable(中性偏英)、
   // onyx(深男)、nova(女)、shimmer(女)。男声 = echo/onyx,女声 = nova/shimmer。
   'openai-tts': {
@@ -78,7 +78,8 @@ const REAL_VOICES: Partial<Record<TTSProviderId, {
 /** 从角色名字 / 提示词 / 描述中智能识别男女性别 */
 function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
   if (c.gender === 'female' || c.gender === 'male') return c.gender;
-  const text = `${c.name} ${c.prompt || ''} ${c.description || ''}`;
+  const raw = c as Record<string, unknown>;
+  const text = `${c.name} ${c.appearance || ''} ${raw.prompt || ''} ${raw.description || ''}`;
   if (/女|姐|妹|母|妇|娘|姬|婷|美|莉|雪|雅|静|芳|萍|姿|靓|丫|媳|仙|妃|姑娘|丫鬟|公主|千金|female|girl|woman|lady|mother|sister|queen/i.test(text)) {
     return 'female';
   }
