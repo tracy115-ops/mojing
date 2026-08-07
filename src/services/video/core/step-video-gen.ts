@@ -210,12 +210,22 @@ function buildEnhancedVideoPrompt(shot: ShotSpec): string {
 
   const mood = shot.mood ? `${shot.mood} lighting and atmosphere` : 'dramatic cinematic lighting';
 
+  // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)
+  const lipSyncPrompt = shot.narration && shot.narration.trim().length > 0
+    ? 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation, natural facial talking motion'
+    : '';
+
+  // 多角色同框镜头: 显式注入独立肢体与空间分隔提示词 (解决肢体相互污染粘连的问题)
+  const multiCharIsolation = shot.characterIds && shot.characterIds.length > 1
+    ? 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement, perfect anatomy'
+    : '';
+
   // 连贯性动效补全：如果是后续镜头，指导 AI 保持与前景相同的色彩与光影过渡
   const continuityCue = shot.index > 0
     ? 'seamless motion continuation, consistent lighting and character appearance from previous scene'
     : '';
 
-  // 商业级超画质黑科技拼装（让免费/通用 API 也能渲染出极具光影拉满、物理连贯的电影画面）
+  // 商业级超画质黑科技拼装
   const commercialEnhancers = [
     'shot on 35mm ARRI Alexa LF',
     'masterpiece photorealistic 8k UHD',
@@ -225,5 +235,7 @@ function buildEnhancedVideoPrompt(shot: ShotSpec): string {
     'no artifact, no face distortion, no flickering, no noise',
   ].join(', ');
 
-  return [basePrompt, camera, mood, continuityCue, commercialEnhancers].filter(Boolean).join(', ');
+  return [basePrompt, lipSyncPrompt, multiCharIsolation, camera, mood, continuityCue, commercialEnhancers]
+    .filter(Boolean)
+    .join(', ');
 }

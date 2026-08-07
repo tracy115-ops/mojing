@@ -164,17 +164,30 @@ function buildKeyframePrompt(
     .map((id) => charById.get(id))
     .filter((c): c is CharacterAnchor => !!c);
 
-  const charDescriptions = presentChars.map((c) => {
+  let charText = '';
+  if (presentChars.length === 1) {
+    const c = presentChars[0];
     const variantId = shot.costumeVariantRefs?.[c.id];
     const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-    return variant
-      ? `${c.name} (${c.appearance}, wearing ${variant.description})`
-      : `${c.name} (${c.appearance})`;
-  }).join(' and ');
+    const desc = variant ? `${c.name} (${c.appearance}, wearing ${variant.description})` : `${c.name} (${c.appearance})`;
+    charText = `main character in frame: ${desc}, single isolated person, maintain 100% facial features and clothing consistency with reference image`;
+  } else if (presentChars.length > 1) {
+    // 多角色镜头: 注入空间位置标定与防肢体污染粘连指令
+    const positions = ['left side of frame', 'right side of frame', 'center of frame'];
+    const separatedChars = presentChars
+      .map((c, idx) => {
+        const pos = positions[idx % positions.length];
+        const variantId = shot.costumeVariantRefs?.[c.id];
+        const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+        const desc = variant ? `${c.name} (${c.appearance}, wearing ${variant.description})` : `${c.name} (${c.appearance})`;
+        return `${desc} located on ${pos}`;
+      })
+      .join('; distinct separate person: ');
 
-  const charText = presentChars.length
-    ? `main characters in frame: ${charDescriptions}, maintain 100% facial features and clothing consistency with reference image`
-    : 'no humans, no people, empty scene, background scenery shot';
+    charText = `multiple characters in scene: [${separatedChars}]. Standalone distinct individuals with clear spatial separation, no merged bodies, no extra limbs, no overlapping torsos, sharp character silhouettes, perfect anatomy`;
+  } else {
+    charText = 'no humans, no people, empty scene, background scenery shot';
+  }
 
   const parts = [
     'cinematic movie keyframe storyboard',
@@ -185,7 +198,7 @@ function buildKeyframePrompt(
     shot.cameraMovement ? `camera angle: ${shot.cameraMovement}` : '',
     style ? `${style} style` : 'cinematic style',
     'masterpiece, 8k resolution, highly detailed, perfect composition',
-    'no text, no watermark, no signature, no bad anatomy',
+    'no text, no watermark, no signature, no bad anatomy, no extra arms, no fused limbs',
   ].filter(Boolean);
 
   return parts.join(', ');
