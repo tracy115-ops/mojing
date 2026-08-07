@@ -42,8 +42,17 @@ const REAL_VOICES: Partial<Record<TTSProviderId, {
   // OpenAI TTS 标准 6 个音色:alloy(中性偏男)、echo(男)、fable(中性偏英)、
   // onyx(深男)、nova(女)、shimmer(女)。男声 = echo/onyx,女声 = nova/shimmer。
   'openai-tts': {
-    female: { young: 'nova', middle: 'shimmer', elder: 'shimmer' },
-    male: { young: 'echo', middle: 'onyx', elder: 'onyx' },
+    female: { child: 'nova', young: 'nova', middle: 'shimmer', elder: 'shimmer' },
+    male: { child: 'echo', young: 'echo', middle: 'onyx', elder: 'onyx' },
+  },
+  // 硅基流动 TTS 预设音色(CosyVoice / FishSpeech)
+  'siliconflow-tts': {
+    female: { child: 'claire', young: 'anna', middle: 'bella', elder: 'diana' },
+    male: { child: 'benjamin', young: 'alex', middle: 'david', elder: 'charles' },
+  },
+  '302ai-tts': {
+    female: { child: 'claire', young: 'anna', middle: 'bella', elder: 'diana' },
+    male: { child: 'benjamin', young: 'alex', middle: 'david', elder: 'charles' },
   },
   // Edge TTS 中文音色(微软官方,免费)
   'edge-tts': {
@@ -66,30 +75,42 @@ const REAL_VOICES: Partial<Record<TTSProviderId, {
   },
 };
 
+/** 从角色名字 / 提示词 / 描述中智能识别男女性别 */
+function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
+  if (c.gender === 'female' || c.gender === 'male') return c.gender;
+  const text = `${c.name} ${c.prompt || ''} ${c.description || ''}`;
+  if (/女|姐|妹|母|妇|娘|姬|婷|美|莉|雪|雅|静|芳|萍|姿|靓|丫|媳|仙|妃|姑娘|丫鬟|公主|千金|female|girl|woman|lady|mother|sister|queen/i.test(text)) {
+    return 'female';
+  }
+  if (/男|哥|弟|父|爷|叔|伯|汉|郎|帅|伟|强|军|平|峰|刚|建|公|少爷|老头|公子|国王|王爷|male|boy|man|father|brother|king/i.test(text)) {
+    return 'male';
+  }
+  return 'unknown';
+}
+
 export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAssignResult> {
   const providerId = providerRouter.getActiveTTSProviderId();
 
-  // 第一轮:给 gender 已知的角色分配真实音色
-  // 第二轮:给 gender=unknown 的角色轮流分配,保证多角色不撞同一音色
-  // (之前 unknown 直接跳过 → 该角色永远没 voiceRef → step-tts 选不到)
+  // 第一轮:给 gender 已知或可推断出的角色分配真实音色
   const usedVoices = new Set<string>();
   const result: CharacterAnchor[] = characters.map((c) => {
     if (c.voiceRef) {
       usedVoices.add(c.voiceRef);
       return c;
     }
-    const realVoice = pickRealVoice(providerId, c.gender, c.ageGroup);
+    const resolvedGender = inferGender(c);
+    const realVoice = pickRealVoice(providerId, resolvedGender, c.ageGroup);
     if (realVoice) {
       usedVoices.add(realVoice);
-      return { ...c, voiceRef: realVoice };
+      return { ...c, gender: resolvedGender !== 'unknown' ? resolvedGender : c.gender, voiceRef: realVoice };
     }
     return c;
   });
 
-  // gender=unknown 的角色:轮流从 provider 的全部音色里挑没用过的
+  // 第二轮: gender 依然 unknown 的角色，轮流分配不同音色
   if (providerId && REAL_VOICES[providerId]) {
     const table = REAL_VOICES[providerId];
-    // 拍平所有可选音色,先女后男(unknown 时默认倾向女声,中文旁白女声更常见)
+    // 拍平所有可选音色,交替分配
     const allVoices: string[] = [
       ...Object.values(table.female),
       ...Object.values(table.male),
@@ -97,7 +118,6 @@ export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAss
     let nextIdx = 0;
     for (let i = 0; i < result.length; i++) {
       if (result[i].voiceRef) continue;
-      // 找一个没用过的
       let pick: string | undefined;
       for (let k = 0; k < allVoices.length; k++) {
         const idx = (nextIdx + k) % allVoices.length;
@@ -107,7 +127,6 @@ export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAss
           break;
         }
       }
-      // 全都用过了 → 兜底取第一个
       if (!pick) {
         pick = allVoices[nextIdx % allVoices.length];
         nextIdx++;
@@ -120,25 +139,22 @@ export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAss
   return { characters: result };
 }
 
-/** 按当前 TTS provider 选真实音色 ID。provider 未配置或未知时返回 undefined
- *  (让 step-tts 走 provider 的默认音色,不强行覆盖)。 */
+/** 按当前 TTS provider 选真实音色 ID。provider 未配置或未知时返回 undefined */
 function pickRealVoice(
   providerId: TTSProviderId | null,
   gender: CharacterAnchor['gender'],
   ageGroup: CharacterAnchor['ageGroup'],
 ): string | undefined {
   if (!providerId) return undefined;
-  const table = REAL_VOICES[providerId];
+  const table = REAL_VOICES[providerId] ?? REAL_VOICES['openai-tts'];
   if (!table) return undefined;
 
   // gender 已知:严格在对应性别里挑
   if (gender === 'male' || gender === 'female') {
     const byAge = table[gender];
-    // ageGroup 可能是 'unknown' 或没对应档 → 兜底 young
     const byAgeTyped = byAge as Record<string, string | undefined>;
     return (ageGroup ? byAgeTyped[ageGroup] : undefined) ?? byAge.young;
   }
-  // gender 未知 → 返回 undefined,由上层 stepVoice 轮流分配
   return undefined;
 }
 
