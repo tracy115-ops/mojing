@@ -704,7 +704,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           {/* Shots 列表(底部固定高度,可折叠) */}
           {shots.length > 0 && (
             <div style={{
-              height: 180, flexShrink: 0,
+              maxHeight: 260, minHeight: 140, flexShrink: 0,
               borderTop: '1px solid var(--border-secondary)',
               display: 'flex', flexDirection: 'column',
               background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
