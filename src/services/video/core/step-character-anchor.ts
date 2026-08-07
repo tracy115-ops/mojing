@@ -209,8 +209,9 @@ function buildPortraitPrompt(
   const parts = [
     `solo, 1person, single character portrait of ${c.name}`,
     asianBeautyTag,
-    `character appearance and physical features: ${c.appearance}`,
+    `complete character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
+    'full-body character design lock, 100% identical face, hairstyle, hair color, clothing outfit, costume details, body proportions, and accessories',
     'neutral pose, plain simple solid background, studio lighting',
     'full body visible from head to toe, single centered figure',
     artTypeTag,
@@ -229,7 +230,7 @@ function truncate(s: string | undefined, max: number): string {
  * 三视图(turnaround / model sheet)prompt 模板。
  * 让 provider 在同一张图里画出 正面/侧面/背面 三个角度。
  * 调用时通常会传入 default 单图作 reference,让三视图里的角色和单图保持一致。
- * 后续 keyframe 拿到三视图后会自动裁出正面那 1/3 作为 reference。
+ * 后续 keyframe 拿到三视图后会自动裁出中间 1/3 作为 reference。
  */
 function buildTurnaroundPrompt(
   c: CharacterAnchor,
@@ -251,10 +252,10 @@ function buildTurnaroundPrompt(
     : 'photorealistic character turnaround photo sheet, 3 full body photography views';
 
   const parts = [
-    `character turnaround sheet, 3 full body views of ${c.name}, 100% identical face and person as reference image 0`,
+    `character turnaround sheet, 3 full body views of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
     asianBeautyTag,
     `front view, side profile view, back view, standing side-by-side`,
-    `character features: ${appearance}`,
+    `character appearance, hair, costume, outfit, and body shape: ${appearance}`,
     'neutral standing pose, A-pose, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
     artTypeTag,

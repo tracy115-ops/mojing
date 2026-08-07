@@ -178,8 +178,8 @@ function buildKeyframePrompt(
       ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes'
       : '';
 
-    const closeUpTag = isCloseUp ? ', extreme close-up facial shot, 100% exact facial feature match with reference image 0, identical face, eyes, hair, skin tone' : '';
-    charText = `main character in frame: ${desc}, ${asianBeautyTag}, single isolated person, 100% identical face and features with reference image 0${closeUpTag}`;
+    const closeUpTag = isCloseUp ? ', extreme close-up facial shot, 100% exact facial and hair feature match with reference image 0, identical face, eyes, hair, skin tone' : '';
+    charText = `main character in frame: ${desc}, ${asianBeautyTag}, single isolated person, 100% exact full-body character design match with reference image 0: identical face, identical hair, identical hairstyle, identical costume, identical clothing outfit, identical accessories, and identical body proportions${closeUpTag}`;
   } else if (presentChars.length > 1) {
     // 多角色镜头: 注入空间位置标定与防肢体污染粘连指令
     const positions = ['left side of frame', 'right side of frame', 'center of frame'];
