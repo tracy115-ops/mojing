@@ -494,6 +494,36 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
     store.addClip(pid, clip);
     store.setStageStatus(pid, stage, 'completed');
     void logger.info(`[pipeline] rerunSingleShot SUCCESS shotId=${shotId} provider=${response.provider}`, 'pipeline');
+
+    // 体验极速更新：单镜重跑成功后，自动在后台更新音视对齐与成片合成！
+    // 这样用户重新生成某个镜头后，主预览视频会自动刷新为最新成片！
+    try {
+      const { executeAudioMerge, executeCompose } = await import('./stage-handlers');
+      const updatedProj = useVideoStore.getState().getProject(pid);
+      if (updatedProj && updatedProj.sceneSpec) {
+        const stageCtx = {
+          pid,
+          workingSpec: updatedProj.sceneSpec,
+          options: {
+            enableCharacterAnchor: true,
+            enableSceneImage: true,
+            enableTTS: true,
+            enableKeyframe: true,
+            enableI2V: true,
+            enableAudioMerge: true,
+            enableSubtitles: true,
+            characterAnchorLimit: 5,
+          },
+          videoGen: { spec: updatedProj.spec },
+          clips: updatedProj.clips,
+        };
+        await executeAudioMerge(stageCtx);
+        await executeCompose({ ...stageCtx, clips: useVideoStore.getState().getProject(pid)?.clips || updatedProj.clips });
+      }
+    } catch (composeErr) {
+      void logger.warn(`[pipeline] rerunSingleShot auto-compose skipped: ${composeErr}`, 'pipeline');
+    }
+
     return clip;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
