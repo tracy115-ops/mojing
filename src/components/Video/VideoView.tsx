@@ -67,13 +67,14 @@ const VideoView: React.FC = () => {
       fps: values.fps,
     } as Partial<VideoMetadata>);
     
+    const duration = values.shotDurationSeconds || 5;
     // 初始化 videoStore 中的对应项目运行时状态
     const store = useVideoStore.getState();
     const spec = {
       aspectRatio: (values.aspectRatio as any) || '16:9',
       resolution: values.resolution || '1920x1080',
       fps: values.fps || 24,
-      shotDurationSeconds: 5 as const,
+      shotDurationSeconds: duration as any,
       videoTier: 'value' as const,
       imageTier: 'value' as const,
       ttsTier: 'free' as const,
@@ -91,9 +92,11 @@ const VideoView: React.FC = () => {
       // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成（启用 14 步完整流程包含 TTS 与场景图）
       message.loading({ content: '正在为您的提示词分析分镜并启动生成...', key: 'create-pipeline' });
       try {
-        const sceneSpec = await buildSceneFromPrompt(values.prompt, 'extract', {
+        const mode = values.targetDurationSeconds && values.targetDurationSeconds > 5 ? 'multishot' : 'extract';
+        const sceneSpec = await buildSceneFromPrompt(values.prompt, mode, {
           aspectRatio: (values.aspectRatio as any) || '16:9',
-          defaultShotDuration: 5,
+          defaultShotDuration: duration,
+          targetDurationSeconds: values.targetDurationSeconds,
           style: values.style,
         });
         store.setSceneSpec(project.id, sceneSpec);
@@ -117,7 +120,8 @@ const VideoView: React.FC = () => {
         try {
           const sceneSpec = await buildSceneFromPrompt(values.scriptText, 'multishot', {
             aspectRatio: (values.aspectRatio as any) || '16:9',
-            defaultShotDuration: 5,
+            defaultShotDuration: duration,
+            targetDurationSeconds: values.targetDurationSeconds,
             style: values.style,
           });
           store.setSceneSpec(project.id, sceneSpec);

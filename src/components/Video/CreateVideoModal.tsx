@@ -17,6 +17,8 @@ export interface CreateVideoFormValues {
   resolution: string;
   aspectRatio: string;
   fps: number;
+  shotDurationSeconds: 3 | 5 | 10 | 15 | 18;
+  targetDurationSeconds?: 5 | 15 | 30 | 60;
 }
 
 interface CreateVideoModalProps {
@@ -58,7 +60,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
       }}
       okText={mode === 'direct' ? '⚡ 创建并直接生成视频' : '🚀 创建并开启全流程 AI 生成'}
       cancelText={t('common.cancel')}
-      width={520}
+      width={560}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >
@@ -102,6 +104,8 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
           resolution: '1920x1080',
           aspectRatio: '16:9',
           fps: 24,
+          shotDurationSeconds: 5,
+          targetDurationSeconds: 15,
         }}
       >
         <Form.Item
@@ -144,6 +148,29 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
         )}
 
         <div style={{ display: 'flex', gap: 16 }}>
+          <Form.Item name="targetDurationSeconds" label="期望成片总时长" style={{ flex: 1 }}>
+            <Select
+              options={[
+                { value: 5, label: '5 秒 (单镜头预览)' },
+                { value: 15, label: '15 秒 (短视频 3 镜头)' },
+                { value: 30, label: '30 秒 (剧情短片 6 镜头)' },
+                { value: 60, label: '60 秒 (完整大片 12 镜头)' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="shotDurationSeconds" label="单镜头时长" style={{ flex: 1 }}>
+            <Select
+              options={[
+                { value: 3, label: '3 秒 (快节奏)' },
+                { value: 5, label: '5 秒 (标准镜头)' },
+                { value: 10, label: '10 秒 (长镜头)' },
+                { value: 15, label: '15 秒 (特长慢镜头)' },
+              ]}
+            />
+          </Form.Item>
+        </div>
+
+        <div style={{ display: 'flex', gap: 16 }}>
           <Form.Item name="style" label={t('video.style')} style={{ flex: 1 }}>
             <Select
               options={[
@@ -175,7 +202,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
               ]}
             />
           </Form.Item>
-          <Form.Item name="fps" label="FPS" style={{ flex: 1 }}>
+          <Form.Item name="fps" label="FPS 帧率" style={{ flex: 1 }}>
             <InputNumber min={12} max={60} style={{ width: '100%' }} />
           </Form.Item>
         </div>
