@@ -661,44 +661,22 @@ fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, Str
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // 先探测视频是否带音轨 — 不带音轨就只 mux TTS 进去(原 map 1:a 路径),
-    // 带音轨就走 amix 混合(避免原音丢失)。
-    let has_audio = clip_has_audio_stream(&req.video_path).unwrap_or(false);
-
+    // 彻底解决「重音/双音轨干涉」问题：
+    // AI 视频生成模型（如 Kling/Vidu/MiniMax）返回的原视频可能自带嘈杂人声/杂音。
+    // 强制使用 -map 0:v:0（仅取原视频画面）与 -map 1:a:0（只取 TTS 配音），
+    // 抹除原视频自带杂音，保证配音纯净清晰，且使用 -c:v copy 实现毫秒级无损合并。
     let mut cmd = FfmpegCommand::new();
     cmd.arg("-y")
+        .arg("-err_detect").arg("ignore_err")
         .input(req.video_path.clone())
-        .input(req.audio_path.clone());
-
-    if has_audio {
-        // 视频原本带音轨:amix 把两条音轨混合(TTS 主,原音降到 30% 做背景)。
-        // duration=first 以输入 0(原视频音轨)为准 — amix 输出与视频同长,
-        // 避免 TTS 比视频长时音视不同步。
-        // 注意:-filter_complex 用不了 -c:v copy,必须重编码视频。
-        cmd.arg("-filter_complex")
-            .arg("[0:a]volume=0.30[a0];[1:a]volume=1.0[a1];[a0][a1]amix=inputs=2:duration=first[aout]")
-            .arg("-map").arg("0:v")
-            .arg("-map").arg("[aout]")
-            .arg("-c:v").arg("libx264")
-            .arg("-preset").arg("ultrafast")
-            .arg("-pix_fmt").arg("yuv420p")
-            .arg("-c:a").arg("aac")
-            .arg("-b:a").arg("192k");
-    } else {
-        // 视频没有音轨:只把 TTS 接进去。
-        // 关键:必须加 -shortest,以视频流时长为准截断。
-        // 不加的话,当 TTS 比视频长(Doubao 关了 generate_audio,视频常 5s,
-        // TTS 按文字长度可能 8-12s)时,输出 container 时长 = 音频时长,
-        // 视频流提前结束 → 后半段无视频帧 → webview 播放器报告 0 时长 / 黑屏。
-        cmd.arg("-c:v").arg("copy")
-            .arg("-c:a").arg("aac")
-            .arg("-b:a").arg("192k")
-            .arg("-shortest")
-            .arg("-map").arg("0:v")
-            .arg("-map").arg("1:a");
-    }
-
-    cmd.output(out_path.to_string_lossy().to_string());
+        .input(req.audio_path.clone())
+        .arg("-c:v").arg("copy")
+        .arg("-c:a").arg("aac")
+        .arg("-b:a").arg("192k")
+        .arg("-shortest")
+        .arg("-map").arg("0:v:0")
+        .arg("-map").arg("1:a:0")
+        .output(out_path.to_string_lossy().to_string());
 
     run_to_completion(cmd, "ffmpeg merge_audio")?;
 
