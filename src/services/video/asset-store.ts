@@ -315,8 +315,8 @@ export async function readAsDataUri(urlOrPath: string): Promise<string> {
  */
 export function resolveLocalPath(url: string): string {
   if (!url) return url;
-  // webview URL: http(s)://asset.localhost/<encoded path>
-  const m = url.match(/^https?:\/\/asset\.localhost\/(.*)$/);
+  // webview URL: http(s)://asset.localhost/<path> or asset://(localhost/)?<path>
+  const m = url.match(/^(?:https?:\/\/asset\.localhost\/|asset:\/\/(?:localhost\/)?)(.*)$/i);
   if (m) {
     try {
       return decodeURIComponent(m[1]);
@@ -333,9 +333,9 @@ export function resolveLocalPath(url: string): string {
  */
 export function isRemoteUrl(url: string): boolean {
   if (!url) return false;
-  if (!/^https?:\/\//.test(url)) return false;
+  if (!/^https?:\/\//i.test(url)) return false;
   // asset.localhost 是 Tauri 的 asset protocol host,算本地
-  if (/^https?:\/\/asset\.localhost\//.test(url)) return false;
+  if (/^https?:\/\/(asset\.localhost|localhost)\//i.test(url)) return false;
   return true;
 }
 

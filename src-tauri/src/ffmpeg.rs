@@ -127,12 +127,15 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
+    // 将视频/音频路径解包（去除 http://asset.localhost/ 或 asset:// 前缀并 URL 解码为本地物理路径）
+    let sanitized_clip_paths: Vec<String> = req.clip_paths.iter().map(|p| sanitize_clip_path(p)).collect();
+
     // 过滤掉无视频流的 clip(图片 / 0 字节 / HTML 错误页等)。
     // ffmpeg 拿到这些会报 "No streams found",直接整步失败。
     // 过滤后保留对应的 subtitle,顺序不变。
     let mut valid_paths: Vec<String> = Vec::new();
     let mut valid_subs: Vec<Option<String>> = Vec::new();
-    for (i, p) in req.clip_paths.iter().enumerate() {
+    for (i, p) in sanitized_clip_paths.iter().enumerate() {
         let path = PathBuf::from(p);
         if !path.exists() {
             eprintln!("[compose] skip clip {}: file not exist: {}", i, p);
@@ -494,6 +497,41 @@ fn escape_drawtext_text(text: &str) -> String {
         .replace('%', "\\%")
 }
 
+/// URL decode %XX strings into a UTF-8 String without extra dependencies.
+fn url_decode(s: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut chars = s.as_bytes().iter().peekable();
+    while let Some(&b) = chars.next() {
+        if b == b'%' {
+            let h1 = chars.next().and_then(|&b| (b as char).to_digit(16));
+            let h2 = chars.next().and_then(|&b| (b as char).to_digit(16));
+            if let (Some(h1), Some(h2)) = (h1, h2) {
+                bytes.push((h1 * 16 + h2) as u8);
+                continue;
+            }
+            bytes.push(b'%');
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
+}
+
+/// 把 webview 资源 URL（http://asset.localhost/... 或 asset://...）解包还原为物理磁盘绝对路径。
+fn sanitize_clip_path(p: &str) -> String {
+    let unquoted = p.trim().trim_matches('"').trim_matches('\'');
+    let raw = if let Some(stripped) = unquoted.strip_prefix("http://asset.localhost/")
+        .or_else(|| unquoted.strip_prefix("https://asset.localhost/"))
+        .or_else(|| unquoted.strip_prefix("asset://localhost/"))
+        .or_else(|| unquoted.strip_prefix("asset://"))
+    {
+        url_decode(stripped)
+    } else {
+        unquoted.to_string()
+    };
+    raw.replace('/', "\\")
+}
+
 /// Probe duration via ffprobe and stat file size, attach to the result.
 fn attach_meta(mut r: ComposeResult, path: &Path) -> ComposeResult {
     if let Ok(meta) = std::fs::metadata(path) {
@@ -509,7 +547,13 @@ fn attach_meta(mut r: ComposeResult, path: &Path) -> ComposeResult {
 fn probe_duration(path: &Path) -> Option<f64> {
     let path_str = path.to_string_lossy().to_string();
     let ffprobe = ffprobe_path()?;
-    let output = std::process::Command::new(ffprobe)
+    let mut cmd = std::process::Command::new(ffprobe);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd
         .args([
             "-v", "error",
             "-show_entries", "format=duration",
@@ -539,7 +583,13 @@ fn probe_has_video_stream(path: &Path) -> bool {
         // ffprobe 找不到 → 不能校验,放行让 ffmpeg 自己处理(保留旧行为)
         return true;
     };
-    let output = std::process::Command::new(ffprobe)
+    let mut cmd = std::process::Command::new(ffprobe);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd
         .args([
             "-v", "error",
             "-select_streams", "v",
@@ -586,6 +636,8 @@ fn which_ffprobe() -> Option<PathBuf> {
 /// Spawn an FfmpegCommand, iterate events, surface errors and exit status.
 /// ffmpeg-sidecar v2 API requires this manual event loop — there is no `.run()`.
 fn run_to_completion(mut cmd: FfmpegCommand, label: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    cmd.create_no_window();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("{} spawn failed: {:?}", label, e))?;
