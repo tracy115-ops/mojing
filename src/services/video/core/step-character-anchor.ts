@@ -199,7 +199,7 @@ function buildPortraitPrompt(
   // 如果包含写实/胶片/老电影/复古/邵氏等词，避免注入 concept art（防止生出 2D 卡通化立绘）
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const artTypeTag = isCartoonOrAnime
-    ? 'high quality 2D anime character sheet, detailed anime artwork'
+    ? 'high quality 2D anime single character portrait, detailed anime artwork'
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
   // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
@@ -211,7 +211,7 @@ function buildPortraitPrompt(
     'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy',
+    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean);
   return parts.join(', ');
 }

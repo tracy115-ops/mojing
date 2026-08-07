@@ -21,7 +21,7 @@ export async function enrichCharacterPromptWithLLM(
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
       systemPrompt: `You are an expert AI character portrait prompt engineer. Convert the given character features into a concise, detailed, high-quality English image generation prompt for a single centered character portrait.
-CRITICAL MANDATE: You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
+CRITICAL MANDATE: Must be a SINGLE INDIVIDUAL figure in frame. Do NOT include words like "character sheet", "model sheet", "turnaround", "multiple views". You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
 Output ONLY the raw prompt text, no explanation, no markdown quotes. Must include "solo, 1person, single centered character portrait". Keep under 120 words.`,
       userPrompt: `Character Name: ${c.name}
 Features: ${c.appearance}
@@ -33,7 +33,7 @@ Style: ${style || 'cinematic'}`,
 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
-      return `${enriched}, solo, 1person, ${styleEnhancer}, high quality, no text, no watermark, no bad anatomy`;
+      return `${enriched}, solo, 1person, ${styleEnhancer}, high quality, no text, no watermark, no bad anatomy, no character sheet, no turnaround, no multiple views`;
     }
   } catch (err) {
     console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
@@ -81,7 +81,7 @@ function defaultCharacterPrompt(
 ): string {
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(`${c.name} ${c.appearance} ${style || ''}`);
   const artTypeTag = isCartoonOrAnime
-    ? 'high quality 2D anime character sheet, detailed anime artwork'
+    ? 'high quality 2D anime single character portrait, detailed anime artwork'
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
   return [
@@ -92,7 +92,7 @@ function defaultCharacterPrompt(
     'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy',
+    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean).join(', ');
 }
 
