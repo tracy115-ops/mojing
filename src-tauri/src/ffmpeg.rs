@@ -315,13 +315,18 @@ fn compose_reencode_only(req: &ComposeRequest, out: &Path) -> Result<ComposeResu
     let mut rendered_paths: Vec<PathBuf> = Vec::new();
     for (i, clip_src) in req.clip_paths.iter().enumerate() {
         let rendered = job_dir.join(format!("clip_{:04}.mp4", i));
+        let has_audio = clip_has_audio_stream(clip_src).unwrap_or(false);
         let mut cmd = FfmpegCommand::new();
         cmd.arg("-y")
             .arg("-err_detect").arg("ignore_err")
             .input(clip_src.to_string())
-            .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20")
-            .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
-            .arg("-pix_fmt").arg("yuv420p")
+            .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
+        if has_audio {
+            cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
+        } else {
+            cmd.arg("-an");
+        }
+        cmd.arg("-pix_fmt").arg("yuv420p")
             .output(rendered.to_string_lossy().to_string());
         match run_to_completion(cmd, "ffmpeg reencode fallback") {
             Ok(()) => {
@@ -388,6 +393,8 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         let sub = req.subtitles[i].as_deref().filter(|t| !t.is_empty());
         let rendered = job_dir.join(format!("clip_{:04}.mp4", i));
 
+        let has_audio = clip_has_audio_stream(clip_src).unwrap_or(false);
+
         // 编码命令统一加上 -err_detect ignore_err,容忍个别坏 packet。
         // 单个 clip 编码失败时跳过(不冒泡),让其余 clip 仍能拼出最终视频。
         let encode_result: Result<(), String> = if let Some(text) = sub {
@@ -401,9 +408,13 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
                 .arg("-err_detect").arg("ignore_err")
                 .input(clip_src.to_string())
                 .arg("-vf").arg(filter)
-                .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20")
-                .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
-                .arg("-pix_fmt").arg("yuv420p")
+                .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
+            if has_audio {
+                cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
+            } else {
+                cmd.arg("-an");
+            }
+            cmd.arg("-pix_fmt").arg("yuv420p")
                 .output(rendered.to_string_lossy().to_string());
             run_to_completion(cmd, "ffmpeg drawtext+reencode")
         } else {
@@ -412,9 +423,13 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
             cmd.arg("-y")
                 .arg("-err_detect").arg("ignore_err")
                 .input(clip_src.to_string())
-                .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20")
-                .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
-                .arg("-pix_fmt").arg("yuv420p")
+                .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
+            if has_audio {
+                cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
+            } else {
+                cmd.arg("-an");
+            }
+            cmd.arg("-pix_fmt").arg("yuv420p")
                 .output(rendered.to_string_lossy().to_string());
             run_to_completion(cmd, "ffmpeg reencode")
         };
