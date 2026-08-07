@@ -99,6 +99,9 @@ const VideoView: React.FC = () => {
           style: values.style,
         });
         store.setSceneSpec(project.id, sceneSpec);
+        store.setStageStatus(project.id, 'script_slicing', 'completed', { progress: 1 });
+        store.setStageStatus(project.id, 'storyboard_prompt', 'completed', { progress: 1 });
+        store.setStageStatus(project.id, 'extraction', 'completed', { progress: 1 });
         runPipeline({
           novelProjectId: project.id,
           spec: sceneSpec,

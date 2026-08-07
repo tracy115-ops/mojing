@@ -239,6 +239,11 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       }, taskTitle);
 
       // 切到主面板并激活对应项目,不再切空
+      useVideoStore.getState().setSceneSpec(targetProjectId, sceneSpec);
+      useVideoStore.getState().setStageStatus(targetProjectId, 'script_slicing', 'completed', { progress: 1 });
+      useVideoStore.getState().setStageStatus(targetProjectId, 'storyboard_prompt', 'completed', { progress: 1 });
+      useVideoStore.getState().setStageStatus(targetProjectId, 'extraction', 'completed', { progress: 1 });
+
       useProjectStore.getState().setActiveProject(targetProjectId);
       useVideoStore.getState().setActivePipelineId(targetProjectId);
       onClose();
