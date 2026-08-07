@@ -13,6 +13,7 @@
 import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, ModelTier } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
+import { enrichCharacterPromptWithLLM } from './prompt-enricher';
 
 export interface CharacterAnchorResult {
   /** 更新后的角色(立绘已填入 portraitImage / turnaroundImage / costumeVariants[].portraitImage) */
@@ -71,7 +72,7 @@ export async function runCharacterAnchor(
     const customPrompt = ctx.characterPrompts?.[c.id] || ctx.characterPrompts?.[c.name];
     const portraitPrompt = customPrompt && customPrompt.trim()
       ? customPrompt
-      : buildPortraitPrompt(c, limited, ctx.style);
+      : await enrichCharacterPromptWithLLM(c, ctx.style);
     let portraitOk = false;
     try {
       const img = await providerRouter.generateImage({

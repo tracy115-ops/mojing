@@ -4,6 +4,7 @@
 import { providerRouter } from '@/services/providers';
 import type { SceneAnchor, AspectRatio, ModelTier } from '@/types/video';
 import { saveAsset } from '../asset-store';
+import { enrichScenePromptWithLLM } from './prompt-enricher';
 
 export interface SceneImageResult {
   scenes: SceneAnchor[];
@@ -31,9 +32,10 @@ export async function runSceneImage(
       if (i > 0) {
         await new Promise((resolve) => setTimeout(resolve, 800));
       }
+      const scenePrompt = await enrichScenePromptWithLLM(s, ctx.style);
       const img = await providerRouter.generateImage({
         taskType: 'scene',
-        prompt: buildScenePrompt(s, ctx.style),
+        prompt: scenePrompt,
         width: dims.w,
         height: dims.h,
         style: ctx.style,
