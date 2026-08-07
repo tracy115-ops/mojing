@@ -13,7 +13,7 @@ import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
 import { runPipeline } from '@/services/video/core/pipeline-runner';
-import { DEFAULT_SKIPPED_STAGES } from '@/types/video';
+import { DIRECT_MODE_PRESETS } from '@/types/video';
 
 const { Text, Title } = Typography;
 
@@ -89,10 +89,7 @@ const VideoView: React.FC = () => {
         runPipeline({
           novelProjectId: project.id,
           spec: sceneSpec,
-          options: {
-            enableI2V: true,
-            skippedStages: DEFAULT_SKIPPED_STAGES,
-          },
+          options: DIRECT_MODE_PRESETS.extract,
           videoGen: {
             spec,
           },
@@ -116,10 +113,7 @@ const VideoView: React.FC = () => {
           runPipeline({
             novelProjectId: project.id,
             spec: sceneSpec,
-            options: {
-              enableI2V: true,
-              skippedStages: DEFAULT_SKIPPED_STAGES,
-            },
+            options: DIRECT_MODE_PRESETS.multishot,
             videoGen: {
               spec,
             },
