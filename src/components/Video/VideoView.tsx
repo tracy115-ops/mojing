@@ -17,6 +17,17 @@ import { DIRECT_MODE_PRESETS } from '@/types/video';
 
 const { Text, Title } = Typography;
 
+const FULL_PIPELINE_OPTIONS: PipelineOptions = {
+  enableCharacterAnchor: true,
+  enableSceneImage: true,
+  enableTTS: true,
+  enableKeyframe: true,
+  enableI2V: true,
+  enableAudioMerge: true,
+  enableSubtitles: true,
+  characterAnchorLimit: 5,
+};
+
 const VideoView: React.FC = () => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
@@ -77,7 +88,7 @@ const VideoView: React.FC = () => {
     setCreateOpen(false);
 
     if (values.mode === 'direct' && values.prompt) {
-      // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成
+      // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成（启用 14 步完整流程包含 TTS 与场景图）
       message.loading({ content: '正在为您的提示词分析分镜并启动生成...', key: 'create-pipeline' });
       try {
         const sceneSpec = await buildSceneFromPrompt(values.prompt, 'extract', {
@@ -89,7 +100,7 @@ const VideoView: React.FC = () => {
         runPipeline({
           novelProjectId: project.id,
           spec: sceneSpec,
-          options: DIRECT_MODE_PRESETS.extract,
+          options: FULL_PIPELINE_OPTIONS,
           videoGen: {
             spec,
           },
@@ -113,7 +124,7 @@ const VideoView: React.FC = () => {
           runPipeline({
             novelProjectId: project.id,
             spec: sceneSpec,
-            options: DIRECT_MODE_PRESETS.multishot,
+            options: FULL_PIPELINE_OPTIONS,
             videoGen: {
               spec,
             },

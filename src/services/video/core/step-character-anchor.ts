@@ -184,23 +184,33 @@ function countAnchorsNeeded(chars: CharacterAnchor[], includeTurnaround: boolean
   return n;
 }
 
+import { getStyleEnhancers } from './step-video-gen';
+
 function buildPortraitPrompt(
   c: CharacterAnchor,
   _allChars: CharacterAnchor[],
   style?: string,
   costumeOverride?: string,
 ): string {
+  const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
+  const styleEnhancer = getStyleEnhancers(fullText, style);
+
+  // 如果包含写实/胶片/老电影/复古/邵氏等词，避免注入 concept art（防止生出 2D 卡通化立绘）
+  const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
+  const artTypeTag = isCartoonOrAnime
+    ? 'high quality 2D anime character sheet, detailed anime artwork'
+    : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
+
   // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
   const parts = [
     `solo, 1person, single character portrait of ${c.name}`,
     `character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
-    'neutral pose, plain solid background, studio lighting',
+    'neutral pose, plain simple solid background, studio lighting',
     'full body visible from head to toe, single centered figure',
-    'high quality character design sheet, concept art',
-    style ? `${style} style` : 'cinematic style',
-    '8k detail, photorealistic',
-    'no text, no watermark, no signature, no extra people',
+    artTypeTag,
+    styleEnhancer,
+    'no text, no watermark, no signature, no extra people, no bad anatomy',
   ].filter(Boolean);
   return parts.join(', ');
 }
@@ -222,14 +232,22 @@ function buildTurnaroundPrompt(
   customAppearance?: string,
 ): string {
   const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
+  const fullText = `${c.name} ${appearance} ${style || ''}`;
+  const styleEnhancer = getStyleEnhancers(fullText, style);
+
+  const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
+  const artTypeTag = isCartoonOrAnime
+    ? 'high quality 2D anime character turnaround sheet'
+    : 'photorealistic character turnaround photo sheet, 3 full body photography views';
+
   const parts = [
-    `character turnaround sheet, model sheet, 3 full body views of ${c.name}`,
+    `character turnaround sheet, 3 full body views of ${c.name}`,
     `front view, side profile view, back view, standing side-by-side`,
     `character features: ${appearance}`,
     'neutral standing pose, A-pose, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
-    'character design concept art',
-    style ? `${style} style` : 'cinematic style',
+    artTypeTag,
+    styleEnhancer,
     'consistent facial features, consistent outfit across all 3 views',
     'high quality, highly detailed, masterwork',
     'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
