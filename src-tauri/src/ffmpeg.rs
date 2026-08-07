@@ -687,6 +687,7 @@ fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, Str
 
 /// 探测视频文件是否包含音频流。true = 有音频流,false = 纯视频。
 /// 探测失败返回 None,调用方按"无音轨"处理(只 mux TTS)。
+#[allow(dead_code)]
 fn clip_has_audio_stream(path: &str) -> Result<bool, String> {
     let Some(ffprobe) = ffprobe_path() else {
         // ffprobe 找不到 — 保守起见认为无音轨,走 mux-only 路径
