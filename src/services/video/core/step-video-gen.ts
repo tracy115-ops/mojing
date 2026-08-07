@@ -220,22 +220,29 @@ function buildEnhancedVideoPrompt(shot: ShotSpec): string {
     ? 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement, perfect anatomy'
     : '';
 
-  // 连贯性动效补全：如果是后续镜头，指导 AI 保持与前景相同的色彩与光影过渡
+  // 动效/动量补全：如果是后续镜头，指导 AI 保持与前景相同的色彩与光影过渡
   const continuityCue = shot.index > 0
     ? 'seamless motion continuation, consistent lighting and character appearance from previous scene'
     : '';
 
-  // 商业级超画质黑科技拼装
-  const commercialEnhancers = [
-    'shot on 35mm ARRI Alexa LF',
-    'masterpiece photorealistic 8k UHD',
-    'volumetric lighting, raytracing ambient occlusion',
-    'smooth fluid physical motion, natural realistic movement',
-    'ultra-detailed textures, crisp focus',
-    'no artifact, no face distortion, no flickering, no noise',
-  ].join(', ');
+  // 检测是否属于复古/胶片/80年代/邵氏武侠等老电影风格，避免强制叠加现代 8k ARRI 破损风格
+  const isRetroStyle = /80年代|90年代|邵氏|港产|武侠|胶片|复古|老电影|黄调|颗粒|色散|软焦|晕光|vintage|retro|film|grain|1980s|1990s|shaw brothers/i.test(
+    basePrompt + ' ' + (shot.mood || ''),
+  );
 
-  return [basePrompt, lipSyncPrompt, multiCharIsolation, camera, mood, continuityCue, commercialEnhancers]
-    .filter(Boolean)
-    .join(', ');
+  const styleEnhancers = isRetroStyle
+    ? '1980s Shaw Brothers Hong Kong wuxia movie aesthetic, vintage 35mm film grain, warm saturated retro film color grading, soft glow halation, nostalgic analog film texture, optical lens dispersion, cinematic retro wuxia lighting'
+    : 'shot on 35mm ARRI Alexa LF, masterpiece photorealistic UHD, volumetric lighting, raytracing ambient occlusion, smooth fluid physical motion, natural realistic movement, ultra-detailed textures, crisp focus, no artifact, no face distortion, no flickering, no noise';
+
+  const parts = [
+    basePrompt,
+    camera,
+    mood,
+    lipSyncPrompt,
+    multiCharIsolation,
+    continuityCue,
+    styleEnhancers,
+  ].filter(Boolean);
+
+  return parts.join(', ');
 }

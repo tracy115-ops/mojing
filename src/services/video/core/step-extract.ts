@@ -150,6 +150,10 @@ const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化
 4. 体型 + 身高(如:瘦高/娇小/健壮)
 5. 年龄感(如:20 岁出头/近 40 岁/少年)
 
+【拟人化 / 动物 / 特殊造型角色 — 必须完整保留物理形态形态】
+若角色是动物拟人化、神兽或特殊造型（例如：胖橘猫佩戴黑色圆墨镜身穿黄色僧袍、狐仙、机器人、妖怪等）：
+appearance 字段必须严格写出其真实的物种形态（如: an anthropomorphic chubby orange cat, wearing round black sunglasses and yellow traditional ancient Buddhist monk robes），绝不能简写作普通人类！
+
 如果原文没明确给出,请根据角色名字、性格、剧情定位**主动补充合理的区分性特征**,
 保证两个角色站在一起时,观众能一眼分辨谁是谁。
 不要写"普通长相""年轻女性"这种泛化描述。`;

@@ -79,7 +79,8 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 
 【质量要求】
 - videoPrompt 必须视觉化、具体化,禁止抽象词
-- 每镜头是 single continuous take,无切换`;
+- 每镜头是 single continuous take,无切换
+- 【全局视觉艺术风格继承 — 极其关键】如果用户原始 prompt 中指定了全局视觉风格（例如：80-90年代邵氏武侠电影、35mm复古胶片颗粒、温暖高饱和度色调、软焦高晕光、JK服装、佩戴墨镜与僧袍的胖橘猫等）：你必须在生成的每一个分镜的 "videoPrompt" 中，显式注入并继承这些全局风格与角色特定外貌关键词（例如: 1980s Shaw Brothers wuxia film aesthetic, vintage 35mm film grain, warm saturated retro film color grading, soft glow bloom），切勿丢弃！`;
 }
 
 function normalizeShot(item: LLMShot, index: number, ctx: StoryboardContext): ShotSpec {
