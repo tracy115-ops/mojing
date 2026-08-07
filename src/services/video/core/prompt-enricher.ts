@@ -100,6 +100,7 @@ function sanitizeSceneDescription(desc: string): string {
   if (!desc) return '';
   return desc
     .replace(/(主角|女主角|男主角|角色|人物|人影|猫咪|猫大师|胖橘猫|女生|少年|少女|老人|他|她|他们)[在|与|和|着|了|的|中]*/g, '')
+    .replace(/(特写|特写镜头|近景|面部特写|眼神特写|镜头推近|推镜头|特写画面)/g, '')
     .trim();
 }
 

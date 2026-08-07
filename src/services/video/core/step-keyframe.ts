@@ -162,12 +162,17 @@ function buildKeyframePrompt(
     .filter((c): c is CharacterAnchor => !!c);
 
   let charText = '';
+  const isCloseUp = /特写|近景|特写镜头|面部|眼神|表情|close-up|close up|portrait/i.test(
+    `${shot.videoPrompt} ${shot.cameraMovement || ''}`
+  );
+
   if (presentChars.length === 1) {
     const c = presentChars[0];
     const variantId = shot.costumeVariantRefs?.[c.id];
     const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
     const desc = variant ? `${c.name} (${c.appearance}, wearing ${variant.description})` : `${c.name} (${c.appearance})`;
-    charText = `main character in frame: ${desc}, single isolated person, maintain 100% facial features and clothing consistency with reference image`;
+    const closeUpTag = isCloseUp ? ', extreme close-up facial shot, 100% exact facial feature match with reference image 0, identical face, eyes, hair, skin tone, and expression' : '';
+    charText = `main character in frame: ${desc}, single isolated person, maintain 100% facial features and clothing consistency with reference image${closeUpTag}`;
   } else if (presentChars.length > 1) {
     // 多角色镜头: 注入空间位置标定与防肢体污染粘连指令
     const positions = ['left side of frame', 'right side of frame', 'center of frame'];
