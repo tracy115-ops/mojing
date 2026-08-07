@@ -13,7 +13,7 @@ import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
 import { runPipeline } from '@/services/video/core/pipeline-runner';
-import { DIRECT_MODE_PRESETS } from '@/types/video';
+import { DIRECT_MODE_PRESETS, PipelineOptions } from '@/types/video';
 
 const { Text, Title } = Typography;
 
