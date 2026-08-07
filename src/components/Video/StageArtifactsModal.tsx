@@ -187,13 +187,15 @@ export function renderStageContent(
   spec: VideoProjectState['sceneSpec'],
   t: (k: string, params?: Record<string, string | number>) => string,
 ): React.ReactNode {
+  const effectiveShots = project.shots.length > 0 ? project.shots : (project.sceneSpec?.shots || []);
+
   switch (stage) {
     case 'script_slicing':
       // 步 1 产出的是 RawShot(章节切片),但落到 project.shots 是 placeholder。
       // 这里显示章节信息(inputSummary)+ 已切片数,而不是误导性的"分镜 (0)"。
       return (
         <Section title={t('video.artifacts.scriptSlicing')}>
-          {project.shots.length === 0 ? (
+          {effectiveShots.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.slicingInProgress')} />
           ) : (
             <>
@@ -201,23 +203,23 @@ export function renderStageContent(
                 type="info"
                 showIcon
                 style={{ marginBottom: 8 }}
-                message={t('video.artifacts.shotsSliced', { count: project.shots.length })}
+                message={t('video.artifacts.shotsSliced', { count: effectiveShots.length })}
               />
-              {project.shots.slice(0, 5).map((s) => (
+              {effectiveShots.slice(0, 5).map((s) => (
                 <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
                   <Space direction="vertical" style={{ width: '100%' }} size={4}>
                     <Space>
                       <Tag color="blue">{t('video.gen.shot')} {s.index + 1}</Tag>
                     </Space>
                     <Paragraph style={{ margin: 0, fontSize: 12 }} ellipsis={{ rows: 3 }}>
-                      {s.sourceText}
+                      {s.sourceText || s.videoPrompt}
                     </Paragraph>
                   </Space>
                 </Card>
               ))}
-              {project.shots.length > 5 && (
+              {effectiveShots.length > 5 && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('video.artifacts.andMore', { count: project.shots.length - 5 })}
+                  {t('video.artifacts.andMore', { count: effectiveShots.length - 5 })}
                 </Text>
               )}
             </>
@@ -227,10 +229,10 @@ export function renderStageContent(
 
     case 'storyboard_prompt':
       return (
-        <Section title={`${t('video.artifacts.shots')} (${project.shots.length})`}>
-          {project.shots.length === 0 ? (
+        <Section title={`${t('video.artifacts.shots')} (${effectiveShots.length})`}>
+          {effectiveShots.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('video.artifacts.shotsEmptyRunning')} />
-          ) : project.shots.map((s) => (
+          ) : effectiveShots.map((s) => (
             <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Space>

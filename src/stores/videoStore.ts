@@ -647,10 +647,11 @@ export const useVideoStore = create<VideoStoreState>()(
     set((s) => {
       const proj = s.projects[novelProjectId];
       if (!proj) return s;
+      const shots = spec.shots && spec.shots.length > 0 ? (spec.shots as any) : proj.shots;
       return {
         projects: {
           ...s.projects,
-          [novelProjectId]: touch({ ...proj, sceneSpec: spec }),
+          [novelProjectId]: touch({ ...proj, sceneSpec: spec, shots }),
         },
       };
     });
