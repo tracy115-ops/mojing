@@ -4,6 +4,7 @@
 
 import { probeFFmpeg, downloadClip, composeClips } from '../ffmpeg-bridge';
 import { resolveLocalPath, isRemoteUrl, toWebviewUrl, isValidVideoClip } from '../asset-store';
+import { runAudioMerge } from './step-audio-merge';
 import type { GeneratedClip, ShotSpec } from '@/types/video';
 
 export interface ComposeOptions {
@@ -25,6 +26,44 @@ export interface ComposeResult {
 export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
   if (opts.clips.length === 0) {
     throw new Error('No clips to compose');
+  }
+
+  // 兜底防御：若镜头存在 TTS 中文配音音轨 (shot.audioTrack)，但 clip 尚未融合音轨 (!clip.hasAudio)，
+  // 自动在合成前触发一次音视合并，确保中文配音 100% 融入最终成片中！
+  const unmergedShots = opts.shots.filter((s) => {
+    const c = opts.clips.find((clip) => clip.shotId === s.id);
+    return s.audioTrack && c && !c.hasAudio;
+  });
+
+  if (unmergedShots.length > 0) {
+    console.log(`step-compose: 检测到 ${unmergedShots.length} 个镜头的 TTS 中文配音尚未合并进视频，自动补跑音视合并...`);
+    try {
+      const mergeResult = await runAudioMerge(opts.shots, {
+        novelProjectId: opts.novelProjectId,
+        clips: opts.clips,
+      });
+      if (mergeResult.mergedShotIds.length > 0) {
+        const mergedSet = new Set(mergeResult.mergedShotIds);
+        const shotToMerged = new Map(
+          mergeResult.shots
+            .filter((s) => mergedSet.has(s.id))
+            .map((s) => [s.id, s.audioTrack]),
+        );
+        opts.clips = opts.clips.map((clip) => {
+          const mergedPath = shotToMerged.get(clip.shotId);
+          if (mergedPath && !mergedPath.startsWith('data:')) {
+            return {
+              ...clip,
+              videoUrl: toWebviewUrl(mergedPath),
+              hasAudio: true,
+            };
+          }
+          return clip;
+        });
+      }
+    } catch (err) {
+      console.warn('step-compose: 自动补跑音视合并失败，将继续使用原 Clip 进行合成:', err);
+    }
   }
 
   // 单镜头:直接返回该镜 URL(转成 webview URL 让前端能播)
