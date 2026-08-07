@@ -8,6 +8,7 @@ import type {
   ShotSpec,
   GeneratedClip,
   VideoSpec,
+  CharacterAnchor,
 } from '@/types/video';
 import { saveAsset, readAsDataUri, isValidVideoClip } from '../asset-store';
 
@@ -22,6 +23,7 @@ export interface VideoGenOptions {
   /** 视频来源标记 */
   sceneSource?: 'novel' | 'direct';
   sourceMode?: 'pure' | 'extract' | 'multishot';
+  characters?: CharacterAnchor[];
   /**
    * 用于产物落盘(appDataDir/video-assets/<projectId>/clip/)。
    * Novel pipeline 总是传;Direct modal 可不传 — 不传则不落盘,
