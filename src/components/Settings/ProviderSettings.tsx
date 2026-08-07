@@ -31,6 +31,7 @@ import {
   SettingOutlined,
   ThunderboltOutlined as TaskIcon,
   LockOutlined,
+  SoundOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore, PROVIDER_CATEGORY } from '@/stores/providerStore';

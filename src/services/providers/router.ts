@@ -479,13 +479,16 @@ class ProviderRouter {
 
           // 零门槛免费兜底：若主端点与备用端点均失败（如中转站 400 无额度），自动倒扣调用免费微软 Edge TTS
           console.warn('[tts] Primary & Fallback TTS endpoints failed, falling back to free EdgeTTS Provider:', primaryError);
-          const edgeEndpoint = {
+          const now = new Date().toISOString();
+          const edgeEndpoint: ApiEndpoint = {
             id: 'edge-tts-auto-fallback',
             name: '微软 Edge TTS (免费兜底)',
             provider: 'edge-tts' as TTSProviderId,
             baseUrl: 'https://speech.platform.bing.com',
             apiKey: 'free',
             enabled: true,
+            createdAt: now,
+            updatedAt: now,
           };
           const edgeProvider = createTTSProvider('edge-tts', edgeEndpoint);
           return await edgeProvider.generate(requestWithDefaults);

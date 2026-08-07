@@ -117,7 +117,7 @@ interface ProviderState {
   endpoints: ApiEndpoint[];
   healthStatus: Record<string, ProviderHealth>;
 
-  addEndpoint: (endpoint: Omit<ApiEndpoint, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addEndpoint: (endpoint: Omit<ApiEndpoint, 'id' | 'createdAt' | 'updatedAt'>) => string;
   updateEndpoint: (id: string, updates: Partial<ApiEndpoint>) => void;
   removeEndpoint: (id: string) => void;
   getEndpoint: (id: string) => ApiEndpoint | undefined;
@@ -156,16 +156,18 @@ export const useProviderStore = create<ProviderState>()(
 
       addEndpoint: (endpoint) => {
         const now = new Date().toISOString();
+        const id = generateId();
         const newEndpoint: ApiEndpoint = {
           ...endpoint,
           // 表单历史上不带 enabled 字段时会变成 undefined,所有下游过滤就把它丢了。
           // 这里兜底为 true —— 用户主动加的 endpoint 默认启用,符合直觉。
           enabled: endpoint.enabled ?? true,
-          id: generateId(),
+          id,
           createdAt: now,
           updatedAt: now,
         };
         set((s) => ({ endpoints: [...s.endpoints, newEndpoint] }));
+        return id;
       },
 
       updateEndpoint: (id, updates) => {
