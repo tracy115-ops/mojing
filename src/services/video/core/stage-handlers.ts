@@ -625,8 +625,8 @@ export async function executeCompose(ctx: StageContext): Promise<StageResult | n
 /** runPipeline 处理的 stage 顺序(不含 script_slicing/storyboard/extraction,
  *  那三步在 VideoPipeline.resume 里跑)。 */
 export const RUNTIME_STAGE_ORDER: VideoStage[] = [
-  'character_anchor',
   'voice_assignment',
+  'character_anchor',
   'scene_image',
   'tts',
   'keyframe_image',
