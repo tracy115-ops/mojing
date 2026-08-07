@@ -84,7 +84,7 @@ function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
   if (/(女|女性|少女|女人|女子|老太|大娘|大妈|阿姨|姑姑|姐姐|妹妹|妈妈|母亲|夫人|太太|媳妇|丫鬟|侍女|闺女|千金|公主|皇后|贵妃|female|woman|girl|lady|mother|sister|queen)/i.test(name)) {
     return 'female';
   }
-  if (/(男|男性|少年|男人|男子|大叔|老爷|老头|父亲|爸爸|哥哥|弟弟|儿子|少爷|公子|国王|皇帝|将领|将军|壮汉|male|man|boy|father|brother|king)/i.test(name)) {
+  if (/(男|男性|少年|男人|男子|大师|高僧|和尚|道士|道长|长老|掌门|老者|大叔|老爷|老头|父亲|爸爸|哥哥|弟弟|儿子|少爷|公子|国王|皇帝|将领|将军|壮汉|神医|医师|神仙|尊者|male|man|boy|father|brother|king|master|monk)/i.test(name)) {
     return 'male';
   }
   return 'unknown';
