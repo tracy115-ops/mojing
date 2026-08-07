@@ -31,9 +31,10 @@ export async function runTTS(
 
   for (let i = 0; i < shots.length; i++) {
     const shot = shots[i];
+    const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
     const text = (
       shot.narration ||
-      shot.dialogue?.text ||
+      dialogueStr ||
       shot.sourceText ||
       shot.videoPrompt
     )?.trim();

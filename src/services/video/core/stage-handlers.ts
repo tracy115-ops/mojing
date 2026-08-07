@@ -390,12 +390,15 @@ export async function executeTTS(ctx: StageContext): Promise<StageResult | null>
   store.advanceToStage(pid, 'tts');
   store.setStageStatus(pid, 'tts', 'running');
   populateStageInput(pid, 'tts', workingSpec);
-  const narrationShots = workingSpec.shots.filter(
-    (s) => (s.narration || s.dialogue?.text || s.sourceText || s.videoPrompt)?.trim(),
-  );
+  const getShotSpeechText = (s: ShotSpec) => {
+    const dialogueStr = s.dialogue?.map((d) => d.text).join(' ');
+    return (s.narration || dialogueStr || s.sourceText || s.videoPrompt)?.trim();
+  };
+
+  const narrationShots = workingSpec.shots.filter((s) => getShotSpeechText(s));
   store.setStageInputSummary(pid, 'tts', {
     headline: `${narrationShots.length} 个镜头带有配音台词/文本`,
-    details: narrationShots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${((s.narration || s.dialogue?.text || s.sourceText || s.videoPrompt) ?? '').slice(0, 40)}`),
+    details: narrationShots.slice(0, 10).map((s) => `镜头 ${s.index + 1} · ${(getShotSpeechText(s) ?? '').slice(0, 40)}`),
   });
 
   const stageInput = store.getProject(pid)?.stages.tts?.input;
