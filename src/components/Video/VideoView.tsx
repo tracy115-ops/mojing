@@ -92,8 +92,7 @@ const VideoView: React.FC = () => {
       // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成（启用 14 步完整流程包含 TTS 与场景图）
       message.loading({ content: '正在为您的提示词分析分镜并启动生成...', key: 'create-pipeline' });
       try {
-        const mode = values.targetDurationSeconds && values.targetDurationSeconds > 5 ? 'multishot' : 'extract';
-        const sceneSpec = await buildSceneFromPrompt(values.prompt, mode, {
+        const sceneSpec = await buildSceneFromPrompt(values.prompt, 'multishot', {
           aspectRatio: (values.aspectRatio as any) || '16:9',
           defaultShotDuration: duration,
           targetDurationSeconds: values.targetDurationSeconds,
