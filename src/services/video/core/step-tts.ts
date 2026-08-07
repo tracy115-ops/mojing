@@ -39,10 +39,28 @@ export async function runTTS(
     }
     attempted++;
 
-    // 选音色:shot 在场角色的 voiceRef,取第一个有 voiceRef 的角色
-    const speaker = shot.characterIds
-      .map((cid) => charById.get(cid))
-      .find((c) => c?.voiceRef);
+    // 选音色:
+    // 1. 优先根据台词开头的角色名（如 "猫大师:"、"小美:"、"猫大师："）精准比对角色
+    let speaker: CharacterAnchor | undefined;
+    for (const c of characters) {
+      if (
+        text.startsWith(`${c.name}:`) ||
+        text.startsWith(`${c.name}：`) ||
+        text.startsWith(`${c.name}：`) ||
+        text.startsWith(c.name)
+      ) {
+        speaker = c;
+        break;
+      }
+    }
+
+    // 2. 若台词没有包含角色名，则在在场角色列表中寻找匹配音色的角色
+    if (!speaker) {
+      speaker = shot.characterIds
+        .map((cid) => charById.get(cid))
+        .find((c) => c?.voiceRef);
+    }
+
     const voice = speaker?.voiceRef;
 
     const cleanText = cleanNarrationForTTS(text);

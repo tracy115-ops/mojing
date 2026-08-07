@@ -90,17 +90,32 @@ function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
   return 'unknown';
 }
 
+function isFemaleVoiceId(v: string): boolean {
+  return /female|nova|shimmer|anna|bella|claire|diana|xiaoxiao|xiaoyi|xiaomo|xiaomeng|qingxin|wenrou/i.test(v);
+}
+
+function isMaleVoiceId(v: string): boolean {
+  return /male|echo|onyx|alex|benjamin|david|charles|yunxi|yunjian|yunyang|yunye|qingse|chunhou/i.test(v);
+}
+
 export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAssignResult> {
   const providerId = providerRouter.getActiveTTSProviderId();
 
   // 第一轮:给 gender 已知或可推断出的角色分配真实音色
+  // (自动校正历史缓存里音色与性别矛盾的旧数据,例如猫大师(男)被误存为女音色)
   const usedVoices = new Set<string>();
   const result: CharacterAnchor[] = characters.map((c) => {
-    if (c.voiceRef) {
-      usedVoices.add(c.voiceRef);
-      return c;
-    }
     const resolvedGender = inferGender(c);
+    const isMismatch = c.voiceRef && (
+      (resolvedGender === 'male' && isFemaleVoiceId(c.voiceRef)) ||
+      (resolvedGender === 'female' && isMaleVoiceId(c.voiceRef))
+    );
+
+    if (c.voiceRef && !isMismatch) {
+      usedVoices.add(c.voiceRef);
+      return { ...c, gender: resolvedGender !== 'unknown' ? resolvedGender : c.gender };
+    }
+
     const realVoice = pickRealVoice(providerId, resolvedGender, c.ageGroup);
     if (realVoice) {
       usedVoices.add(realVoice);
