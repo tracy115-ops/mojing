@@ -319,3 +319,21 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+/**
+ * 校验一个 GeneratedClip 的 videoUrl 是否为真实可播放/可合成的有效链接。
+ * 纯 ID 字符串（如 "video_123456", "task_abc123"）是旧版本误解析存下的无效产物，
+ * 必须校验为 false，从而触发增量重跑并重新向视频 Provider 请求真正的 HTTP(S) MP4 链接。
+ */
+export function isValidVideoClip(clip?: { videoUrl?: string } | null): boolean {
+  if (!clip || !clip.videoUrl || typeof clip.videoUrl !== 'string') return false;
+  const url = clip.videoUrl.trim();
+  if (url.length < 5) return false;
+  // 排除纯 ID 字符串
+  if (/^(video|task)_[a-zA-Z0-9_-]+$/i.test(url)) return false;
+  // 必须是有效网络链接、data URI 或本地音视频/webview 资产文件
+  return (
+    /^(https?:\/\/|data:video\/|asset:\/\/|http:\/\/asset\.localhost)/i.test(url) ||
+    /\.(mp4|webm|mov|mkv)(\?|$)/i.test(url)
+  );
+}

@@ -27,6 +27,7 @@ import { runKeyframe } from './step-keyframe';
 import { runVideoGen, type VideoGenOptions } from './step-video-gen';
 import { runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
+import { isValidVideoClip } from '../asset-store';
 import { toWebviewUrl } from '../asset-store';
 
 /** Stage 执行上下文。handler 从这里读输入,通过 store action 写输出。 */
@@ -483,7 +484,7 @@ export async function executeVideoGen(ctx: StageContext): Promise<StageResult | 
   store.advanceToStage(pid, 'video_generation');
   store.setStageStatus(pid, 'video_generation', 'running');
   populateStageInput(pid, 'video_generation', workingSpec);
-  const alreadyDoneCount = preExistingClips.filter((c) => c.videoUrl).length;
+  const alreadyDoneCount = preExistingClips.filter((c) => isValidVideoClip(c)).length;
   if (alreadyDoneCount > 0) {
     void logger.info(
       `[pipeline] video_generation: 增量续跑 ${alreadyDoneCount}/${workingSpec.shots.length} 已有`,

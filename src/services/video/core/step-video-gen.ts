@@ -9,7 +9,7 @@ import type {
   GeneratedClip,
   VideoSpec,
 } from '@/types/video';
-import { saveAsset, readAsDataUri } from '../asset-store';
+import { saveAsset, readAsDataUri, isValidVideoClip } from '../asset-store';
 
 const VIDEO_GENERATION_CONCURRENCY = 2;
 
@@ -53,10 +53,10 @@ export async function runVideoGen(
   /** 已有的 clip(从持久化状态传入),用于 shot 级断点续跑 */
   preExistingClips?: GeneratedClip[],
 ): Promise<VideoGenResult> {
-  // 用 Map 快速查:哪些 shotId 已经有有效 clip
+  // 用 Map 快速查:哪些 shotId 已经有真正可播放/可合成的有效 clip (排除历史残留的 video_xxx ID 字符串)
   const existingByShotId = new Map<string, GeneratedClip>();
   for (const c of preExistingClips ?? []) {
-    if (c.shotId && c.videoUrl) {
+    if (c.shotId && isValidVideoClip(c)) {
       existingByShotId.set(c.shotId, c);
     }
   }

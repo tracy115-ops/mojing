@@ -3,7 +3,7 @@
 // 单镜头直接返回 clip URL,多镜头走 FFmpeg 拼接。
 
 import { probeFFmpeg, downloadClip, composeClips } from '../ffmpeg-bridge';
-import { resolveLocalPath, isRemoteUrl, toWebviewUrl } from '../asset-store';
+import { resolveLocalPath, isRemoteUrl, toWebviewUrl, isValidVideoClip } from '../asset-store';
 import type { GeneratedClip, ShotSpec } from '@/types/video';
 
 export interface ComposeOptions {
@@ -46,10 +46,9 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
   for (let i = 0; i < opts.clips.length; i++) {
     const clip = opts.clips[i];
 
-    // video-gen 失败时 videoUrl 可能为空 — 跳过这个 clip,避免 ffmpeg 拿到坏路径报
-    // "No streams found"。
-    if (!clip.videoUrl || clip.videoUrl.length < 5) {
-      console.warn(`step-compose: skip clip ${clip.shotId} — empty videoUrl`);
+    // 校验 clip 是否为真正可播放的视频路径（过滤掉旧数据中的 video_xxx ID 字符串）
+    if (!isValidVideoClip(clip)) {
+      console.warn(`step-compose: skip clip ${clip.shotId} — invalid videoUrl: ${clip.videoUrl}`);
       continue;
     }
 
