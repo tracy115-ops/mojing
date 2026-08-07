@@ -205,7 +205,7 @@ export function renderStageContent(
                 style={{ marginBottom: 8 }}
                 message={t('video.artifacts.shotsSliced', { count: effectiveShots.length })}
               />
-              {effectiveShots.slice(0, 5).map((s) => (
+              {effectiveShots.map((s) => (
                 <Card key={s.id} size="small" style={{ marginBottom: 6 }}>
                   <Space direction="vertical" style={{ width: '100%' }} size={4}>
                     <Space>
@@ -217,11 +217,6 @@ export function renderStageContent(
                   </Space>
                 </Card>
               ))}
-              {effectiveShots.length > 5 && (
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('video.artifacts.andMore', { count: effectiveShots.length - 5 })}
-                </Text>
-              )}
             </>
           )}
         </Section>
