@@ -195,9 +195,12 @@ function buildPortraitPrompt(
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
   const styleEnhancer = getStyleEnhancers(fullText, style);
-
-  // 如果包含写实/胶片/老电影/复古/邵氏等词，避免注入 concept art（防止生出 2D 卡通化立绘）
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
+  const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
+  const asianBeautyTag = !isExplicitlyWestern
+    ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes, oriental goddess aesthetic'
+    : '';
+
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime single character portrait, detailed anime artwork'
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
@@ -205,13 +208,14 @@ function buildPortraitPrompt(
   // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
   const parts = [
     `solo, 1person, single character portrait of ${c.name}`,
+    asianBeautyTag,
     `character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
     'neutral pose, plain simple solid background, studio lighting',
     'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
+    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views, caucasian, western face',
   ].filter(Boolean);
   return parts.join(', ');
 }
