@@ -723,9 +723,18 @@ pub async fn ffmpeg_merge_audio(req: MergeAudioRequest) -> Result<MergeAudioResu
 }
 
 fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, String> {
-    let out_path = PathBuf::from(&req.output_path);
+    let video_path = sanitize_clip_path(&req.video_path);
+    let audio_path = sanitize_clip_path(&req.audio_path);
+    let out_path = PathBuf::from(sanitize_clip_path(&req.output_path));
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    if !PathBuf::from(&video_path).exists() {
+        return Err(format!("merge_audio: video file does not exist: {}", video_path));
+    }
+    if !PathBuf::from(&audio_path).exists() {
+        return Err(format!("merge_audio: audio file does not exist: {}", audio_path));
     }
 
     // 彻底解决「重音/双音轨干涉」问题：
@@ -735,8 +744,8 @@ fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, Str
     let mut cmd = FfmpegCommand::new();
     cmd.arg("-y")
         .arg("-err_detect").arg("ignore_err")
-        .input(req.video_path.clone())
-        .input(req.audio_path.clone())
+        .input(video_path)
+        .input(audio_path)
         .arg("-c:v").arg("copy")
         .arg("-c:a").arg("aac")
         .arg("-b:a").arg("192k")
