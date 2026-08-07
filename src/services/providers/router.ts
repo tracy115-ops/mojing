@@ -465,16 +465,30 @@ class ProviderRouter {
           const provider = createTTSProvider(endpointProvider, endpoint);
           return await provider.generate(requestWithDefaults);
         } catch (primaryError) {
-          if (explicitEndpoint || !config.fallback) throw primaryError;
-          const fallbackEndpoint = store.getFallbackEndpoint('tts');
-          if (!fallbackEndpoint) throw primaryError;
-
-          try {
-            const fallbackProvider = createTTSProvider(config.fallback, fallbackEndpoint);
-            return await fallbackProvider.generate(requestWithDefaults);
-          } catch {
-            throw primaryError;
+          if (!explicitEndpoint && config.fallback) {
+            const fallbackEndpoint = store.getFallbackEndpoint('tts');
+            if (fallbackEndpoint) {
+              try {
+                const fallbackProvider = createTTSProvider(config.fallback, fallbackEndpoint);
+                return await fallbackProvider.generate(requestWithDefaults);
+              } catch (fallbackErr) {
+                console.warn('[tts] fallback provider failed:', fallbackErr);
+              }
+            }
           }
+
+          // 零门槛免费兜底：若主端点与备用端点均失败（如中转站 400 无额度），自动倒扣调用免费微软 Edge TTS
+          console.warn('[tts] Primary & Fallback TTS endpoints failed, falling back to free EdgeTTS Provider:', primaryError);
+          const edgeEndpoint = {
+            id: 'edge-tts-auto-fallback',
+            name: '微软 Edge TTS (免费兜底)',
+            provider: 'edge-tts' as TTSProviderId,
+            baseUrl: 'https://speech.platform.bing.com',
+            apiKey: 'free',
+            enabled: true,
+          };
+          const edgeProvider = createTTSProvider('edge-tts', edgeEndpoint);
+          return await edgeProvider.generate(requestWithDefaults);
         }
       },
     );

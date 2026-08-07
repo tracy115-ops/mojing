@@ -302,12 +302,17 @@ const ProviderSettings: React.FC = () => {
         ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
         : undefined;
 
+      const provider = values.provider;
+      const isEdge = provider === 'edge-tts';
+      const baseUrl = values.baseUrl || (isEdge ? 'https://speech.platform.bing.com' : '');
+      const apiKey = values.apiKey || (isEdge ? 'free' : '');
+
       if (editingEndpoint) {
         updateEndpoint(editingEndpoint.id, {
           name: values.name,
-          provider: values.provider,
-          baseUrl: values.baseUrl,
-          apiKey: values.apiKey,
+          provider,
+          baseUrl,
+          apiKey,
           models,
         });
       } else {
@@ -315,15 +320,18 @@ const ProviderSettings: React.FC = () => {
         // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
         // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
         // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
-        addEndpoint({
+        const newId = addEndpoint({
           name: values.name,
-          provider: values.provider,
-          baseUrl: values.baseUrl,
-          apiKey: values.apiKey,
+          provider,
+          baseUrl,
+          apiKey,
           models,
           enabled: true,
           category: addCategory,
         });
+        if (provider === 'edge-tts') {
+          setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
+        }
       }
       setAddModalOpen(false);
       setEditingEndpoint(null);
@@ -332,7 +340,7 @@ const ProviderSettings: React.FC = () => {
     } catch {
       // Validation failed
     }
-  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, t]);
+  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, setTTSProvider, t]);
 
   const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
@@ -488,9 +496,31 @@ const ProviderSettings: React.FC = () => {
                   locale={{ emptyText: t('common.noData' as const) }}
                   style={{ marginBottom: 12 }}
                 />
-                <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('tts')}>
-                  {t('provider.addEndpoint')} — {t('provider.tts')}
-                </Button>
+                <Space style={{ width: '100%' }} direction="vertical">
+                  <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('tts')}>
+                    {t('provider.addEndpoint')} — {t('provider.tts')}
+                  </Button>
+                  <Button
+                    type="primary"
+                    ghost
+                    icon={<SoundOutlined />}
+                    block
+                    onClick={() => {
+                      const newId = addEndpoint({
+                        name: '微软 Edge TTS (免费高清无 Key)',
+                        provider: 'edge-tts',
+                        baseUrl: 'https://speech.platform.bing.com',
+                        apiKey: 'free',
+                        enabled: true,
+                        category: 'tts',
+                      });
+                      setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
+                      message.success('已一键接入并启用了免费微软 Edge TTS 引擎！');
+                    }}
+                  >
+                    ⚡ 一键配置并开启免费微软 Edge TTS (无 Key 告别 400 报错)
+                  </Button>
+                </Space>
               </div>
             ),
           },
@@ -892,10 +922,10 @@ const ProviderSettings: React.FC = () => {
               }}
             />
           </Form.Item>
-          <Form.Item name="baseUrl" label={t('provider.endpointUrl')} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]} extra={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : undefined}>
+          <Form.Item name="baseUrl" label={t('provider.endpointUrl')} dependencies={['provider']} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]} extra={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : undefined}>
             <Input placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : ''} />
           </Form.Item>
-          <Form.Item name="apiKey" label={t('provider.apiKey')} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
+          <Form.Item name="apiKey" label={t('provider.apiKey')} dependencies={['provider']} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
             <Input.Password placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsNoKey') : t('provider.apiKeyPlaceholder')} />
           </Form.Item>
           <Form.Item name="modelsStr" label="模型名称 (可选 / 多个用逗号隔开)" tooltip="自定义中转站或服务的模型名，例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1">
