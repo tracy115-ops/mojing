@@ -73,13 +73,11 @@ export async function runKeyframe(
         if (variant.portraitImage) {
           charRefs.push({ url: variant.portraitImage });
         }
-      } else if (c.turnaroundImage) {
-        // 完整三视图先 push(作 model sheet 参考)
-        charRefs.push({ url: c.turnaroundImage });
-        // 再 push 裁好的正面图(精准锚定)— 同一张图会被读两次但内容不同
-        charRefs.push({ url: c.turnaroundImage, cropMiddleThird: true });
       } else if (c.portraitImage) {
+        // 优先锁死精致单图立绘！单图立绘五官无扭曲、高保真且风格绝对统一！
         charRefs.push({ url: c.portraitImage });
+      } else if (c.turnaroundImage) {
+        charRefs.push({ url: c.turnaroundImage });
       }
     }
 

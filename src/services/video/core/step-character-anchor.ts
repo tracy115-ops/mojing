@@ -50,8 +50,8 @@ export async function runCharacterAnchor(
   onProgress?: (done: number, total: number) => void,
 ): Promise<CharacterAnchorResult> {
   const limited = characters.slice(0, Math.max(0, ctx.limit));
-  // 默认生成三视图,只有显式传 'single' 才跳过
-  const wantTurnaround = ctx.anchorMode !== 'single';
+  // 默认使用高保真精致单图立绘，避免生成多视图并排导致的五官变形与丑陋画面
+  const wantTurnaround = ctx.anchorMode === 'turnaround';
   const total = countAnchorsNeeded(limited, wantTurnaround);
   if (total === 0) return { characters, failed: [] };
 

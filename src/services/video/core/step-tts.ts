@@ -31,9 +31,14 @@ export async function runTTS(
 
   for (let i = 0; i < shots.length; i++) {
     const shot = shots[i];
-    const text = shot.narration?.trim();
+    const text = (
+      shot.narration ||
+      shot.dialogue?.text ||
+      shot.sourceText ||
+      shot.videoPrompt
+    )?.trim();
+
     if (!text) {
-      // 没旁白的镜头跳过(对白镜头暂不处理)
       onProgress?.(i + 1, total);
       continue;
     }
