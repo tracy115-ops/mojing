@@ -233,7 +233,14 @@ class ProviderRouter {
       throw new Error('No LLM endpoint configured. Please add an API endpoint in Settings → Providers.');
     }
 
-    const effectiveModel = (config.models as Record<string, string> | undefined)?.[request.taskType] ?? config.defaultModel;
+    let effectiveModel = (config.models as Record<string, string> | undefined)?.[request.taskType] ?? config.defaultModel;
+    
+    // 自愈修复：当用户选用 DeepSeek 服务商时，若当前任务类型的配置模型包含了 gpt-4o 或 claude 等非 DeepSeek 模型，
+    // 自动纠正回 deepseek-chat 或 endpoint 设置的可用模型，防止接口抛出 400 错误。
+    if (config.primary === 'deepseek' && (effectiveModel.startsWith('gpt-') || effectiveModel.startsWith('claude-'))) {
+      effectiveModel = endpoint.model || 'deepseek-chat';
+    }
+
     const requestWithModel = { ...request, model: request.model || effectiveModel };
 
     // 取出 system + user 拼成可读 prompt(只用于账本展示)

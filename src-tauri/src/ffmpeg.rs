@@ -623,10 +623,14 @@ fn probe_has_video_stream(path: &Path) -> bool {
 
 /// 拿到 ffprobe 可执行文件路径(优先 ffmpeg_sidecar 解压目录,其次 PATH)。
 fn ffprobe_path() -> Option<PathBuf> {
-    ffmpeg_sidecar::paths::ffmpeg_path()
-        .parent()
-        .map(|d| d.join("ffprobe"))
-        .or_else(|| which_ffprobe())
+    let exe_name = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
+    if let Some(parent) = ffmpeg_sidecar::paths::ffmpeg_path().parent() {
+        let p = parent.join(exe_name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    which_ffprobe()
 }
 
 /// Best-effort ffprobe lookup on PATH. Avoids pulling in `which` crate just for this.
