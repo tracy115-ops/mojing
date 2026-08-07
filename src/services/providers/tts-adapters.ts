@@ -46,7 +46,7 @@ export class OpenAITTSProvider extends BaseTTSProvider {
       : defaultCandidates;
 
     let lastError: Error | null = null;
-    const isFemale = /女|female|anna|bella|claire|diana|nova|shimmer|xiaoxiao|xiaoyi|xiaomo|xiaomeng|qingxin|wenrou|妹|娘|姐|母|妇|姬|婷|美|莉|雪|雅|静|芳|萍|姿|靓|丫|媳|仙|妃|姑娘|公主|千金/i.test(rawVoice);
+    const isFemale = /female|woman|girl|lady|queen|anna|bella|claire|diana|nova|shimmer|xiaoxiao|xiaoyi|xiaomo|xiaomeng|qingxin|wenrou/i.test(rawVoice) || /^女|女/i.test(rawVoice);
 
     for (const modelCandidate of candidateModels) {
       // 按模型类型智能决定初始音色：
