@@ -21,9 +21,7 @@ export class OpenAITTSProvider extends BaseTTSProvider {
     const isSiliconFlow = this.endpoint.baseUrl.includes('siliconflow.cn');
     const format = request.format || 'mp3';
     const speed = request.speed ?? 1.0;
-
-    let voice = request.voice || 'alex';
-    const SILICONFLOW_PRESETS = ['alex', 'anna', 'bella', 'benjamin', 'charles', 'claire', 'david', 'diana'];
+    const rawVoice = request.voice || 'alex';
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     const url = /\/v\d+$/.test(baseUrl) ? `${baseUrl}/audio/speech` : `${baseUrl}/v1/audio/speech`;
@@ -48,78 +46,76 @@ export class OpenAITTSProvider extends BaseTTSProvider {
       : defaultCandidates;
 
     let lastError: Error | null = null;
+    const isFemale = /女|female|anna|bella|claire|diana|nova|shimmer|妹|娘/i.test(rawVoice);
 
     for (const modelCandidate of candidateModels) {
-      const isCosyOrFish = modelCandidate.includes('CosyVoice') || modelCandidate.includes('fishaudio') || modelCandidate.includes('cosyvoice');
-      // 如果使用硅基流动/CosyVoice/第三方中转站且音色不是硅基流动官方预设音色(如 alloy 或自定义角色名)，强行映射为有效预设音色 alex/anna
-      let effectiveVoice = voice;
-      if ((isSiliconFlow || isCosyOrFish || !isOfficialOpenAI) && !SILICONFLOW_PRESETS.includes(effectiveVoice.toLowerCase())) {
-        const isFemale = /女|female|anna|bella|claire|diana|妹|娘/i.test(effectiveVoice);
-        effectiveVoice = isFemale ? 'anna' : 'alex';
-      }
+      // 按模型类型智能决定初始音色：
+      // - OpenAI 系列模型(tts-1) -> 使用 alloy(男) / nova(女)
+      // - CosyVoice / SiliconFlow 系列 -> 使用 alex(男) / anna(女) 或带前缀名
+      const isOpenAIModel = /^tts-1/i.test(modelCandidate);
+      const primaryVoice = isOpenAIModel
+        ? (isFemale ? 'nova' : 'alloy')
+        : (isFemale ? 'anna' : 'alex');
 
-      let response = await httpFetch(url, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify({
-          model: modelCandidate,
-          input: request.text,
-          voice: effectiveVoice,
-          response_format: format,
-          speed,
-        }),
-        signal: this.timeoutSignal(60_000),
-      });
+      // 多音色变体备选序列(防止中转站要求特定的带前缀名或旧样式名)
+      const voiceVariants = Array.from(new Set([
+        primaryVoice,
+        isOpenAIModel ? 'alloy' : 'alex',
+        isOpenAIModel ? 'nova' : 'anna',
+        `${modelCandidate}:${primaryVoice}`,
+        'alex',
+        'alloy',
+      ]));
 
-      if (!response.ok) {
-        let text = await response.text().catch(() => '');
-        
-        // 捕获 20047 Invalid voice 错误:如果因为音色不合规被拒绝，自动切换为 alex 重试一次
+      for (const voiceCandidate of voiceVariants) {
+        let response = await httpFetch(url, {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify({
+            model: modelCandidate,
+            input: request.text,
+            voice: voiceCandidate,
+            response_format: format,
+            speed,
+          }),
+          signal: this.timeoutSignal(60_000),
+        });
+
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+          const base64 = arrayBufferToBase64(buffer);
+          return {
+            audioData: `data:audio/${format};base64,${base64}`,
+            format,
+            durationSeconds: estimateDuration(request.text),
+            model: modelCandidate,
+            voice: voiceCandidate,
+            provider: 'openai-tts',
+            latencyMs: Date.now() - startTime,
+          };
+        }
+
+        const text = await response.text().catch(() => '');
+        // 如果是因为 Invalid voice 报错，循环进入下一个音色变体重试
         if (response.status === 400 && (text.includes('20047') || text.toLowerCase().includes('invalid voice'))) {
-          logger.warn(`OpenAITTSProvider: Invalid voice '${effectiveVoice}' for model '${modelCandidate}', retrying with 'alex'`);
-          effectiveVoice = 'alex';
-          response = await httpFetch(url, {
-            method: 'POST',
-            headers: this.getHeaders(),
-            body: JSON.stringify({
-              model: modelCandidate,
-              input: request.text,
-              voice: effectiveVoice,
-              response_format: format,
-              speed,
-            }),
-            signal: this.timeoutSignal(60_000),
-          });
-          if (!response.ok) {
-            text = await response.text().catch(() => '');
-          }
+          logger.warn(`OpenAITTSProvider: model '${modelCandidate}' rejected voice '${voiceCandidate}', trying next voice variant...`);
+          lastError = new Error(`OpenAI TTS API error 400: ${text}`);
+          continue;
         }
 
-        if (!response.ok) {
-          if (response.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
-            lastError = new Error(`OpenAI TTS API error 400 (模型 '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效 TTS 模型名(如 cosyvoice-v1 / tts-1)。`);
-            continue; // 尝试下一个候选模型
-          }
-          throw new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+        // 如果是因为 Model does not exist 报错，跳出当前模型的音色循环，尝试下一个候选模型
+        if (response.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
+          lastError = new Error(`OpenAI TTS API error 400 (模型 '${modelCandidate}' 不存在)。请在设置中填入有效 TTS 模型名。`);
+          break;
         }
+
+        // 其他错误直接记录并跳出
+        lastError = new Error(`OpenAI TTS API error ${response.status}: ${text}`);
+        break;
       }
-
-      // Response is binary audio
-      const buffer = await response.arrayBuffer();
-      const base64 = arrayBufferToBase64(buffer);
-
-      return {
-        audioData: `data:audio/${format};base64,${base64}`,
-        format,
-        durationSeconds: estimateDuration(request.text),
-        model: modelCandidate,
-        voice,
-        provider: 'openai-tts',
-        latencyMs: Date.now() - startTime,
-      };
     }
 
-    throw lastError || new Error('OpenAI TTS API: 所有候选模型提交均被中转站服务器拒绝。');
+    throw lastError || new Error('OpenAI TTS API: 所有候选模型与音色变体组合均被服务器拒绝。');
   }
 }
 
