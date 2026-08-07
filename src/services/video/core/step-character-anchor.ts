@@ -241,21 +241,27 @@ function buildTurnaroundPrompt(
   const styleEnhancer = getStyleEnhancers(fullText, style);
 
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
+  const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
+  const asianBeautyTag = !isExplicitlyWestern
+    ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes, oriental goddess aesthetic'
+    : '';
+
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime character turnaround sheet'
     : 'photorealistic character turnaround photo sheet, 3 full body photography views';
 
   const parts = [
-    `character turnaround sheet, 3 full body views of ${c.name}`,
+    `character turnaround sheet, 3 full body views of ${c.name}, 100% identical face and person as reference image 0`,
+    asianBeautyTag,
     `front view, side profile view, back view, standing side-by-side`,
     `character features: ${appearance}`,
     'neutral standing pose, A-pose, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
     artTypeTag,
     styleEnhancer,
-    'consistent facial features, consistent outfit across all 3 views',
+    '100% identical face and facial features, consistent outfit across all 3 views',
     'high quality, highly detailed, masterwork',
-    'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
+    'no text, no numbers, no labels, no watermark, no logo, no extra limbs, caucasian, western face',
   ].filter(Boolean);
   return parts.join(', ');
 }
