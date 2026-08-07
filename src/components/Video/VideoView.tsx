@@ -25,6 +25,7 @@ const VideoView: React.FC = () => {
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<'novel' | 'direct'>('novel');
   const [genOpen, setGenOpen] = useState(false);
   const [directOpen, setDirectOpen] = useState(false);
 
@@ -32,7 +33,10 @@ const VideoView: React.FC = () => {
   useEffect(() => {
     const handler = (e: Event) => {
       const { type } = (e as CustomEvent).detail;
-      if (type === 'video') setCreateOpen(true);
+      if (type === 'video') {
+        setCreateMode('novel');
+        setCreateOpen(true);
+      }
     };
     window.addEventListener('mojing:create-project', handler);
     return () => window.removeEventListener('mojing:create-project', handler);
@@ -40,8 +44,9 @@ const VideoView: React.FC = () => {
 
   const videoProjects = useMemo(() => projects.filter((p) => p.type === 'video'), [projects]);
 
-  const handleCreate = (values: { title: string; description: string; style: string; resolution: string; aspectRatio: string; fps: number }) => {
-    const project = useProjectStore.getState().createProject('video', values.title, values.description, {
+  const handleCreate = (values: any) => {
+    const desc = values.mode === 'direct' ? values.prompt : (values.scriptText || values.description);
+    const project = useProjectStore.getState().createProject('video', values.title, desc || '', {
       style: values.style,
       resolution: values.resolution,
       aspectRatio: values.aspectRatio,
@@ -69,6 +74,13 @@ const VideoView: React.FC = () => {
     setActiveProject(project.id);
     useVideoStore.getState().setActivePipelineId(project.id);
     setCreateOpen(false);
+
+    if (values.mode === 'direct') {
+      setDirectOpen(true);
+    } else {
+      setGenOpen(true);
+    }
+
     message.success(t('common.success'));
   };
 
@@ -116,7 +128,10 @@ const VideoView: React.FC = () => {
           onSelect={handleSelectProject}
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
-          onCreate={() => setCreateOpen(true)}
+          onCreate={() => {
+            setCreateMode('novel');
+            setCreateOpen(true);
+          }}
         />
       </div>
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -129,7 +144,10 @@ const VideoView: React.FC = () => {
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
-              onClick={() => setDirectOpen(true)}
+              onClick={() => {
+                setCreateMode('direct');
+                setCreateOpen(true);
+              }}
             >
               {t('video.direct.button')}
             </Button>
@@ -137,7 +155,10 @@ const VideoView: React.FC = () => {
           <Tooltip title={t('video.gen.description')}>
             <Button
               icon={<FormOutlined />}
-              onClick={() => setGenOpen(true)}
+              onClick={() => {
+                setCreateMode('novel');
+                setCreateOpen(true);
+              }}
             >
               {t('video.gen.title')}
             </Button>
@@ -266,7 +287,7 @@ const VideoView: React.FC = () => {
           )}
         </div>
       </div>
-      <CreateVideoModal open={createOpen} onOk={handleCreate} onCancel={() => setCreateOpen(false)} />
+      <CreateVideoModal open={createOpen} initialMode={createMode} onOk={handleCreate} onCancel={() => setCreateOpen(false)} />
       <VideoGeneratorModal open={genOpen} onClose={() => setGenOpen(false)} />
       <DirectVideoModal open={directOpen} onClose={() => setDirectOpen(false)} />
     </div>
