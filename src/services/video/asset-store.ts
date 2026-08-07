@@ -260,16 +260,43 @@ export async function readAsDataUri(urlOrPath: string): Promise<string> {
   if (!urlOrPath) return urlOrPath;
   // 已经是 data URI,直接返回
   if (urlOrPath.startsWith('data:')) return urlOrPath;
-  if (!isTauri()) return urlOrPath;
-  try {
-    return await tauriInvoke<string>('asset_read_as_data_uri', { path: urlOrPath });
-  } catch (err) {
-    void logger.warn(
-      `[asset-store] readAsDataUri(${urlOrPath.slice(0, 80)}) failed: ${err instanceof Error ? err.message : String(err)}`,
-      'asset',
-    );
+
+  // 先用 resolveLocalPath 把 webview URL (http://asset.localhost/...) 反解成本地路径
+  const localPath = resolveLocalPath(urlOrPath);
+
+  // 如果是远程 HTTP/HTTPS 图片 URL，在前端 fetch 并编码为 base64
+  if (isRemoteUrl(localPath)) {
+    try {
+      const resp = await fetch(localPath);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+    } catch (err) {
+      void logger.warn(`[asset-store] fetch remote image as data URI failed: ${err}`, 'asset');
+    }
     return urlOrPath;
   }
+
+  // 本地文件系统路径 -> 调 Rust 命令直接读取二进制文件转 Base64
+  if (isTauri()) {
+    try {
+      return await tauriInvoke<string>('asset_read_as_data_uri', { path: localPath });
+    } catch (err) {
+      void logger.warn(
+        `[asset-store] readAsDataUri(${localPath.slice(0, 80)}) failed: ${err instanceof Error ? err.message : String(err)}`,
+        'asset',
+      );
+      return urlOrPath;
+    }
+  }
+
+  return urlOrPath;
 }
 
 /**
