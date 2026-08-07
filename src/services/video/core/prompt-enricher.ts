@@ -53,17 +53,18 @@ export async function enrichScenePromptWithLLM(
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
       systemPrompt: `You are an expert AI landscape prompt engineer. Convert the scene description into an atmospheric, highly detailed English background landscape prompt.
-Output ONLY the raw prompt text, no explanation, no quotes. Must specify "no humans, empty scene, background scenery only". Keep under 100 words.`,
+CRITICAL MANDATE: Strip away ALL characters, people, names (such as 'fat cat', 'girl', 'hero', 'person'), and character actions. Describe ONLY the physical architecture, nature, scenery, atmosphere, and lighting.
+Output ONLY the raw prompt text, no explanation, no quotes. Must specify "empty background scenery, zero humans, no people, no characters". Keep under 100 words.`,
       userPrompt: `Scene Name: ${s.name}
-Description: ${s.description}
+Description: ${sanitizeSceneDescription(s.description)}
 Style: ${style || 'cinematic'}`,
-      temperature: 0.5,
+      temperature: 0.3,
       maxTokens: 250,
     });
 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
-      return `${enriched}, no humans, empty scene, background scenery only, ${style ? `${style} style` : ''}, 8k detail, cinematic lighting, no text, no watermark`;
+      return `${enriched}, empty background scenery, zero humans, no people, no characters, ${style ? `${style} style` : ''}, 8k detail, cinematic lighting, no text, no watermark`;
     }
   } catch (err) {
     console.warn(`enrichScenePromptWithLLM: LLM fallback for ${s.name}`, err);
@@ -95,10 +96,17 @@ function defaultCharacterPrompt(
   ].filter(Boolean).join(', ');
 }
 
+function sanitizeSceneDescription(desc: string): string {
+  if (!desc) return '';
+  return desc
+    .replace(/(主角|女主角|男主角|角色|人物|人影|猫咪|猫大师|胖橘猫|女生|少年|少女|老人|他|她|他们)[在|与|和|着|了|的|中]*/g, '')
+    .trim();
+}
+
 function defaultScenePrompt(s: SceneAnchor, style?: string): string {
   return [
     `environment establishing shot of ${s.name}`,
-    s.description,
+    sanitizeSceneDescription(s.description),
     'empty scene, no humans, no people, no character, background scenery only',
     'wide angle, cinematic composition, rule of thirds, atmospheric lighting',
     style ? `${style} style` : 'cinematic style',
