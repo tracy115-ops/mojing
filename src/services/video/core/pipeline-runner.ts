@@ -15,6 +15,7 @@ import type {
   GeneratedClip,
 } from '@/types/video';
 import type { PipelineCallbacks } from './types';
+import { isValidVideoClip } from '../asset-store';
 import {
   RUNTIME_STAGE_ORDER,
   STAGE_HANDLERS,
