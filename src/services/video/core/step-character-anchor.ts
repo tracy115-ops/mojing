@@ -252,11 +252,10 @@ function buildTurnaroundPrompt(
     : 'photorealistic character turnaround photo sheet, 3 full body photography views';
 
   const parts = [
-    `character turnaround sheet, 3 full body views of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
+    `3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
     asianBeautyTag,
-    `front view, side profile view, back view, standing side-by-side`,
     `character appearance, hair, costume, outfit, and body shape: ${appearance}`,
-    'neutral standing pose, A-pose, full body visible from head to toe',
+    'standing side-by-side, 3 separate angles, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
     artTypeTag,
     styleEnhancer,

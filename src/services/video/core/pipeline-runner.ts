@@ -197,11 +197,11 @@ function isStageLiveCompleted(proj: VideoProjectState, stage: VideoStage): boole
     case 'keyframe_image':
       return (proj.sceneSpec?.shots ?? []).some((s) => !!s.keyframeImage);
     case 'video_generation':
-      // 完整性的判据:每个 shot 都有对应 clip 且 videoUrl 非空
+      // 完整性的判据:每个 shot 都有对应 clip 且 videoUrl 非空且有效
       return (
         proj.shots.length > 0 &&
         proj.clips.length >= proj.shots.length &&
-        proj.clips.every((c) => !!c.videoUrl)
+        proj.clips.every((c) => isValidVideoClip(c))
       );
     case 'tts':
       return proj.audios.length > 0;

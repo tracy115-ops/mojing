@@ -737,6 +737,9 @@ fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, Str
     if !PathBuf::from(&video_path).exists() {
         return Err(format!("merge_audio: video file does not exist: {}", video_path));
     }
+    if !probe_has_video_stream(Path::new(&video_path)) {
+        return Err(format!("merge_audio: video clip has no valid video stream (corrupted/0-byte): {}", video_path));
+    }
     if !PathBuf::from(&audio_path).exists() {
         return Err(format!("merge_audio: audio file does not exist: {}", audio_path));
     }
