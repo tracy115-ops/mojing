@@ -16,7 +16,7 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
+            args: '--target universal-apple-darwin'
           - platform: ubuntu-22.04
             args: ''
           - platform: windows-latest
@@ -33,7 +33,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install Linux system deps
         if: matrix.platform == 'ubuntu-22.04'
@@ -51,7 +51,20 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'MoJing ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download the installer for your platform.'
+          releaseBody: |
+            ### 📦 MoJing ${{ github.ref_name }} 安装包说明
+
+            #### 💻 Windows
+            下载 `x64-setup.exe` 或 `.msi` 直接双击安装。
+
+            #### 🍎 macOS (支持 M 芯片全系列 + Intel 芯片 Mac)
+            下载 `.dmg` 文件安装。若提示“已损坏 / 无法验证开发者”，请选择以下任一方式解锁：
+            1. **直接发送**：将 `.dmg` / `.app` 通过微信、钉钉或 AirDrop 直接发送给对方，无需命令直接打开。
+            2. **终端解封**：在终端运行 `sudo xattr -rd com.apple.quarantine /Applications/MoJing.app`
+
+            #### 🐧 Linux
+            下载 `.AppImage` 文件，赋予执行权限后运行：
+            `chmod +x *.AppImage && ./*.AppImage`
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
