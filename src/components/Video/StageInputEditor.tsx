@@ -187,33 +187,58 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
             </Text>
             {(project.sceneSpec?.characters ?? []).map((char) => {
               const charPrompts = (input as any)?.characterPrompts || {};
-              const currentPrompt = charPrompts[char.id] ?? char.appearance;
+              const turnaroundPrompts = (input as any)?.turnaroundPrompts || {};
+              const currentPortraitPrompt = charPrompts[char.id] ?? char.appearance;
+              const currentTurnaroundPrompt = turnaroundPrompts[char.id] ?? '';
+
               return (
                 <div
                   key={char.id}
                   style={{
                     padding: 8,
-                    marginBottom: 6,
+                    marginBottom: 8,
                     background: 'var(--bg-primary, #fff)',
                     borderRadius: 4,
                     border: '1px solid var(--border-secondary)',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                     <Text strong style={{ fontSize: 12, color: '#1890ff' }}>
-                      👤 角色: {char.name}
+                      👤 角色实体: {char.name}
                     </Text>
                   </div>
-                  <Input.TextArea
-                    rows={2}
-                    size="small"
-                    value={currentPrompt}
-                    placeholder={`输入 ${char.name} 的独立专属外观 Prompt...`}
-                    onChange={(e) => {
-                      const updatedPrompts = { ...charPrompts, [char.id]: e.target.value };
-                      setStageInput(project.novelProjectId, stage, { characterPrompts: updatedPrompts } as any);
-                    }}
-                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>
+                        🎨 单人立绘 Prompt ({char.name}):
+                      </Text>
+                      <Input.TextArea
+                        rows={2}
+                        size="small"
+                        value={currentPortraitPrompt}
+                        placeholder={`输入 ${char.name} 的独立专属单人立绘 Prompt...`}
+                        onChange={(e) => {
+                          const updated = { ...charPrompts, [char.id]: e.target.value };
+                          setStageInput(project.novelProjectId, stage, { characterPrompts: updated, turnaroundPrompts } as any);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>
+                        📐 三视图模型板 Prompt ({char.name}):
+                      </Text>
+                      <Input.TextArea
+                        rows={2}
+                        size="small"
+                        value={currentTurnaroundPrompt}
+                        placeholder={`默认自动按 ${char.name} 外貌与模版拼接三视图，也可在此手动填入 ${char.name} 的专属三视图 Prompt...`}
+                        onChange={(e) => {
+                          const updatedTurnarounds = { ...turnaroundPrompts, [char.id]: e.target.value };
+                          setStageInput(project.novelProjectId, stage, { characterPrompts: charPrompts, turnaroundPrompts: updatedTurnarounds } as any);
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               );
             })}

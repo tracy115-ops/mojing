@@ -296,6 +296,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
   const anchorInput = proj0?.stages['character_anchor']?.input;
   const anchorMode = anchorInput?.anchorMode;
   const characterPrompts = (anchorInput as any)?.characterPrompts as Record<string, string> | undefined;
+  const turnaroundPrompts = (anchorInput as any)?.turnaroundPrompts as Record<string, string> | undefined;
 
   const result = await safeRunStage(pid, 'character_anchor', () =>
     withStageContext(pid, 'character_anchor', () =>
@@ -308,6 +309,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
           novelProjectId: pid,
           anchorMode,
           characterPrompts,
+          turnaroundPrompts,
         },
         (done, total) => {
           store.setStageStatus(pid, 'character_anchor', 'running', { progress: done / total });

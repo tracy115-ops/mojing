@@ -47,6 +47,8 @@ export async function runCharacterAnchor(
     /** 用户编辑后的整体 prompt(覆盖内部 build 的拼接结果)。
      *  只对 default 单图立绘生效;三视图和 variant 仍按 build 拼接。 */
     characterPrompts?: Record<string, string>;
+    /** 用户针对每个角色编辑后的独立三视图 prompt (键为 characterId 或 name) */
+    turnaroundPrompts?: Record<string, string>;
     /** 向后兼容的单句 promptOverride(只在其匹配指定角色时使用) */
     promptOverride?: string;
   },
@@ -136,9 +138,14 @@ export async function runCharacterAnchor(
     if (wantTurnaround && portraitOk && portraitUrl) {
       try {
         const turnaroundRef = await readAsDataUri(portraitUrl);
+        const customTurnaround = ctx.turnaroundPrompts?.[c.id] || ctx.turnaroundPrompts?.[c.name];
+        const turnaroundPrompt = customTurnaround && customTurnaround.trim()
+          ? customTurnaround
+          : buildTurnaroundPrompt(c, ctx.style, customPrompt);
+
         const img = await providerRouter.generateImage({
           taskType: 'character',
-          prompt: buildTurnaroundPrompt(c, ctx.style, customPrompt),
+          prompt: turnaroundPrompt,
           width: 1536,
           height: 1024,
           style: ctx.style,
