@@ -6,6 +6,8 @@ import { providerRouter } from '@/services/providers';
 import { parseLLMJson } from '@/services/novel/llm-json';
 import type { ShotSpec, AspectRatio } from '@/types/video';
 
+import { useSettingsStore } from '@/stores/settingsStore';
+
 export interface StoryboardContext {
   aspectRatio: AspectRatio;
   defaultShotDuration: 3 | 5 | 10 | 15 | 18;
@@ -40,7 +42,7 @@ export async function stepStoryboard(
 ): Promise<StoryboardResult> {
   const request: LLMGenerateRequest = {
     taskType: 'translation',
-    systemPrompt: buildSystemPrompt(ctx),
+    systemPrompt: buildSystemPrompt(rawPrompt, ctx),
     userPrompt: rawPrompt,
     responseFormat: 'json',
     temperature: 0.6,
@@ -61,13 +63,23 @@ export async function stepStoryboard(
   }
 }
 
-function buildSystemPrompt(ctx: StoryboardContext): string {
-  return `你是 AI 视频分镜师。把用户的多镜头脚本切成结构化的镜头数组。
+function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
+  const isChinese = /[\u4e00-\u9fa5]/.test(rawPrompt);
+  const customPrompt = isChinese
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.storyboardZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.storyboardEn;
+
+  if (customPrompt && customPrompt.trim()) {
+    return `${customPrompt}\n\n【画面比例】${ctx.aspectRatio}\n【默认时长】${ctx.defaultShotDuration}秒\n【风格】${ctx.style || ''}`;
+  }
+
+  if (isChinese) {
+    return `你是 AI 视频分镜师。把用户的多镜头脚本切成结构化的纯中文镜头数组。
 
 【输出规范】严格 JSON 数组,每个镜头字段:
-- "videoPrompt": 英文 prompt,60-120 词。必须含:scene setting / character appearance / action / camera / lighting / mood
+- "videoPrompt": 纯中文 prompt,60-150 字。必须使用纯中文！严禁使用英文！必须包含：场景环境/角色具体外貌与服饰/具体动作与肢体变化/镜头视角与运动/光影与氛围
 - "narration": 中文旁白,30-80 字,用于 TTS
-- "location": 场景名(中/英)
+- "location": 中文场景名
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
 - "durationSeconds": ${ctx.defaultShotDuration} 或 10
@@ -75,12 +87,32 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 - "sceneId": 占位 'scene_0' 等
 
 【画面比例】${ctx.aspectRatio}
-【风格】${ctx.style ?? 'cinematic'}
+【风格】${ctx.style ?? '电影级'}
 
 【质量要求】
-- videoPrompt 必须视觉化、具体化,禁止抽象词
-- 每镜头是 single continuous take,无切换
-- 【全局视觉艺术风格继承 — 极其关键】如果用户原始 prompt 中指定了全局视觉风格（例如：80-90年代邵氏武侠电影、35mm复古胶片颗粒、温暖高饱和度色调、软焦高晕光、JK服装、佩戴墨镜与僧袍的胖橘猫等）：你必须在生成的每一个分镜的 "videoPrompt" 中，显式注入并继承这些全局风格与角色特定外貌关键词（例如: 1980s Shaw Brothers wuxia film aesthetic, vintage 35mm film grain, warm saturated retro film color grading, soft glow bloom），切勿丢弃！`;
+- videoPrompt 必须是纯中文的视觉化具体描写，禁止英文单词，禁止抽象词
+- 每镜头是单镜头推拉摇移，无多视角切换
+- 【全局视觉艺术风格继承】如果用户原始 prompt 中指定了全局视觉风格（例如：80-90年代邵氏武侠电影、35mm复古胶片颗粒、暖色调、戴墨镜与僧袍的胖橘猫等）：你必须在生成的每一个分镜的 "videoPrompt" 中，用纯中文显式注入并继承这些全局风格与角色外貌关键词！`;
+  }
+
+  return `You are an AI video storyboard director. Slice the user's multi-shot script into a structured array of English shots.
+
+[Output Specs] Strict JSON array of objects with fields:
+- "videoPrompt": English prompt, 60-120 words. Must contain: scene setting, character appearance, concrete action, camera angle/movement, lighting, mood.
+- "narration": narration text for TTS
+- "location": location name
+- "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
+- "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
+- "durationSeconds": ${ctx.defaultShotDuration} or 10
+- "characterIds": string array placeholder ['char_0', 'char_1']
+- "sceneId": string placeholder 'scene_0'
+
+[Aspect Ratio] ${ctx.aspectRatio}
+[Style] ${ctx.style ?? 'cinematic'}
+
+[Quality Standards]
+- videoPrompt must be vivid, concrete, and visually descriptive.
+- Inherit global visual styles and character appearance details across all shot videoPrompts.`;
 }
 
 function normalizeShot(item: LLMShot, index: number, ctx: StoryboardContext): ShotSpec {

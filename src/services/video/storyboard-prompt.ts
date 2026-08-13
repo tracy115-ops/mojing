@@ -15,6 +15,7 @@ import { providerRouter } from '@/services/providers';
 import { parseLLMJson } from '@/services/novel/llm-json';
 import type { StoryboardShot } from '@/types/video';
 import type { RawShot } from './chapter-slicer';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 const MAX_SHOTS_PER_CALL = 6;
 
@@ -58,7 +59,7 @@ async function processBatch(
 ): Promise<StoryboardShot[]> {
   const request: LLMGenerateRequest = {
     taskType: 'translation',
-    systemPrompt: buildSystemPrompt(ctx),
+    systemPrompt: buildSystemPrompt(batch, ctx),
     userPrompt: buildUserPrompt(batch, ctx),
     responseFormat: 'json',
     temperature: 0.6,
@@ -80,8 +81,19 @@ async function processBatch(
 
 // --- prompt builders ---
 
-function buildSystemPrompt(ctx: StoryboardContext): string {
-  return `你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型（Kling / Hunyuan / MiniMax / Doubao）能直接生成的精确纯中文 prompt。
+function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
+  const sampleText = batch.map((b) => b.rawText).join(' ');
+  const isChinese = /[\u4e00-\u9fa5]/.test(sampleText);
+  const customPrompt = isChinese
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.storyboardZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.storyboardEn;
+
+  if (customPrompt && customPrompt.trim()) {
+    return `${customPrompt}\n\n【项目背景】小说标题：${ctx.novelTitle}，类型：${ctx.genre}，风格：${ctx.style}，比例：${ctx.aspectRatio}`;
+  }
+
+  if (isChinese) {
+    return `你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型（Kling / Hunyuan / MiniMax / Doubao）能直接生成的精确纯中文 prompt。
 
 【项目背景】
 - 小说标题：${ctx.novelTitle}
@@ -101,6 +113,22 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 - videoPrompt 必须是**纯中文的视觉化具体描写**，禁止英文单词，禁止抽象词（"美丽", "戏剧性" 不算描写）
 - 角色外貌用 "身穿黄僧袍，戴黑色圆墨镜，胡须明显" 这种具体形式
 - 动作用 "主角缓缓走向庭院", "伸手指向对方" 这种具体动词主导句`;
+  }
+
+  return `You are a film storyboard director and AI video prompt engineer. Rewrite novel excerpts into detailed English video prompts.
+
+[Project Context]
+- Novel Title: ${ctx.novelTitle}
+- Genre: ${ctx.genre} / Style: ${ctx.style}
+- Aspect Ratio: ${ctx.aspectRatio}
+- Default Duration: ${ctx.defaultShotDuration}s
+
+[Output Format] Strict JSON array of objects:
+- "videoPrompt": English prompt, 60-120 words. Must include scene setting, character appearance, concrete action, camera angle, lighting, and mood.
+- "imagePrompt": English prompt, 30-60 words.
+- "narration": narration text for TTS.
+- "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
+- "durationSeconds": one of [3, 5, 10, 18]`;
 }
 
 function buildUserPrompt(batch: RawShot[], ctx: StoryboardContext): string {
