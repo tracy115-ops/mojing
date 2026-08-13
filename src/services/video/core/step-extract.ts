@@ -171,6 +171,37 @@ appearance 字段必须严格写出其真实的物种形态（如: an anthropomo
 保证两个角色站在一起时,观众能一眼分辨谁是谁。
 不要写"普通长相""年轻女性"这种泛化描述。`;
 
+const SYSTEM_PROMPT_EN = `You are a script analyzer. Extract structured character, scene, and prop information from the text. All description fields MUST be 100% in English!
+
+[Output JSON Specs]:
+{
+  "characters": [
+    {
+      "name": "Character Name",
+      "appearance": "Full English appearance: gender/age/face/hair/clothing/distinguishing features",
+      "gender": "male | female | unknown",
+      "ageGroup": "child | teen | young | middle | elder | unknown",
+      "costumeVariants": [
+        {"id": "default", "description": "default outfit"}
+      ],
+      "firstAppearShotIndex": 0
+    }
+  ],
+  "scenes": [
+    {"name": "Scene Name", "description": "English environment description", "firstAppearShotIndex": 0}
+  ],
+  "props": [
+    {"name": "Prop Name", "description": "English description"}
+  ],
+  "characterIdMap": {"char_0": "Character Name"},
+  "sceneIdMap":     {"scene_0": "Scene Name"}
+}
+
+[Rules]
+- Merge characters with the same name.
+- Non-human / animal / unique characters MUST preserve physical species features (e.g., an anthropomorphic chubby orange cat wearing round black sunglasses and yellow monk robes).
+- Keep descriptions clear and distinct.`;
+
 function buildUserPrompt(input: ExtractInput): string {
   const shotsHint = input.shots?.length
     ? `\n\n【已切分的镜头(含占位 id)】\n${input.shots
