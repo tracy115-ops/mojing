@@ -139,10 +139,30 @@ export function populateStageInput(pid: string, stage: ComicTrackedStage, ctx: S
   }
 }
 
+import { detectInputLanguage } from '@/services/video/core/lang-detector';
+import { getStyleNameZh } from '@/services/video/core/prompt-enricher';
+
 function buildSamplePortraitPrompt(
   c: ComicCharacterAnchor,
   style?: string,
 ): string {
+  const fullText = `${c.name} ${c.appearance} ${style || ''}`;
+  const isChinese = detectInputLanguage(fullText) === 'zh';
+  const styleZh = getStyleNameZh(style);
+
+  if (isChinese) {
+    const parts = [
+      `单人角色漫画立绘：${c.name}`,
+      `外观特征：${c.appearance}`,
+      '自然站姿，纯色简洁背景，工作室软光照',
+      '全身完整可见，单人居中',
+      `${styleZh}风格`,
+      '高清精细二次元动漫画风',
+      '无文字，无水印，无签名',
+    ];
+    return parts.join('，');
+  }
+
   const parts = [
     `character reference portrait of ${c.name}`,
     c.appearance,

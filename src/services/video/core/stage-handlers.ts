@@ -29,6 +29,8 @@ import { runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
 import { isValidVideoClip } from '../asset-store';
 import { toWebviewUrl } from '../asset-store';
+import { detectInputLanguage } from './lang-detector';
+import { getStyleNameZh } from './prompt-enricher';
 
 /** Stage 执行上下文。handler 从这里读输入,通过 store action 写输出。 */
 export interface StageContext {
@@ -170,6 +172,23 @@ function buildSamplePortraitPrompt(
   c: NonNullable<SceneSpec['characters']>[number],
   style?: string,
 ): string {
+  const fullText = `${c.name} ${c.appearance} ${style || ''}`;
+  const isChinese = detectInputLanguage(fullText) === 'zh';
+  const styleZh = getStyleNameZh(style);
+
+  if (isChinese) {
+    const parts = [
+      `单人角色全身立绘：${c.name}`,
+      `外观特征：${c.appearance}`,
+      '自然站姿，纯色简洁背景，工作室软光照',
+      '全身完整可见，单人居中',
+      `${styleZh}风格`,
+      '8K超高清细节，写实质感',
+      '无文字，无水印，无签名',
+    ];
+    return parts.join('，');
+  }
+
   const parts = [
     `character reference portrait of ${c.name}`,
     c.appearance,
@@ -186,6 +205,21 @@ function buildSampleScenePrompt(
   s: NonNullable<SceneSpec['scenes']>[number],
   style?: string,
 ): string {
+  const fullText = `${s.name} ${s.description} ${style || ''}`;
+  const isChinese = detectInputLanguage(fullText) === 'zh';
+  const styleZh = getStyleNameZh(style);
+
+  if (isChinese) {
+    const parts = [
+      `环境空景背景图：${s.name}`,
+      s.description,
+      `${styleZh}风格`,
+      '8K超高清细节，电影级质感',
+      '无文字，无水印',
+    ];
+    return parts.join('，');
+  }
+
   const parts = [
     `scene background of ${s.name}`,
     s.description,
