@@ -8,7 +8,7 @@ import { providerRouter } from '@/services/providers';
 import { parseLLMJson } from '@/services/novel/llm-json';
 
 export interface RewriteResult {
-  /** 标准化后的英文画面描述(单镜头用) */
+  /** 标准化后的纯中文画面描述(单镜头用) */
   rewrittenPrompt: string;
   /** LLM 推测的镜头数量(用于判断 multishot) */
   detectedShotCount: number;
@@ -18,8 +18,7 @@ export interface RewriteResult {
 
 /**
  * 步 2:把用户输入标准化。
- * - 中文 → 翻译成英文视觉描述
- * - 口语化 → 扩写成完整画面描述
+ * - 口语化 → 扩写成完整中文画面描述
  * - 多镜头脚本 → 检测出镜头数量(实际切分在 step-storyboard)
  */
 export async function stepRewrite(rawPrompt: string): Promise<RewriteResult> {
@@ -55,18 +54,18 @@ interface RewriteLLMOutput {
   title?: string;
 }
 
-const SYSTEM_PROMPT = `你是 AI 视频提示词工程师。把用户的粗略输入标准化为视频模型可用的英文画面描述。
+const SYSTEM_PROMPT = `你是 AI 视频提示词工程师。把用户的粗略输入标准化为视频模型可用的纯中文画面描述。
 
 任务:
-1. 如果输入是中文,翻译成英文
-2. 扩写成完整的视觉描述:scene setting / character appearance / action / camera / lighting / mood
+1. 必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
+2. 扩写成完整的中文视觉描述:场景环境 / 角色外貌服饰 / 具体动作肢体 / 镜头视角 / 光影与氛围
 3. 检测输入是否是多镜头脚本(包含"镜头1"、"Scene 1"、"|"、换行分段等线索)
-4. 单镜头:输出 60-120 词的英文 prompt
-5. 多镜头:输出整体风格描述(各镜头细节由分镜步骤处理),并报告镜头数量
+4. 单镜头:输出 60-150 字的纯中文 prompt
+5. 多镜头:输出整体纯中文风格描述(各镜头细节由分镜步骤处理),并报告镜头数量
 
 输出 JSON:
 {
-  "rewrittenPrompt": "英文画面描述",
+  "rewrittenPrompt": "纯中文画面描述",
   "detectedShotCount": <number, 1=单镜头, >1=多镜头>,
   "title": "可选的标题"
 }`;

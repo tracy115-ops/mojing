@@ -108,14 +108,14 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
   }
 }
 
-const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。
+const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。所有输出的描述文本必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
 
 【输出 JSON】严格遵循:
 {
   "characters": [
     {
       "name": "角色名",
-      "appearance": "完整外貌:gender/age/face/hair/clothing/distinguishing features",
+      "appearance": "纯中文完整外貌描述:性别/年龄/脸型/发型发色/服饰/体型特征",
       "gender": "male | female | unknown",
       "ageGroup": "child | teen | young | middle | elder | unknown",
       "costumeVariants": [
@@ -126,10 +126,10 @@ const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化
     }
   ],
   "scenes": [
-    {"name": "场景名", "description": "环境描述", "firstAppearShotIndex": 0}
+    {"name": "场景名", "description": "纯中文环境描述", "firstAppearShotIndex": 0}
   ],
   "props": [
-    {"name": "道具名", "description": "描述"}
+    {"name": "道具名", "description": "纯中文描述"}
   ],
   "characterIdMap": {"char_0": "角色名", "char_1": "角色名"},
   "sceneIdMap":     {"scene_0": "场景名"}
