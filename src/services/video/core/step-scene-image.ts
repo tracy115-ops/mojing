@@ -69,9 +69,24 @@ function sanitizeFileName(s: string): string {
 }
 
 function buildScenePrompt(s: SceneAnchor, style?: string): string {
+  const desc = s.description || '';
+  const isChinese = /[\u4e00-\u9fa5]/.test(`${s.name} ${desc}`);
+  if (isChinese) {
+    return [
+      `环境空景图：${s.name}`,
+      desc,
+      '纯背景画面，无人物，无人影，无角色，仅风景建筑环境',
+      '广角视角，电影级构图，三分法，大气光影',
+      style ? `${style}风格` : '电影级风格',
+      '高清细节大作',
+      '无文字，无水印，无签名，无人物',
+    ]
+      .filter(Boolean)
+      .join('，');
+  }
   return [
     `environment establishing shot of ${s.name}`,
-    s.description,
+    desc,
     'empty scene, no humans, no people, no character, background scenery only',
     'wide angle, cinematic composition, rule of thirds, atmospheric lighting',
     style ? `${style} style` : 'cinematic style',

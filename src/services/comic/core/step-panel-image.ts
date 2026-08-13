@@ -175,13 +175,29 @@ function buildPanelPrompt(panel: ComicPanelSpec, style: string): string {
   if (!base) {
     throw new Error(`panel ${panel.id} description 为空`);
   }
+  const isChinese = /[\u4e00-\u9fa5]/.test(base);
+  if (isChinese) {
+    const shotMap: Record<string, string> = {
+      'close-up': '特写视角',
+      medium: '中景视角',
+      wide: '远景视角',
+      establishing: '全景空景视角',
+    };
+    const shotHint = panel.shotType && shotMap[panel.shotType] ? `，${shotMap[panel.shotType]}` : '';
+    return [
+      base,
+      shotHint,
+      style ? `，${style}风格` : '，漫画风格',
+      '，漫画分镜构图，高细节，无文字，无水印，无对话框，无字幕',
+    ].join('');
+  }
   const shotHint = panel.shotType
     ? `, ${panel.shotType.replace('-', ' ')} shot composition`
     : '';
   return [
     base,
     shotHint,
-    `, ${style} style`,
+    style ? `, ${style} style` : ', comic style',
     ', comic panel composition',
     ', high detail',
     ', no text, no watermark, no speech bubble, no caption',

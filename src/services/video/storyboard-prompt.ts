@@ -81,7 +81,7 @@ async function processBatch(
 // --- prompt builders ---
 
 function buildSystemPrompt(ctx: StoryboardContext): string {
-  return `你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型（Kling / Runway / Veo）能直接生成的精确 prompt。
+  return `你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型（Kling / Hunyuan / MiniMax / Doubao）能直接生成的精确纯中文 prompt。
 
 【项目背景】
 - 小说标题：${ctx.novelTitle}
@@ -90,18 +90,17 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 - 单镜头时长：${ctx.defaultShotDuration} 秒
 
 【输出规范】严格 JSON 数组，每个元素对应一个镜头，字段：
-- "videoPrompt": 英文 prompt，60-120 词。必须包含：(1) scene setting (2) character appearance + clothing (3) concrete action (4) camera angle/movement (close-up/wide/aerial/dolly/pan) (5) lighting (golden hour/low-key/neon) (6) mood。不要写 "A video of" 之类元描述。
-- "imagePrompt": 英文 prompt，30-60 词，描述这个镜头的关键帧画面（Phase 2 用，可空字符串）
+- "videoPrompt": 纯中文 prompt，60-150 字。必须使用纯中文！必须包含：(1) 场景环境描写 (2) 角色具体外貌与服饰 (3) 具体动作与肢体变化 (4) 镜头视角与运动 (5) 光影与氛围。不要写 "一个视频" 之类元描述。
+- "imagePrompt": 纯中文 prompt，30-80 字，描述这个镜头的关键帧画面（必须纯中文）
 - "narration": 中文旁白，30-80 字，用于 TTS 配音。原文已是叙述则压缩改写；原文是对话则改成第三人称描述。
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
 - "durationSeconds": one of [3, 5, 10, 18] (默认 ${ctx.defaultShotDuration},动作戏或长镜头可用 10 或 18)
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 
 【质量要求】
-- videoPrompt 必须是**视觉化的具体描写**，禁止抽象词（"beautiful", "dramatic" 不算描写）
-- 角色外貌用 "wearing X, with Y hair" 这种具体形式
-- 动作用 "X walks toward Y", "X picks up Z" 这种动词主导句
-- 中文原文里的成语/抽象表达，必须翻译成具体画面（"目光如刀" → "with piercing cold eyes"）`;
+- videoPrompt 必须是**纯中文的视觉化具体描写**，禁止英文单词，禁止抽象词（"美丽", "戏剧性" 不算描写）
+- 角色外貌用 "身穿黄僧袍，戴黑色圆墨镜，胡须明显" 这种具体形式
+- 动作用 "主角缓缓走向庭院", "伸手指向对方" 这种具体动词主导句`;
 }
 
 function buildUserPrompt(batch: RawShot[], ctx: StoryboardContext): string {
