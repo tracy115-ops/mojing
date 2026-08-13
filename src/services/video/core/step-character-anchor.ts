@@ -15,6 +15,7 @@ import type { CharacterAnchor, ModelTier } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
 import { enrichCharacterPromptWithLLM } from './prompt-enricher';
 import { detectInputLanguage } from './lang-detector';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 export interface CharacterAnchorResult {
   /** 更新后的角色(立绘已填入 portraitImage / turnaroundImage / costumeVariants[].portraitImage) */
@@ -276,8 +277,7 @@ function truncate(s: string | undefined, max: number): string {
 /**
  * 三视图(turnaround / model sheet)prompt 模板。
  * 让 provider 在同一张图里画出 正面/侧面/背面 三个角度。
- * 调用时通常会传入 default 单图作 reference,让三视图里的角色和单图保持一致。
- * 后续 keyframe 拿到三视图后会自动裁出中间 1/3 作为 reference。
+ * 针对每个角色独立调用，将 {name} 替换为该角色名字，{appearance} 替换为该角色的专属外貌描写。
  */
 function buildTurnaroundPrompt(
   c: CharacterAnchor,
@@ -288,6 +288,17 @@ function buildTurnaroundPrompt(
   const fullText = `${c.name} ${appearance} ${style || ''}`;
   const isChinese = detectInputLanguage(fullText) === 'zh';
   const styleEnhancer = getStyleEnhancers(fullText, style);
+
+  const customTemplate = isChinese
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.turnaroundZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.turnaroundEn;
+
+  if (customTemplate && customTemplate.trim()) {
+    return customTemplate
+      .replace(/{name}/gi, c.name)
+      .replace(/{appearance}/gi, appearance)
+      .replace(/{style}/gi, style || '');
+  }
 
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const aestheticTag = getCharacterAestheticTag(fullText);
