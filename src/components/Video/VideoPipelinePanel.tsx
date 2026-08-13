@@ -14,7 +14,7 @@ import {
 import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
-  DeleteOutlined,
+  DeleteOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -24,6 +24,7 @@ import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
 import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
+import VideoPromptSettingsModal from './VideoPromptSettingsModal';
 import { VideoPipeline } from '@/services/video/pipeline';
 import { runFromFirstFailedStage, runFromStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { logger } from '@/services/log';
@@ -300,6 +301,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   // 用户点 Steps 上某个步骤时,切换产物视图到该步骤。
   // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
+  const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
 
   const novelTitle = useProjectStore((s) => {
     if (!pipelineId || !exists) return undefined;
@@ -382,6 +384,14 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          <Button
+            size="small"
+            icon={<SettingOutlined />}
+            onClick={() => setPromptSettingsOpen(true)}
+            style={{ borderColor: 'var(--color-primary, #3b82f6)', color: 'var(--color-primary, #3b82f6)' }}
+          >
+            🎨 提示词预设配置
+          </Button>
           {overall === 'running' && (
             <Popconfirm
               title="确定要立即强行终止当前视频生成流程吗？"
@@ -770,6 +780,12 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           suggestedName={`mojing-${pipelineId}`}
         />
       )}
+
+      {/* 视频工坊提示词预设配置 Modal */}
+      <VideoPromptSettingsModal
+        open={promptSettingsOpen}
+        onClose={() => setPromptSettingsOpen(false)}
+      />
     </div>
   );
 };
