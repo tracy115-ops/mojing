@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Divider, Space, message } from 'antd';
+import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Divider, Space, message, Alert } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AppSettings } from '@/types';
@@ -198,6 +198,87 @@ const SettingsPanel: React.FC = () => {
                 { value: 'epub', label: 'EPUB' },
               ]}
               style={{ width: 200 }}
+            />
+          </Form.Item>
+        </Form>
+      ),
+    },
+    {
+      key: 'promptTemplates',
+      label: '提示词预设模板',
+      children: (
+        <Form layout="vertical" size="small">
+          <Alert
+            message="提示词模板说明"
+            description="此处预置的提示词模板会在执行视频/漫画流水线前自动加载应用。您可以自由修改、自定义通用修饰词与控制结构。占位符说明：{name} 角色名，{appearance} 外貌描述，{style} 画风风格，{description} 环境描写。"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <Form.Item label="角色立绘模板 (中文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.portraitZh}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, portraitZh: e.target.value },
+                })
+              }
+            />
+          </Form.Item>
+          <Form.Item label="角色立绘模板 (英文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.portraitEn}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, portraitEn: e.target.value },
+                })
+              }
+            />
+          </Form.Item>
+          <Form.Item label="三视图模型板模板 (中文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.turnaroundZh}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, turnaroundZh: e.target.value },
+                })
+              }
+            />
+          </Form.Item>
+          <Form.Item label="场景背景图模板 (中文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.sceneZh}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, sceneZh: e.target.value },
+                })
+              }
+            />
+          </Form.Item>
+          <Form.Item label="分镜关键帧模板 (中文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.keyframeZh}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, keyframeZh: e.target.value },
+                })
+              }
+            />
+          </Form.Item>
+          <Form.Item label="画质与光影增强词 (中文)">
+            <Input.TextArea
+              rows={2}
+              value={settings.creative.promptTemplates?.qualityZh}
+              onChange={(e) =>
+                updateCreativeSettings({
+                  promptTemplates: { ...settings.creative.promptTemplates, qualityZh: e.target.value },
+                })
+              }
             />
           </Form.Item>
         </Form>

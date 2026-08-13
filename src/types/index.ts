@@ -87,6 +87,19 @@ export interface ShortcutConfig {
 // Creative Settings
 // ============================================================================
 
+export interface PromptTemplatesSettings {
+  portraitZh?: string;
+  portraitEn?: string;
+  turnaroundZh?: string;
+  turnaroundEn?: string;
+  sceneZh?: string;
+  sceneEn?: string;
+  keyframeZh?: string;
+  keyframeEn?: string;
+  qualityZh?: string;
+  qualityEn?: string;
+}
+
 export interface CreativeSettings {
   defaultNovelStyle: string;
   defaultComicStyle: string;
@@ -95,6 +108,7 @@ export interface CreativeSettings {
   autoSaveIntervalSeconds: number;
   exportFormat: string;
   maxConcurrentGenerations: number;
+  promptTemplates?: PromptTemplatesSettings;
 }
 
 // ============================================================================
