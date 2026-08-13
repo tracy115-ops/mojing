@@ -14,6 +14,7 @@ import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, ModelTier } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
 import { enrichCharacterPromptWithLLM } from './prompt-enricher';
+import { detectInputLanguage } from './lang-detector';
 
 export interface CharacterAnchorResult {
   /** 更新后的角色(立绘已填入 portraitImage / turnaroundImage / costumeVariants[].portraitImage) */
@@ -223,7 +224,7 @@ function buildPortraitPrompt(
   costumeOverride?: string,
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
-  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
+  const isChinese = detectInputLanguage(fullText) === 'zh';
   const styleEnhancer = getStyleEnhancers(fullText, style);
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const aestheticTag = getCharacterAestheticTag(fullText);
@@ -285,7 +286,7 @@ function buildTurnaroundPrompt(
 ): string {
   const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
   const fullText = `${c.name} ${appearance} ${style || ''}`;
-  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
+  const isChinese = detectInputLanguage(fullText) === 'zh';
   const styleEnhancer = getStyleEnhancers(fullText, style);
 
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);

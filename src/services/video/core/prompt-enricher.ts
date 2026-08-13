@@ -6,6 +6,8 @@ import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, SceneAnchor } from '@/types/video';
 import { getStyleEnhancers } from './step-video-gen';
 import { getCharacterAestheticTag } from './step-character-anchor';
+import { detectInputLanguage } from './lang-detector';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 /**
  * 调配置好的 LLM 文本模型，将角色外观动态扩展为工业级高精度生图 Prompt。
@@ -16,18 +18,33 @@ export async function enrichCharacterPromptWithLLM(
   costumeOverride?: string,
 ): Promise<string> {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
+  const lang = detectInputLanguage(fullText);
+  const isChinese = lang === 'zh';
   const styleEnhancer = getStyleEnhancers(fullText, style);
   const aestheticTag = getCharacterAestheticTag(fullText);
+
+  const customSystem = isChinese
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.portraitZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.portraitEn;
+
+  const defaultSystemZh = `你是 AI 角色立绘提示词专家。把角色外貌描述扩展为高精度的纯中文角色立绘提示词。
+【核心要求】：
+1. 必须使用 100% 纯中文！严禁包含英文单词或中英混排。
+2. 描述单人全身立绘，禁止出现"三视图"、"多视角"。
+3. 必须 100% 完整保留用户的全部原词细节（如黄色僧袍、墨镜、胖橘猫等）。输出纯文本，不超过120字。`;
+
+  const defaultSystemEn = `You are an expert AI character portrait prompt engineer.
+CRITICAL MANDATE:
+1. Output MUST be 100% in English! No Chinese characters.
+2. Must be a SINGLE INDIVIDUAL figure in frame. Do NOT include words like "character sheet", "turnaround", "multiple views".
+3. Preserve 100% of user raw details. Keep under 120 words.`;
+
+  const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
 
   try {
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
-      systemPrompt: `You are an expert AI character portrait prompt engineer specializing in novel characters.
-CRITICAL MANDATE:
-1. Respect character species, gender, and type (human vs animal/creature, male vs female). Do NOT force female beauty tags on males, old people, or animals (such as cats/dogs/monsters).
-2. Must be a SINGLE INDIVIDUAL figure/character in frame. Do NOT include words like "character sheet", "model sheet", "turnaround", "multiple views".
-3. You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, yellow monk robe, black round sunglasses, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
-Output ONLY the raw prompt text, no explanation, no markdown quotes. Keep under 120 words.`,
+      systemPrompt,
       userPrompt: `Character Name: ${c.name}
 Features: ${c.appearance}
 Costume: ${costumeOverride || 'default'}
@@ -38,7 +55,10 @@ Style: ${style || 'cinematic'}`,
 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
-      return `${enriched}, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, high quality, no text, no watermark, no bad anatomy, no character sheet, no turnaround, no multiple views`;
+      if (isChinese) {
+        return `${enriched}，${aestheticTag ? `${aestheticTag}，` : ''}${styleEnhancer}，高品质角色立绘，单人全身照，纯色简洁背景，工作室光效，高品质，无文字，无水印，无签名，无多余人物，无肢体残缺，无三视图，无多视角`;
+      }
+      return `${enriched}, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, high quality character portrait, single centered figure, full body, plain solid background, studio lighting, masterpiece, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views`;
     }
   } catch (err) {
     console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
@@ -54,12 +74,29 @@ export async function enrichScenePromptWithLLM(
   s: SceneAnchor,
   style?: string,
 ): Promise<string> {
+  const fullText = `${s.name} ${s.description} ${style || ''}`;
+  const lang = detectInputLanguage(fullText);
+  const isChinese = lang === 'zh';
+
+  const customSystem = isChinese
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.sceneZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.sceneEn;
+
+  const defaultSystemZh = `你是 AI 场景背景提示词专家。将场景描述转为大气高精度的纯中文环境空景图提示词。
+【核心要求】：
+1. 必须使用 100% 纯中文！严禁包含英文单词或中英混排。
+2. 剔除所有人物、角色、姓名和动作，仅描述建筑、自然、环境光影。
+3. 显式包含"纯环境空景，无人物，无角色"。输出纯文本，不超过100字。`;
+
+  const defaultSystemEn = `You are an expert AI landscape prompt engineer. Convert scene description into English background landscape prompt.
+CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY physical scenery. Specify "empty background scenery, zero humans, no people". Keep under 100 words.`;
+
+  const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
+
   try {
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
-      systemPrompt: `You are an expert AI landscape prompt engineer. Convert the scene description into an atmospheric, highly detailed English background landscape prompt.
-CRITICAL MANDATE: Strip away ALL characters, people, names (such as 'fat cat', 'girl', 'hero', 'person'), and character actions. Describe ONLY the physical architecture, nature, scenery, atmosphere, and lighting.
-Output ONLY the raw prompt text, no explanation, no quotes. Must specify "empty background scenery, zero humans, no people, no characters". Keep under 100 words.`,
+      systemPrompt,
       userPrompt: `Scene Name: ${s.name}
 Description: ${sanitizeSceneDescription(s.description)}
 Style: ${style || 'cinematic'}`,
@@ -69,6 +106,9 @@ Style: ${style || 'cinematic'}`,
 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
+      if (isChinese) {
+        return `${enriched}，纯环境空景，无人物，无角色，${style ? `${style}风格` : ''}，8K超高清细节，电影级光照，无文字，无水印`;
+      }
       return `${enriched}, empty background scenery, zero humans, no people, no characters, ${style ? `${style} style` : ''}, 8k detail, cinematic lighting, no text, no watermark`;
     }
   } catch (err) {
@@ -85,8 +125,27 @@ function defaultCharacterPrompt(
   styleEnhancer?: string,
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''}`;
+  const isChinese = detectInputLanguage(fullText) === 'zh';
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const aestheticTag = getCharacterAestheticTag(fullText);
+
+  if (isChinese) {
+    const artTypeTag = isCartoonOrAnime
+      ? '高清2D二次元单人角色立绘，精细动漫画作'
+      : '写实人像摄影，高品质电影角色照，超高清精细特征';
+
+    return [
+      `单人角色全身立绘：${c.name}`,
+      aestheticTag,
+      `角色外观特征：${c.appearance}`,
+      costumeOverride ? `穿着服饰：${costumeOverride}` : '',
+      '自然站姿，纯色简洁背景，工作室光照',
+      '从头到脚全身完整可见，单人居中',
+      artTypeTag,
+      styleEnhancer,
+      '无文字，无水印，无签名，无多余人物，无残缺，无三视图模型板',
+    ].filter(Boolean).join('，');
+  }
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime single character portrait, detailed anime artwork'
@@ -114,6 +173,19 @@ function sanitizeSceneDescription(desc: string): string {
 }
 
 function defaultScenePrompt(s: SceneAnchor, style?: string): string {
+  const fullText = `${s.name} ${s.description} ${style || ''}`;
+  const isChinese = detectInputLanguage(fullText) === 'zh';
+
+  if (isChinese) {
+    return [
+      `环境空景图：${s.name}`,
+      sanitizeSceneDescription(s.description),
+      '纯环境空景，无人物，无角色，仅背景风光',
+      style ? `${style}风格` : '',
+      '高细节，无文字，无水印',
+    ].filter(Boolean).join('，');
+  }
+
   return [
     `environment establishing shot of ${s.name}`,
     sanitizeSceneDescription(s.description),
