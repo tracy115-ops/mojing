@@ -59,9 +59,20 @@ interface LLMExtract {
  * 失败不阻塞,返回空数组。
  */
 export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
+  const lang = detectInputLanguage(input.text);
+  const customSystem = lang === 'zh'
+    ? useSettingsStore.getState().settings.creative.promptTemplates?.extractZh
+    : useSettingsStore.getState().settings.creative.promptTemplates?.extractEn;
+
+  const systemPrompt = customSystem && customSystem.trim()
+    ? customSystem
+    : lang === 'zh'
+      ? SYSTEM_PROMPT_ZH
+      : SYSTEM_PROMPT_EN;
+
   const request: LLMGenerateRequest = {
     taskType: 'extraction',
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt,
     userPrompt: buildUserPrompt(input),
     responseFormat: 'json',
     temperature: 0.3,
@@ -108,7 +119,7 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
   }
 }
 
-const SYSTEM_PROMPT = `你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。所有输出的描述文本必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
+const SYSTEM_PROMPT_ZH = `你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。所有输出的描述文本必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
 
 【输出 JSON】严格遵循:
 {
