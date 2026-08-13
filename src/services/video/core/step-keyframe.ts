@@ -12,7 +12,7 @@ import type {
   AspectRatio,
   ModelTier,
 } from '@/types/video';
-import { saveAsset, readAsDataUri, cropMiddleThirdFromDataUri } from '../asset-store';
+import { saveAsset, readAsDataUri } from '../asset-store';
 import { getStyleEnhancers } from './step-video-gen';
 import { getCharacterAestheticTag } from './step-character-anchor';
 
