@@ -9,6 +9,17 @@ import { getCharacterAestheticTag } from './step-character-anchor';
 import { detectInputLanguage } from './lang-detector';
 import { useSettingsStore } from '@/stores/settingsStore';
 
+export function getStyleNameZh(style?: string): string {
+  if (!style) return '电影级';
+  const s = style.toLowerCase();
+  if (s === 'cinematic') return '电影级';
+  if (s === 'anime' || s === '2d') return '2D动漫';
+  if (s === 'cyberpunk') return '赛博朋克';
+  if (s === 'documentary' || s === 'realistic') return '写实纪录片';
+  if (s === 'wuxia') return '武侠古风';
+  return style;
+}
+
 /**
  * 调配置好的 LLM 文本模型，将角色外观动态扩展为工业级高精度生图 Prompt。
  */
@@ -22,6 +33,7 @@ export async function enrichCharacterPromptWithLLM(
   const isChinese = lang === 'zh';
   const styleEnhancer = getStyleEnhancers(fullText, style);
   const aestheticTag = getCharacterAestheticTag(fullText);
+  const styleZh = getStyleNameZh(style);
 
   const customSystem = isChinese
     ? useSettingsStore.getState().settings.creative.promptTemplates?.portraitZh
@@ -42,13 +54,14 @@ CRITICAL MANDATE:
   const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
 
   try {
+    const userPrompt = isChinese
+      ? `角色姓名：${c.name}\n外貌描写：${c.appearance}\n变装说明：${costumeOverride || '默认服饰'}\n艺术风格：${styleZh}`
+      : `Character Name: ${c.name}\nFeatures: ${c.appearance}\nCostume: ${costumeOverride || 'default'}\nStyle: ${style || 'cinematic'}`;
+
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
       systemPrompt,
-      userPrompt: `Character Name: ${c.name}
-Features: ${c.appearance}
-Costume: ${costumeOverride || 'default'}
-Style: ${style || 'cinematic'}`,
+      userPrompt,
       temperature: 0.3,
       maxTokens: 250,
     });
@@ -77,6 +90,7 @@ export async function enrichScenePromptWithLLM(
   const fullText = `${s.name} ${s.description} ${style || ''}`;
   const lang = detectInputLanguage(fullText);
   const isChinese = lang === 'zh';
+  const styleZh = getStyleNameZh(style);
 
   const customSystem = isChinese
     ? useSettingsStore.getState().settings.creative.promptTemplates?.sceneZh
@@ -94,12 +108,14 @@ CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY 
   const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
 
   try {
+    const userPrompt = isChinese
+      ? `场景名称：${s.name}\n场景描写：${sanitizeSceneDescription(s.description)}\n艺术风格：${styleZh}`
+      : `Scene Name: ${s.name}\nDescription: ${sanitizeSceneDescription(s.description)}\nStyle: ${style || 'cinematic'}`;
+
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
       systemPrompt,
-      userPrompt: `Scene Name: ${s.name}
-Description: ${sanitizeSceneDescription(s.description)}
-Style: ${style || 'cinematic'}`,
+      userPrompt,
       temperature: 0.3,
       maxTokens: 250,
     });
@@ -107,7 +123,7 @@ Style: ${style || 'cinematic'}`,
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
       if (isChinese) {
-        return `${enriched}，纯环境空景，无人物，无角色，${style ? `${style}风格` : ''}，8K超高清细节，电影级光照，无文字，无水印`;
+        return `${enriched}，纯环境空景，无人物，无角色，${styleZh}风格，8K超高清细节，电影级光照，无文字，无水印`;
       }
       return `${enriched}, empty background scenery, zero humans, no people, no characters, ${style ? `${style} style` : ''}, 8k detail, cinematic lighting, no text, no watermark`;
     }
@@ -175,6 +191,7 @@ function sanitizeSceneDescription(desc: string): string {
 function defaultScenePrompt(s: SceneAnchor, style?: string): string {
   const fullText = `${s.name} ${s.description} ${style || ''}`;
   const isChinese = detectInputLanguage(fullText) === 'zh';
+  const styleZh = getStyleNameZh(style);
 
   if (isChinese) {
     return [
