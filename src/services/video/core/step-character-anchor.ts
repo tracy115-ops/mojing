@@ -187,6 +187,28 @@ function countAnchorsNeeded(chars: CharacterAnchor[], includeTurnaround: boolean
 
 import { getStyleEnhancers } from './step-video-gen';
 
+export function getCharacterAestheticTag(fullText: string): string {
+  const text = fullText.toLowerCase();
+
+  // 1. 显式欧美 / 外国特征
+  if (/western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发|碧眼/i.test(text)) {
+    return '';
+  }
+
+  // 2. 动物 / 宠物 / 奇幻生物 (猫/狗/胖橘猫/神兽/妖/机器人等) -> 避免强加人类面部与性别词导致毁图！
+  if (/cat|dog|animal|pet|dragon|monster|robot|fox|wolf|bear|tiger|lion|bird|monkey|猫|狗|胖橘|橘猫|肥猫|动物|神兽|妖|怪|兽|机器人|坐骑|宠物|狐狸|狼|熊|虎|狮|鸟|猴|悟空/i.test(text)) {
+    return 'masterpiece character design, highly detailed fur and physical texture, expressive creature features, high quality concept art';
+  }
+
+  // 3. 男性角色 -> 东方男性美学 (英俊/汉子/儒雅/和尚/少爷/老者)
+  if (/male|man|boy|monk|guy|gentleman|king|father|brother|prince|master|男|汉子|和尚|小和尚|老和尚|少年|青年|大叔|老者|皇帝|王爷|少爷|师傅|师父|公|爷|哥|侠客|书生/i.test(text)) {
+    return 'handsome East Asian Chinese male features, refined facial structure, dignified posture, elegant oriental male aesthetic';
+  }
+
+  // 4. 女性角色 (默认/显式女性) -> 东方女神/佳人
+  return 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky hair, elegant almond eyes, oriental goddess aesthetic';
+}
+
 function buildPortraitPrompt(
   c: CharacterAnchor,
   _allChars: CharacterAnchor[],
@@ -196,10 +218,7 @@ function buildPortraitPrompt(
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
   const styleEnhancer = getStyleEnhancers(fullText, style);
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
-  const asianBeautyTag = !isExplicitlyWestern
-    ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes, oriental goddess aesthetic'
-    : '';
+  const aestheticTag = getCharacterAestheticTag(fullText);
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime single character portrait, detailed anime artwork'
@@ -207,8 +226,8 @@ function buildPortraitPrompt(
 
   // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
   const parts = [
-    `solo, 1person, single character portrait of ${c.name}`,
-    asianBeautyTag,
+    `solo, single character portrait of ${c.name}`,
+    aestheticTag,
     `complete character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
     'full-body character design lock, 100% identical face, hairstyle, hair color, clothing outfit, costume details, body proportions, and accessories',
@@ -216,7 +235,7 @@ function buildPortraitPrompt(
     'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views, caucasian, western face',
+    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean);
   return parts.join(', ');
 }
@@ -242,10 +261,7 @@ function buildTurnaroundPrompt(
   const styleEnhancer = getStyleEnhancers(fullText, style);
 
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
-  const asianBeautyTag = !isExplicitlyWestern
-    ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes, oriental goddess aesthetic'
-    : '';
+  const aestheticTag = getCharacterAestheticTag(fullText);
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime character turnaround sheet'
@@ -253,7 +269,7 @@ function buildTurnaroundPrompt(
 
   const parts = [
     `3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
-    asianBeautyTag,
+    aestheticTag,
     `character appearance, hair, costume, outfit, and body shape: ${appearance}`,
     'standing side-by-side, 3 separate angles, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
@@ -261,7 +277,7 @@ function buildTurnaroundPrompt(
     styleEnhancer,
     '100% identical face and facial features, consistent outfit across all 3 views',
     'high quality, highly detailed, masterwork',
-    'no text, no numbers, no labels, no watermark, no logo, no extra limbs, caucasian, western face',
+    'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
   ].filter(Boolean);
   return parts.join(', ');
 }

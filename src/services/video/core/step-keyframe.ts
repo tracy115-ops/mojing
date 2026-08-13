@@ -12,8 +12,9 @@ import type {
   AspectRatio,
   ModelTier,
 } from '@/types/video';
-import { saveAsset, readAsDataUri } from '../asset-store';
+import { saveAsset, readAsDataUri, cropMiddleThirdFromDataUri } from '../asset-store';
 import { getStyleEnhancers } from './step-video-gen';
+import { getCharacterAestheticTag } from './step-character-anchor';
 
 export interface KeyframeResult {
   shots: ShotSpec[];
@@ -173,13 +174,10 @@ function buildKeyframePrompt(
     const desc = variant ? `${c.name} (${c.appearance}, wearing ${variant.description})` : `${c.name} (${c.appearance})`;
     
     const fullText = `${c.name} ${c.appearance} ${shot.videoPrompt}`;
-    const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
-    const asianBeautyTag = !isExplicitlyWestern
-      ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes'
-      : '';
+    const aestheticTag = getCharacterAestheticTag(fullText);
 
     const closeUpTag = isCloseUp ? ', extreme close-up facial shot, 100% exact facial and hair feature match with reference image 0, identical face, eyes, hair, skin tone' : '';
-    charText = `main character in frame: ${desc}, ${asianBeautyTag}, single isolated person, 100% exact full-body character design match with reference image 0: identical face, identical hair, identical hairstyle, identical costume, identical clothing outfit, identical accessories, and identical body proportions${closeUpTag}`;
+    charText = `main character in frame: ${desc}, ${aestheticTag}, single isolated character, 100% exact full-body character design match with reference image 0: identical face, identical hair, identical hairstyle, identical costume, identical clothing outfit, identical accessories, and identical body proportions${closeUpTag}`;
   } else if (presentChars.length > 1) {
     // 多角色镜头: 注入空间位置标定与防肢体污染粘连指令
     const positions = ['left side of frame', 'right side of frame', 'center of frame'];

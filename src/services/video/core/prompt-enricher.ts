@@ -5,6 +5,7 @@
 import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, SceneAnchor } from '@/types/video';
 import { getStyleEnhancers } from './step-video-gen';
+import { getCharacterAestheticTag } from './step-character-anchor';
 
 /**
  * 调配置好的 LLM 文本模型，将角色外观动态扩展为工业级高精度生图 Prompt。
@@ -16,16 +17,17 @@ export async function enrichCharacterPromptWithLLM(
 ): Promise<string> {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
   const styleEnhancer = getStyleEnhancers(fullText, style);
+  const aestheticTag = getCharacterAestheticTag(fullText);
 
   try {
     const resp = await providerRouter.generate({
       taskType: 'prompt_optimization',
-      systemPrompt: `You are an expert AI character portrait prompt engineer specializing in Chinese and Asian novel characters.
+      systemPrompt: `You are an expert AI character portrait prompt engineer specializing in novel characters.
 CRITICAL MANDATE:
-1. Unless explicitly requested as Western/Caucasian, characters MUST be rendered with gorgeous East Asian / Chinese aesthetic features (delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes, high nose bridge, Chinese goddess beauty aesthetic).
-2. Must be a SINGLE INDIVIDUAL figure in frame. Do NOT include words like "character sheet", "model sheet", "turnaround", "multiple views".
-3. You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
-Output ONLY the raw prompt text, no explanation, no markdown quotes. Must include "solo, 1person, gorgeous East Asian Chinese beauty, single centered character portrait". Keep under 120 words.`,
+1. Respect character species, gender, and type (human vs animal/creature, male vs female). Do NOT force female beauty tags on males, old people, or animals (such as cats/dogs/monsters).
+2. Must be a SINGLE INDIVIDUAL figure/character in frame. Do NOT include words like "character sheet", "model sheet", "turnaround", "multiple views".
+3. You MUST preserve 100% of the user's specific raw description details (such as retro 80s film style, yellow monk robe, black round sunglasses, specific clothing, hair, colors, photorealistic features). Do NOT drop, modify, or dilute any specific user keywords!
+Output ONLY the raw prompt text, no explanation, no markdown quotes. Keep under 120 words.`,
       userPrompt: `Character Name: ${c.name}
 Features: ${c.appearance}
 Costume: ${costumeOverride || 'default'}
@@ -36,7 +38,7 @@ Style: ${style || 'cinematic'}`,
 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
-      return `${enriched}, solo, 1person, gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, ${styleEnhancer}, high quality, no text, no watermark, no bad anatomy, no character sheet, no turnaround, no multiple views`;
+      return `${enriched}, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, high quality, no text, no watermark, no bad anatomy, no character sheet, no turnaround, no multiple views`;
     }
   } catch (err) {
     console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
@@ -84,25 +86,22 @@ function defaultCharacterPrompt(
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''}`;
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const isExplicitlyWestern = /western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发/i.test(fullText);
-  const asianBeautyTag = !isExplicitlyWestern
-    ? 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky black hair, elegant almond eyes'
-    : '';
+  const aestheticTag = getCharacterAestheticTag(fullText);
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime single character portrait, detailed anime artwork'
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
   return [
-    `solo, 1person, single character portrait of ${c.name}`,
-    asianBeautyTag,
+    `solo, single character portrait of ${c.name}`,
+    aestheticTag,
     `character appearance and physical features: ${c.appearance}`,
     costumeOverride ? `wearing ${costumeOverride}` : '',
     'neutral pose, plain simple solid background, studio lighting',
     'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views, caucasian, western face',
+    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean).join(', ');
 }
 
