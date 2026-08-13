@@ -282,7 +282,7 @@ fn render_single_with_subtitle(src: &str, text: &str, out: &Path) -> Result<Comp
     let escaped = escape_drawtext_text(text);
 
     let filter = format!(
-        "drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
         escaped
     );
 
@@ -320,6 +320,7 @@ fn compose_reencode_only(req: &ComposeRequest, out: &Path) -> Result<ComposeResu
         cmd.arg("-y")
             .arg("-err_detect").arg("ignore_err")
             .input(clip_src.to_string())
+            .arg("-vf").arg("scale=trunc(iw/2)*2:trunc(ih/2)*2")
             .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
         if has_audio {
             cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
@@ -400,7 +401,7 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         let encode_result: Result<(), String> = if let Some(text) = sub {
             let escaped = escape_drawtext_text(text);
             let filter = format!(
-                "drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2,drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
                 escaped
             );
             let mut cmd = FfmpegCommand::new();
@@ -423,6 +424,7 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
             cmd.arg("-y")
                 .arg("-err_detect").arg("ignore_err")
                 .input(clip_src.to_string())
+                .arg("-vf").arg("scale=trunc(iw/2)*2:trunc(ih/2)*2")
                 .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
             if has_audio {
                 cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
@@ -776,7 +778,13 @@ fn clip_has_audio_stream(path: &str) -> Result<bool, String> {
         // ffprobe 找不到 — 保守起见认为无音轨,走 mux-only 路径
         return Ok(false);
     };
-    let output = std::process::Command::new(ffprobe)
+    let mut cmd = std::process::Command::new(ffprobe);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd
         .args([
             "-v", "error",
             "-select_streams", "a",
