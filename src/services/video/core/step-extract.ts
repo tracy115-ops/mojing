@@ -16,6 +16,8 @@ import type {
   ShotSpec,
   CostumeVariant,
 } from '@/types/video';
+import { detectInputLanguage } from './lang-detector';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 export interface ExtractInput {
   /** 文本来源:章节原文 / 用户 prompt */
