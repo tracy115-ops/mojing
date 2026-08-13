@@ -30,19 +30,28 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
     const startTime = Date.now();
 
+    let systemPrompt = request.systemPrompt;
+
     const body: Record<string, unknown> = {
       model: request.model || 'gpt-4o',
-      messages: [
-        { role: 'system', content: request.systemPrompt },
-        { role: 'user', content: request.userPrompt },
-      ],
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
     };
 
     if (request.responseFormat === 'json') {
       body.response_format = { type: 'json_object' };
+      // DeepSeek/OpenAI 接口规范要求:开启 response_format: { type: 'json_object' } 时,
+      // prompt 中必须包含 "json" / "JSON" 单词,否则 DeepSeek 会报 HTTP 400 invalid_request_error。
+      if (!/json/i.test(systemPrompt) && !/json/i.test(request.userPrompt)) {
+        systemPrompt = (systemPrompt ? `${systemPrompt}\n\n` : '') + 'Please respond in valid json format.';
+      }
     }
+
+    body.messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: request.userPrompt },
+    ];
+
     if (request.stopSequences?.length) {
       body.stop = request.stopSequences;
     }

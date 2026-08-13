@@ -1,6 +1,6 @@
 {
   "productName": "MoJing",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "identifier": "com.mojing.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
