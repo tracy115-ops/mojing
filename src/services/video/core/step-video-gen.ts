@@ -11,6 +11,7 @@ import type {
   CharacterAnchor,
 } from '@/types/video';
 import { saveAsset, readAsDataUri, isValidVideoClip } from '../asset-store';
+import { detectInputLanguage } from './lang-detector';
 
 const VIDEO_GENERATION_CONCURRENCY = 2;
 
@@ -256,15 +257,20 @@ export function getStyleEnhancers(promptText: string, stylePreset?: string): str
 
 function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string {
   const basePrompt = shot.videoPrompt.trim();
+  const isChinese = detectInputLanguage(basePrompt + ' ' + (shot.mood || '') + ' ' + (shot.narration || '')) === 'zh';
 
   // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)
   const lipSyncPrompt = shot.narration && shot.narration.trim().length > 0
-    ? 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation'
+    ? (isChinese
+        ? '角色自然说话，唇形与嘴唇动作同步，面部表情生动'
+        : 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation')
     : '';
 
   // 多角色同框镜头: 显式注入独立肢体与空间分隔提示词 (解决肢体相互污染粘连的问题)
   const multiCharIsolation = shot.characterIds && shot.characterIds.length > 1
-    ? 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement'
+    ? (isChinese
+        ? '主体清晰分明，独立人物动作，无肢体融合，无肢体重叠，边界清晰'
+        : 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement')
     : '';
 
   // 关键原则：用户原始提示词第一优先！
@@ -272,17 +278,23 @@ function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string 
   // 系统绝不上串或硬加预置模板词，保持 100% 用户原意，零污染零稀释！
   const isUserDetailedPrompt = basePrompt.length > 50;
 
+  const delimiter = isChinese ? '，' : ', ';
+
   if (isUserDetailedPrompt) {
     return [
       basePrompt,
       lipSyncPrompt,
       multiCharIsolation,
-    ].filter(Boolean).join(', ');
+    ].filter(Boolean).join(delimiter);
   }
 
   // 仅在用户提示词极其简短时，才补全默认基础镜头与风格辅助词
-  const camera = shot.cameraMovement ? `${shot.cameraMovement} camera movement` : '';
-  const mood = shot.mood ? `${shot.mood} atmosphere` : '';
+  const camera = shot.cameraMovement
+    ? (isChinese ? `${shot.cameraMovement}运镜` : `${shot.cameraMovement} camera movement`)
+    : '';
+  const mood = shot.mood
+    ? (isChinese ? `${shot.mood}氛围` : `${shot.mood} atmosphere`)
+    : '';
   const styleEnhancers = getStyleEnhancers(basePrompt + ' ' + (shot.mood || ''), stylePreset);
 
   return [
@@ -292,5 +304,5 @@ function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string 
     lipSyncPrompt,
     multiCharIsolation,
     styleEnhancers,
-  ].filter(Boolean).join(', ');
+  ].filter(Boolean).join(delimiter);
 }
