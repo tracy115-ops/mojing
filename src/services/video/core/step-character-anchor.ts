@@ -189,6 +189,7 @@ import { getStyleEnhancers } from './step-video-gen';
 
 export function getCharacterAestheticTag(fullText: string): string {
   const text = fullText.toLowerCase();
+  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
 
   // 1. 显式欧美 / 外国特征
   if (/western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发|碧眼/i.test(text)) {
@@ -197,16 +198,22 @@ export function getCharacterAestheticTag(fullText: string): string {
 
   // 2. 动物 / 宠物 / 奇幻生物 (猫/狗/胖橘猫/神兽/妖/机器人等) -> 避免强加人类面部与性别词导致毁图！
   if (/cat|dog|animal|pet|dragon|monster|robot|fox|wolf|bear|tiger|lion|bird|monkey|猫|狗|胖橘|橘猫|肥猫|动物|神兽|妖|怪|兽|机器人|坐骑|宠物|狐狸|狼|熊|虎|狮|鸟|猴|悟空/i.test(text)) {
-    return 'masterpiece character design, highly detailed fur and physical texture, expressive creature features, high quality concept art';
+    return isChinese
+      ? '大师级角色设计，精细毛发与物理质感，生动生物特征，高品质概念图'
+      : 'masterpiece character design, highly detailed fur and physical texture, expressive creature features, high quality concept art';
   }
 
   // 3. 男性角色 -> 东方男性美学 (英俊/汉子/儒雅/和尚/少爷/老者)
   if (/male|man|boy|monk|guy|gentleman|king|father|brother|prince|master|男|汉子|和尚|小和尚|老和尚|少年|青年|大叔|老者|皇帝|王爷|少爷|师傅|师父|公|爷|哥|侠客|书生/i.test(text)) {
-    return 'handsome East Asian Chinese male features, refined facial structure, dignified posture, elegant oriental male aesthetic';
+    return isChinese
+      ? '东方男子英俊面容，五官端正，儒雅威武气场，东方男性美学'
+      : 'handsome East Asian Chinese male features, refined facial structure, dignified posture, elegant oriental male aesthetic';
   }
 
   // 4. 女性角色 (默认/显式女性) -> 东方女神/佳人
-  return 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky hair, elegant almond eyes, oriental goddess aesthetic';
+  return isChinese
+    ? '东方绝色女子，精致面容，温婉优雅气场，瓷白肌肤，东方佳人美学'
+    : 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky hair, elegant almond eyes, oriental goddess aesthetic';
 }
 
 function buildPortraitPrompt(
@@ -216,15 +223,35 @@ function buildPortraitPrompt(
   costumeOverride?: string,
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
+  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
   const styleEnhancer = getStyleEnhancers(fullText, style);
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const aestheticTag = getCharacterAestheticTag(fullText);
+
+  if (isChinese) {
+    const artTypeTag = isCartoonOrAnime
+      ? '高清2D二次元单人角色立绘，精细动漫画作'
+      : '写实人像摄影，高品质电影角色照，超高清精细特征';
+
+    const parts = [
+      `角色单人全身立绘：${c.name}`,
+      aestheticTag,
+      `完整外貌特征：${c.appearance}`,
+      costumeOverride ? `穿着服饰：${costumeOverride}` : '',
+      '全身设计锁定：保持面部、发型、发色、服装款式、服饰细节、身材比例、配饰完全一致',
+      '自然站姿，纯色简洁背景，工作室光照',
+      '从头到脚全身完整可见，单人居中',
+      artTypeTag,
+      styleEnhancer,
+      '无文字，无水印，无签名，无多余人物，无残缺，无三视图模型板',
+    ].filter(Boolean);
+    return parts.join('，');
+  }
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime single character portrait, detailed anime artwork'
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
-  // 彻底隔离单角色提示词，绝不上串其他角色的描述，防止 AI 生成时把多角色特征揉到同一个人身上
   const parts = [
     `solo, single character portrait of ${c.name}`,
     aestheticTag,
@@ -258,10 +285,31 @@ function buildTurnaroundPrompt(
 ): string {
   const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
   const fullText = `${c.name} ${appearance} ${style || ''}`;
+  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
   const styleEnhancer = getStyleEnhancers(fullText, style);
 
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
   const aestheticTag = getCharacterAestheticTag(fullText);
+
+  if (isChinese) {
+    const artTypeTag = isCartoonOrAnime
+      ? '高清2D动漫角色三视图模型板'
+      : '写实角色三视图摄影图，3全身摄影视角';
+
+    const parts = [
+      `三视图角色模型板，三屏并列展现3个全身姿态（左侧正面视图，中间侧面视图，右侧背面视图）：${c.name}，100%保持与参考图0的角色外观一致`,
+      aestheticTag,
+      `角色外貌、发型、服饰与身材细节：${appearance}`,
+      '并排站立，3个独立视角，从头到脚全身完整可见',
+      '纯色简洁浅色背景，工作室光照',
+      artTypeTag,
+      styleEnhancer,
+      '100%保持正面、侧面、背面面部五官与服饰完全一致',
+      '高细节大作，最高品质',
+      '无文字，无数字，无标签，无水印，无标志，无多余肢体',
+    ].filter(Boolean);
+    return parts.join('，');
+  }
 
   const artTypeTag = isCartoonOrAnime
     ? 'high quality 2D anime character turnaround sheet'

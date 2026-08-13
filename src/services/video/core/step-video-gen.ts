@@ -211,34 +211,47 @@ export function tierToDefaultModel(_tier: VideoSpec['videoTier']): string {
  */
 export function getStyleEnhancers(promptText: string, stylePreset?: string): string {
   const text = (promptText + ' ' + (stylePreset || '')).toLowerCase();
+  const isChinese = /[\u4e00-\u9fa5]/.test(promptText);
 
   // 1. 二次元 / 动漫 / 漫画
   if (stylePreset === 'anime' || /anime|2d|comic|manga|二次元|动漫|动画|手绘|新海诚|日漫/i.test(text)) {
-    return 'vibrant anime visual style, Makoto Shinkai aesthetic, clean cel shading, high quality 2D animation, detailed background artwork, masterpiece anime keyframe, smooth animation movement';
+    return isChinese
+      ? '二次元动漫美学，新海诚电影画风，精细赛璐璐勾线，高清2D动画，细腻背景画作，动漫名场面，自然流畅动作'
+      : 'vibrant anime visual style, Makoto Shinkai aesthetic, clean cel shading, high quality 2D animation, detailed background artwork, masterpiece anime keyframe, smooth animation movement';
   }
 
   // 2. 复古胶片 / 80-90年代港片 / 邵氏武侠
   if (stylePreset === 'retro_film' || /80年代|90年代|邵氏|港产|武侠|胶片|复古|老电影|黄调|颗粒|色散|软焦|晕光|vintage|retro|film|grain|1980s|1990s|shaw brothers/i.test(text)) {
-    return '1980s vintage 35mm film aesthetic, Shaw Brothers wuxia movie style, warm saturated retro film color grading, soft glow halation, nostalgic analog film texture, optical lens dispersion';
+    return isChinese
+      ? '1980年代胶片复古美学，邵氏电影武侠画风，暖色饱和度港片调色，柔光晕染，怀旧复古胶片质感，光学镜头色散'
+      : '1980s vintage 35mm film aesthetic, Shaw Brothers wuxia movie style, warm saturated retro film color grading, soft glow halation, nostalgic analog film texture, optical lens dispersion';
   }
 
   // 3. 国风水墨 / 仙侠古风
   if (/国风|水墨|仙侠|古风|水墨画|汉服|wuxia|xianxia|ink wash|chinese aesthetic/i.test(text)) {
-    return 'traditional Chinese aesthetic, elegant wuxia movie atmosphere, soft atmospheric lighting, graceful oriental artistic composition, cinematic color harmony';
+    return isChinese
+      ? '传统东方美学，古风仙侠电影意境，柔和大气光影，高雅东方艺术构图，电影级色彩和谐'
+      : 'traditional Chinese aesthetic, elegant wuxia movie atmosphere, soft atmospheric lighting, graceful oriental artistic composition, cinematic color harmony';
   }
 
   // 4. 赛博朋克 / 科幻
   if (/cyberpunk|sci-fi|neon|futuristic|赛博朋克|科幻|霓虹|机甲/i.test(text)) {
-    return 'cyberpunk aesthetic, vibrant neon reflections, volumetric fog, atmospheric futuristic lighting, cinematic sci-fi composition';
+    return isChinese
+      ? '赛博朋克美学，绚丽霓虹灯光倒影，大气科幻构图，高清电影质感'
+      : 'cyberpunk aesthetic, vibrant neon reflections, volumetric fog, atmospheric futuristic lighting, cinematic sci-fi composition';
   }
 
   // 5. 真实纪录片 / 自然风光
   if (stylePreset === 'documentary' || /documentary|realistic|nature|real life|纪录片|真实|写实|自然/i.test(text)) {
-    return 'National Geographic documentary style, natural daylight, photorealistic textures, realistic physical details, true-to-life color balance, crisp focus';
+    return isChinese
+      ? '国家地理纪录片风格，自然日光，真实物理细节，真实色彩平衡，高清清晰对焦'
+      : 'National Geographic documentary style, natural daylight, photorealistic textures, realistic physical details, true-to-life color balance, crisp focus';
   }
 
   // 6. 默认: 现代商业级电影大片 (Cinematic)
-  return 'cinematic movie lighting, 35mm lens depth of field, natural motion, high detail, masterpiece composition, no artifact, clean focus';
+  return isChinese
+    ? '电影级光影，35mm镜头景深虚化，自然动作，高细节大作构图，清晰无瑕'
+    : 'cinematic movie lighting, 35mm lens depth of field, natural motion, high detail, masterpiece composition, no artifact, clean focus';
 }
 
 function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string {
