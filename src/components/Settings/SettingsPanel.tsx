@@ -207,81 +207,191 @@ const SettingsPanel: React.FC = () => {
       key: 'promptTemplates',
       label: '提示词预设模板',
       children: (
-        <Form layout="vertical" size="small">
+        <div>
           <Alert
             message="提示词模板说明"
-            description="此处预置的提示词模板会在执行视频/漫画流水线前自动加载应用。您可以自由修改、自定义通用修饰词与控制结构。占位符说明：{name} 角色名，{appearance} 外貌描述，{style} 画风风格，{description} 环境描写。"
+            description="此处预置的提示词模板会在执行视频/漫画流水线前自动加载应用。您可以切换【中文模板】与【英文模板】自由编辑预设控制词与系统指令。占位符说明：{name} 角色名，{appearance} 外貌描述，{style} 画风风格，{description} 环境描写。"
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
           />
-          <Form.Item label="角色立绘模板 (中文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.portraitZh}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, portraitZh: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-          <Form.Item label="角色立绘模板 (英文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.portraitEn}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, portraitEn: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-          <Form.Item label="三视图模型板模板 (中文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.turnaroundZh}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, turnaroundZh: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-          <Form.Item label="场景背景图模板 (中文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.sceneZh}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, sceneZh: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-          <Form.Item label="分镜关键帧模板 (中文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.keyframeZh}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, keyframeZh: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-          <Form.Item label="画质与光影增强词 (中文)">
-            <Input.TextArea
-              rows={2}
-              value={settings.creative.promptTemplates?.qualityZh}
-              onChange={(e) =>
-                updateCreativeSettings({
-                  promptTemplates: { ...settings.creative.promptTemplates, qualityZh: e.target.value },
-                })
-              }
-            />
-          </Form.Item>
-        </Form>
+          <Tabs
+            type="card"
+            size="small"
+            items={[
+              {
+                key: 'zh',
+                label: '🇨🇳 中文提示词模板',
+                children: (
+                  <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
+                    <Form.Item label="角色立绘模板 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.portraitZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, portraitZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="三视图模型板模板 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.turnaroundZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, turnaroundZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="场景背景图模板 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.sceneZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, sceneZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="分镜关键帧模板 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.keyframeZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, keyframeZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="剧本改写 LLM 系统指令 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.rewriteZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, rewriteZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="实体提取 LLM 系统指令 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.extractZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, extractZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="画质与光影增强词 (中文)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.qualityZh}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, qualityZh: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                  </Form>
+                ),
+              },
+              {
+                key: 'en',
+                label: '🇺🇸 English Prompt Presets',
+                children: (
+                  <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
+                    <Form.Item label="Character Portrait Template (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.portraitEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, portraitEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Turnaround Sheet Template (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.turnaroundEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, turnaroundEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Scene Scenery Template (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.sceneEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, sceneEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Keyframe Storyboard Template (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.keyframeEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, keyframeEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Script Rewrite LLM System Prompt (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.rewriteEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, rewriteEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Entity Extraction LLM System Prompt (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.extractEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, extractEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                    <Form.Item label="Quality & Lighting Enhancer (English)">
+                      <Input.TextArea
+                        rows={2}
+                        value={settings.creative.promptTemplates?.qualityEn}
+                        onChange={(e) =>
+                          updateCreativeSettings({
+                            promptTemplates: { ...settings.creative.promptTemplates, qualityEn: e.target.value },
+                          })
+                        }
+                      />
+                    </Form.Item>
+                  </Form>
+                ),
+              },
+            ]}
+          />
+        </div>
       ),
     },
     {

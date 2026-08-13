@@ -96,6 +96,12 @@ export interface PromptTemplatesSettings {
   sceneEn?: string;
   keyframeZh?: string;
   keyframeEn?: string;
+  rewriteZh?: string;
+  rewriteEn?: string;
+  extractZh?: string;
+  extractEn?: string;
+  storyboardZh?: string;
+  storyboardEn?: string;
   qualityZh?: string;
   qualityEn?: string;
 }
