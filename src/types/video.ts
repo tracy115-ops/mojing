@@ -359,6 +359,11 @@ export interface SceneSpec {
     channel: 'novel' | 'direct';
     /** 系列剧集上一集的收束关键帧，仅供本集第一镜作为附加参考。 */
     openingReferenceImage?: string;
+    /** 系列资产匹配结果统计 */
+    matchedCharacterNames?: string[];
+    unmatchedCharacterNames?: string[];
+    matchedSceneNames?: string[];
+    unmatchedSceneNames?: string[];
   };
 }
 

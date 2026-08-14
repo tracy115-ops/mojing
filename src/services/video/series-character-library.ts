@@ -37,9 +37,16 @@ export function applySeriesCharacterLibrary(
   }
 
   const idMap = new Map<string, string>();
+  const matchedCharacterNames: string[] = [];
+  const unmatchedCharacterNames: string[] = [];
+
   const characters = sceneSpec.characters.map((detected) => {
     const canonical = byName.get(normalizeName(detected.name));
-    if (!canonical) return cloneCharacter(detected);
+    if (!canonical) {
+      unmatchedCharacterNames.push(detected.name);
+      return cloneCharacter(detected);
+    }
+    matchedCharacterNames.push(`${detected.name} → ${canonical.name}`);
     idMap.set(detected.id, canonical.id);
     return { ...cloneCharacter(canonical), firstAppearShotIndex: detected.firstAppearShotIndex };
   });
@@ -64,6 +71,11 @@ export function applySeriesCharacterLibrary(
       }
       return { ...shot, characterIds, costumeVariantRefs: Object.keys(costumeVariantRefs).length ? costumeVariantRefs : undefined };
     }),
+    meta: {
+      ...sceneSpec.meta,
+      matchedCharacterNames,
+      unmatchedCharacterNames,
+    },
   };
 }
 
@@ -82,9 +94,16 @@ export function applySeriesSceneLibrary(
   }
 
   const idMap = new Map<string, string>();
+  const matchedSceneNames: string[] = [];
+  const unmatchedSceneNames: string[] = [];
+
   const scenes = (sceneSpec.scenes ?? []).map((detected) => {
     const canonical = byName.get(normalizeName(detected.name));
-    if (!canonical) return { ...detected };
+    if (!canonical) {
+      unmatchedSceneNames.push(detected.name);
+      return { ...detected };
+    }
+    matchedSceneNames.push(`${detected.name} → ${canonical.name}`);
     idMap.set(detected.id, canonical.id);
     return { ...canonical, firstAppearShotIndex: detected.firstAppearShotIndex };
   });
@@ -101,6 +120,8 @@ export function applySeriesSceneLibrary(
     meta: {
       ...sceneSpec.meta,
       style: [sceneSpec.meta.style, styleGuide?.trim()].filter(Boolean).join(', '),
+      matchedSceneNames,
+      unmatchedSceneNames,
     },
   };
 }

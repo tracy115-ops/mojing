@@ -10,6 +10,7 @@ import CreateVideoModal, { CreateVideoFormValues } from './CreateVideoModal';
 import VideoGeneratorModal from './VideoGeneratorModal';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
+import { VideoPipeline } from '@/services/video/pipeline';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
 import { runFromStage, runPipeline } from '@/services/video/core/pipeline-runner';
 import { applySeriesProjectLibrary } from '@/services/video/series-character-library';
@@ -130,35 +131,45 @@ const VideoView: React.FC = () => {
     setEpisodeSeriesId(undefined);
 
     if (values.scriptText) {
-        // ✍️ 粘贴剧本生成：无需二次弹窗！直接解析剧本并开启全流程生成
-        message.loading({ content: '正在解析故事剧本并切分子分镜...', key: 'create-pipeline' });
-        try {
-          const sceneSpec = await buildSceneFromPrompt(values.scriptText, 'multishot', {
-            aspectRatio: (values.aspectRatio as any) || '16:9',
-            defaultShotDuration: duration,
-            targetDurationSeconds: values.targetDurationSeconds,
-            style: values.style,
-            continuityContext: episodeContinuity,
-          });
-          const boundSceneSpec = applySeriesProjectLibrary(sceneSpec, {
-            characters: seriesCharacters,
-            scenes: seriesScenes,
-            styleGuide: seriesStyleGuide,
-          });
-          store.setSceneSpec(project.id, boundSceneSpec);
-          runPipeline({
+      // ✍️ 粘贴剧本生成：统一使用 VideoPipeline 进行切片、分镜规划、角色提取与系列资产绑定！
+      message.loading({ content: '正在为剧本切片并规划分镜与角色...', key: 'create-pipeline' });
+      try {
+        const pipeline = new VideoPipeline(
+          {
             novelProjectId: project.id,
-            spec: boundSceneSpec,
+            novelTitle: values.title,
+            genre: 'script',
+            style: values.style,
+            chapters: [
+              {
+                id: `${project.id}_script`,
+                order: 0,
+                content: values.scriptText,
+              },
+            ],
+            spec,
             options: FULL_PIPELINE_OPTIONS,
-            videoGen: {
-              spec,
+            seriesCharacters,
+            seriesScenes,
+            seriesStyleGuide,
+            seriesContinuityContext: episodeContinuity,
+          },
+          {
+            onError: (msg) => {
+              message.error({ content: msg, key: 'create-pipeline' });
             },
-          });
-          message.success({ content: '剧本全流程生成已启动！', key: 'create-pipeline' });
-        } catch (err) {
-          console.error('Failed to start novel script pipeline:', err);
-          message.error({ content: '剧本解析启动失败', key: 'create-pipeline' });
-        }
+          },
+        );
+        message.success({ content: '剧本全流程生成已启动！', key: 'create-pipeline' });
+        pipeline.run().catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('Failed to run script pipeline:', err);
+          message.error({ content: `剧本生成异常: ${msg}`, key: 'create-pipeline' });
+        });
+      } catch (err) {
+        console.error('Failed to start novel script pipeline:', err);
+        message.error({ content: '剧本解析启动失败', key: 'create-pipeline' });
+      }
     } else if (values.novelId) {
         // 关联了已有小说：打开章节选择配置框
         if (seriesId) {

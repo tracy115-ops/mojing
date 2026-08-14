@@ -129,7 +129,7 @@ export class VideoPipeline {
   async run(): Promise<VideoProjectState | null> {
     const store = useVideoStore.getState();
     const { novelProjectId, chapters, spec, options } = this.input;
-    store.initProject(novelProjectId, chapters.map((c) => c.id), spec);
+    store.initProject(novelProjectId, chapters.map((c) => c.id), spec, this.input.novelTitle);
 
     // 默认开关(若用户没传 options,从 spec 的 enable* 字段构造)
     const pipelineOptions: PipelineOptions =
@@ -449,12 +449,37 @@ export class VideoPipeline {
       },
     };
 
-    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
-    return applySeriesProjectLibrary(sceneSpec, {
+    const boundSpec = applySeriesProjectLibrary(sceneSpec, {
       characters: this.input.seriesCharacters,
       scenes: this.input.seriesScenes,
       styleGuide: this.input.seriesStyleGuide,
     });
+
+    const matchedChars = boundSpec.meta.matchedCharacterNames ?? [];
+    const unmatchedChars = boundSpec.meta.unmatchedCharacterNames ?? [];
+    const matchedScenes = boundSpec.meta.matchedSceneNames ?? [];
+
+    const summaryDetails = [
+      ...storyboardShots.slice(0, 3).map((s) => `镜头 ${s.index + 1} · ${(s.videoPrompt || s.sourceText).slice(0, 30)}…`),
+    ];
+    if (matchedChars.length > 0) {
+      summaryDetails.push(`✅ 已匹配系列角色 (${matchedChars.length}): ${matchedChars.join(', ')}`);
+    }
+    if (unmatchedChars.length > 0) {
+      summaryDetails.push(`⚠️ 剧集局部/新角色 (${unmatchedChars.length}): ${unmatchedChars.join(', ')}`);
+    }
+    if (matchedScenes.length > 0) {
+      summaryDetails.push(`🏛️ 已匹配系列场景 (${matchedScenes.length}): ${matchedScenes.join(', ')}`);
+    }
+
+    store.setStageInputSummary(novelProjectId, stage, {
+      headline: `提取完成: ${boundSpec.characters?.length ?? 0} 个角色, ${boundSpec.scenes?.length ?? 0} 个场景`,
+      details: summaryDetails,
+      upstreamArtifacts: `storyboard ${storyboardShots.length} 镜 / 系列资产已绑定`,
+    });
+
+    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+    return boundSpec;
   }
 }
 
