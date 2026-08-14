@@ -51,11 +51,22 @@ export async function stepStoryboard(
 
   try {
     const resp = await providerRouter.generate(request);
-    const parsed = parseLLMJson<LLMShot[]>(resp.content);
+    let parsed: any = parseLLMJson<any>(resp.content);
+
+    // 如果 LLM 返回的是对象(如 { shots: [...] } / { items: [...] } / { data: [...] }),解包出数组
+    if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+      if (Array.isArray(parsed.shots)) parsed = parsed.shots;
+      else if (Array.isArray(parsed.items)) parsed = parsed.items;
+      else if (Array.isArray(parsed.data)) parsed = parsed.data;
+      else if (Array.isArray(parsed.storyboard)) parsed = parsed.storyboard;
+      else if (Array.isArray(parsed.scenes)) parsed = parsed.scenes;
+    }
+
     if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+      console.warn('stepStoryboard: LLM failed to return array, using fallback', resp.content);
       return fallbackStoryboard(rawPrompt, ctx);
     }
-    const shots = parsed.map((s, i) => normalizeShot(s, i, ctx));
+    const shots = (parsed as LLMShot[]).map((s, i) => normalizeShot(s, i, ctx));
     return { shots };
   } catch (err) {
     console.warn('stepStoryboard: LLM failed, using fallback', err);

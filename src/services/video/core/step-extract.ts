@@ -83,8 +83,11 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
 
   try {
     const resp = await providerRouter.generate(request);
-    const parsed = parseLLMJson<LLMExtract>(resp.content);
+    let parsed: any = parseLLMJson<any>(resp.content);
     if (!parsed) return emptyResult(input);
+
+    if (parsed.result && typeof parsed.result === 'object') parsed = parsed.result;
+    else if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) parsed = parsed.data;
 
     const characters = mergeCharacters(
       normalizeCharacters(parsed.characters ?? []),
