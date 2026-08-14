@@ -33,8 +33,8 @@ export async function runTTS(
     const shot = shots[i];
     const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
     const text = (
-      shot.narration ||
       dialogueStr ||
+      shot.narration ||
       shot.sourceText ||
       shot.videoPrompt
     )?.trim();
@@ -132,6 +132,7 @@ function cleanNarrationForTTS(raw: string): string {
     .replace(/【.*?】/g, '')
     .replace(/（.*?）/g, '') // 去除 (括号) 提示
     .replace(/\(.*?\)/g, '')
+    .replace(/^.*?(?:台词|对白)[:：]\s*/g, '') // 去除 "女生台词：" 或 "猫咪台词："
     .replace(/^.*?[：:]\s*/g, '')  // 去除 "角色名:" 或 "角色名：" 前缀
     .replace(/[“”"「」]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
     .trim();

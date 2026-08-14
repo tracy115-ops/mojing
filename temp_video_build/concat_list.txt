@@ -1,0 +1,6 @@
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_0_with_dialogue.mp4'
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_1_with_dialogue.mp4'
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_2_with_dialogue.mp4'
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_3_with_dialogue.mp4'
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_4_with_dialogue.mp4'
+file 'D:/workspace/ai-work/ai-workstation-test/aiWorkStation/temp_video_build/clip_5_with_dialogue.mp4'

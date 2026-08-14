@@ -106,7 +106,8 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
 【输出规范】严格 JSON 数组，每个元素对应一个镜头，字段：
 - "videoPrompt": 纯中文 prompt，60-150 字。必须使用纯中文！必须包含：(1) 场景环境描写 (2) 角色具体外貌与服饰 (3) 具体动作与肢体变化 (4) 镜头视角与运动 (5) 光影与氛围。不要写 "一个视频" 之类元描述。
 - "imagePrompt": 纯中文 prompt，30-80 字，描述这个镜头的关键帧画面（必须纯中文）
-- "narration": 中文旁白，30-80 字，用于 TTS 配音。原文已是叙述则压缩改写；原文是对话则改成第三人称描述。
+- "narration": 用于 TTS 配音的对白/旁白文本。如果原文包含角色台词/对白（例如“女生台词：...”、“猫咪台词：...”或引号对白），必须 100% 严格保留原版台词（如“大师，我有一事相求！”），严禁擅自改写成第三人称旁白解说！只有在纯景物或无对白镜头下，才提取简要解说旁白。
+- "dialogue": 角色对白列表，格式 [{"speaker": "角色名", "text": "台词内容"}]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
 - "durationSeconds": one of [3, 5, 10, 18] (默认 ${ctx.defaultShotDuration},动作戏或长镜头可用 10 或 18)
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
@@ -114,7 +115,8 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
 【质量要求】
 - videoPrompt 必须是**纯中文的视觉化具体描写**，禁止英文单词，禁止抽象词（"美丽", "戏剧性" 不算描写）
 - 角色外貌用 "身穿黄僧袍，戴黑色圆墨镜，胡须明显" 这种具体形式
-- 动作用 "主角缓缓走向庭院", "伸手指向对方" 这种具体动词主导句`;
+- 动作用 "主角缓缓走向庭院", "伸手指向对方" 这种具体动词主导句
+- 【台词绝对保留】对白是剧集核心灵魂，必须忠实保留原文字句，不得随意篡改！`;
   }
 
   return `You are a film storyboard director and AI video prompt engineer. Rewrite novel excerpts into detailed English video prompts.
@@ -128,7 +130,8 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
 [Output Format] Strict JSON array of objects:
 - "videoPrompt": English prompt, 60-120 words. Must include scene setting, character appearance, concrete action, camera angle, lighting, and mood.
 - "imagePrompt": English prompt, 30-60 words.
-- "narration": narration text for TTS.
+- "narration": narration or exact character dialogue for TTS. If dialogue exists, keep it verbatim.
+- "dialogue": array of { speaker, text }
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
 - "durationSeconds": one of [3, 5, 10, 18]`;
 }
@@ -153,6 +156,20 @@ ${continuity}${items}`;
 
 function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext): StoryboardShot {
   const obj = (item ?? {}) as Record<string, unknown>;
+  const extractedDialogue = extractDialogue(raw.rawText);
+  const itemDialogue = Array.isArray(obj.dialogue) && obj.dialogue.length > 0 ? (obj.dialogue as { speaker: string; text: string }[]) : undefined;
+  const dialogue = extractedDialogue || itemDialogue;
+
+  // 如果提取到了准确的角色对白，优先使用原对白作为 narration，杜绝第三方改写解说词
+  let narration = '';
+  if (dialogue && dialogue.length > 0 && dialogue[0].text?.trim()) {
+    narration = dialogue[0].text.trim();
+  } else if (obj.narration && String(obj.narration).trim()) {
+    narration = String(obj.narration).trim();
+  } else {
+    narration = raw.rawText.slice(0, 80);
+  }
+
   return {
     id: raw.id,
     index: raw.index,
@@ -160,30 +177,32 @@ function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext): Sto
     sourceText: raw.rawText,
     videoPrompt: String(obj.videoPrompt ?? '').trim() || fallbackVideoPrompt(raw),
     imagePrompt: String(obj.imagePrompt ?? '').trim() || undefined,
-    narration: String(obj.narration ?? '').trim() || raw.rawText.slice(0, 80),
+    narration,
     durationSeconds: clampDuration(obj.durationSeconds, ctx.defaultShotDuration),
     characters: raw.characters,
     location: raw.location,
     mood: validateMood(obj.mood) ?? raw.mood,
     cameraMovement: validateCamera(obj.cameraMovement) ?? defaultCamera(raw),
-    dialogue: extractDialogue(raw.rawText),
+    dialogue,
   };
 }
 
 function fallbackShot(raw: RawShot, ctx: StoryboardContext): StoryboardShot {
+  const dialogue = extractDialogue(raw.rawText);
+  const narration = dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80);
   return {
     id: raw.id,
     index: raw.index,
     sourceChapterId: raw.sourceChapterId,
     sourceText: raw.rawText,
     videoPrompt: fallbackVideoPrompt(raw),
-    narration: raw.rawText.slice(0, 80),
+    narration,
     durationSeconds: ctx.defaultShotDuration,
     characters: raw.characters,
     location: raw.location,
     mood: raw.mood,
     cameraMovement: defaultCamera(raw),
-    dialogue: extractDialogue(raw.rawText),
+    dialogue,
   };
 }
 
@@ -220,12 +239,37 @@ function validateCamera(v: unknown): string | undefined {
   return typeof v === 'string' && valid.includes(v) ? v : undefined;
 }
 
-function extractDialogue(text: string): { speaker: string; text: string }[] | undefined {
-  const re = /["「『"]([^"」』"]{1,200})["」』"]/g;
+export function extractDialogue(text: string): { speaker: string; text: string }[] | undefined {
+  if (!text) return undefined;
   const out: { speaker: string; text: string }[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    out.push({ speaker: '未知', text: m[1] });
+
+  // 1. 匹配类似 "女生台词：大师，我有一事相求！" 或 "猫咪台词: 竹篮打水一场空"
+  const linePattern = /(?:^|[，。\s\n])([一-龥A-Za-z0-9_]{1,8})(?:台词|对白)?[:：]\s*([“"「『]?[^，。\n”"」』]{1,200}[”"」』]?)/g;
+  let lm: RegExpExecArray | null;
+  while ((lm = linePattern.exec(text)) !== null) {
+    const speaker = lm[1].trim();
+    let dialogueText = lm[2].trim().replace(/^[“"「『]/, '').replace(/[”"」』]$/, '');
+    if (
+      speaker &&
+      dialogueText &&
+      !['分镜', '镜头', '场景', '地点', '时间', '氛围', '画面', '全景', '中景', '近景', '特写'].includes(speaker)
+    ) {
+      out.push({ speaker, text: dialogueText });
+    }
   }
+
+  if (out.length > 0) return out;
+
+  // 2. 匹配角色名加引号对白，如 女生：“大师，我有一事相求！” 或 「xxx」
+  const quotePattern = /(?:([一-龥A-Za-z0-9_]{1,8})[:：\s]*)?[“"「『]([^”"」』]{1,200})[”"」』]/g;
+  let qm: RegExpExecArray | null;
+  while ((qm = quotePattern.exec(text)) !== null) {
+    const speaker = qm[1]?.trim() || '未知';
+    const dialogueText = qm[2].trim();
+    if (dialogueText) {
+      out.push({ speaker, text: dialogueText });
+    }
+  }
+
   return out.length > 0 ? out : undefined;
 }

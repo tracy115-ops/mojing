@@ -23,6 +23,7 @@ export interface StoryboardResult {
 interface LLMShot {
   videoPrompt?: string;
   narration?: string;
+  dialogue?: { speaker: string; text: string; emotion?: string }[];
   location?: string;
   mood?: string;
   cameraMovement?: string;
@@ -98,7 +99,8 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
 
 【输出规范】严格 JSON 数组，包含 ${targetShotCount} 个对象，每个镜头字段:
 - "videoPrompt": 纯中文 prompt,60-150 字。必须使用纯中文！严禁使用英文！必须包含：场景环境/角色具体外貌与服饰/具体动作与肢体变化/镜头视角与运动/光影与氛围
-- "narration": 中文旁白,30-80 字,用于 TTS
+- "narration": 用于 TTS 配音的对白/旁白文本。如果输入中包含明确角色台词/对白（例如“女生台词：...”、“猫咪台词：...”或引号对白），必须 100% 严格保留原版台词（如“大师，我有一事相求！”），绝对禁止擅自改写或替换成第三方解说旁白！
+- "dialogue": 角色对白列表，格式 [{"speaker": "角色名", "text": "台词内容"}]
 - "location": 中文场景名
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
@@ -113,14 +115,16 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
 - 必须包含 ${targetShotCount} 个镜头！
 - videoPrompt 必须是纯中文的视觉化具体描写，禁止英文单词，禁止抽象词
 - 每镜头是单镜头推拉摇移，无多视角切换
-- 【全局视觉艺术风格继承】如果用户原始 prompt 中指定了全局视觉风格：你必须在生成的每一个分镜的 "videoPrompt" 中，用纯中文显式注入并继承这些全局风格与角色外貌关键词！`;
+- 【全局视觉艺术风格继承】如果用户原始 prompt 中指定了全局视觉风格：你必须在生成的每一个分镜的 "videoPrompt" 中，用纯中文显式注入并继承这些全局风格与角色外貌关键词！
+- 【台词绝对保留】对白是核心，必须完整保留原始台词文本！`;
   }
 
   return `You are an AI video storyboard director. Slice the user's multi-shot script into a structured array of English shots.
 
 [Output Specs] Strict JSON array of objects with fields:
 - "videoPrompt": English prompt, 60-120 words. Must contain: scene setting, character appearance, concrete action, camera angle/movement, lighting, mood.
-- "narration": narration text for TTS
+- "narration": narration or exact dialogue for TTS
+- "dialogue": array of { speaker, text }
 - "location": location name
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
@@ -137,11 +141,15 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
 }
 
 function normalizeShot(item: LLMShot, index: number, ctx: StoryboardContext): ShotSpec {
+  const dialogue = Array.isArray(item?.dialogue) && item.dialogue.length > 0 ? item.dialogue : undefined;
+  const narration = dialogue?.[0]?.text?.trim() || (item?.narration ? String(item.narration).trim() : undefined);
+
   return {
     id: `shot_${Date.now()}_${index}`,
     index,
     videoPrompt: String(item?.videoPrompt ?? '').trim(),
-    narration: item?.narration ? String(item.narration).trim() : undefined,
+    narration,
+    dialogue,
     location: item?.location ? String(item.location) : undefined,
     mood: item?.mood,
     cameraMovement: item?.cameraMovement,

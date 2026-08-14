@@ -46,10 +46,8 @@ export async function buildSceneFromPrompt(
     };
   }
 
-  // extract / multishot 都要 LLM 改写 + 提取
-  const rewritten = await stepRewrite(prompt);
-
   if (mode === 'extract') {
+    const rewritten = await stepRewrite(prompt);
     // 单镜头,但带角色
     const singleShot: ShotSpec = {
       id: `shot_${Date.now()}_0`,
@@ -73,7 +71,24 @@ export async function buildSceneFromPrompt(
     };
   }
 
-  // multishot:LLM 切镜头 + 提取
+  // multishot: 优先检测用户是否已传入结构化分镜与台词
+  const structuredShots = parseStructuredPromptShots(prompt, ctx);
+  if (structuredShots && structuredShots.length > 0) {
+    const extract = await stepExtract({
+      text: prompt,
+      shots: structuredShots,
+    });
+    return {
+      characters: extract.characters,
+      scenes: extract.scenes,
+      props: extract.props,
+      shots: extract.resolvedShots ?? structuredShots,
+      meta: { ...meta, title: '自定义分镜剧本' },
+    };
+  }
+
+  // 非结构化纯文本: LLM 切镜头 + 提取
+  const rewritten = await stepRewrite(prompt);
   const storyboard = await stepStoryboard(prompt, {
     aspectRatio: ctx.aspectRatio,
     defaultShotDuration: ctx.defaultShotDuration,
@@ -94,6 +109,60 @@ export async function buildSceneFromPrompt(
     shots: extract.resolvedShots ?? storyboard.shots,
     meta: { ...meta, title: rewritten.title },
   };
+}
+
+function parseStructuredPromptShots(prompt: string, ctx: DirectBuildContext): ShotSpec[] | null {
+  const isScript = /(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+)/i.test(prompt);
+  if (!isScript) return null;
+
+  const blocks = prompt
+    .split(/(?=(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+))/i)
+    .map((b) => b.trim())
+    .filter((b) => /^(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+)/i.test(b));
+
+  if (blocks.length === 0) return null;
+
+  return blocks.map((block, index) => {
+    // 匹配类似 "女生台词：大师，我有一事相求！" 或 "猫咪台词: 竹篮打水一场空"
+    const linePattern = /(?:^|[，。\s\n])([一-龥A-Za-z0-9_]{1,8})(?:台词|对白)?[:：]\s*([“"「『]?[^，。\n”"」』]{1,200}[”"」』]?)/g;
+    const dialogue: { speaker: string; text: string }[] = [];
+    let lm: RegExpExecArray | null;
+    while ((lm = linePattern.exec(block)) !== null) {
+      const speaker = lm[1].trim();
+      let dialogueText = lm[2].trim().replace(/^[“"「『]/, '').replace(/[”"」』]$/, '');
+      if (
+        speaker &&
+        dialogueText &&
+        !['分镜', '镜头', '场景', '地点', '时间', '氛围', '画面', '全景', '中景', '近景', '特写'].includes(speaker)
+      ) {
+        dialogue.push({ speaker, text: dialogueText });
+      }
+    }
+
+    if (dialogue.length === 0) {
+      const quotePattern = /(?:([一-龥A-Za-z0-9_]{1,8})[:：\s]*)?[“"「『]([^”"」』]{1,200})[”"」』]/g;
+      let qm: RegExpExecArray | null;
+      while ((qm = quotePattern.exec(block)) !== null) {
+        const speaker = qm[1]?.trim() || '未知';
+        const dialogueText = qm[2].trim();
+        if (dialogueText) {
+          dialogue.push({ speaker, text: dialogueText });
+        }
+      }
+    }
+
+    const narration = dialogue[0]?.text?.trim() || undefined;
+
+    return {
+      id: `shot_${Date.now()}_${index}`,
+      index,
+      videoPrompt: block,
+      narration,
+      dialogue: dialogue.length > 0 ? dialogue : undefined,
+      durationSeconds: ctx.defaultShotDuration,
+      characterIds: [],
+    };
+  });
 }
 
 function makePureShot(prompt: string, ctx: DirectBuildContext): ShotSpec {
