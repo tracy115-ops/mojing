@@ -47,7 +47,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       }
     }
 
-    const userContent = request.imageInputs?.length
+    const isKnownTextOnly =
+      this.endpoint.baseUrl.includes('deepseek.com') ||
+      this.name === 'deepseek' ||
+      String(request.model || '').toLowerCase().startsWith('deepseek-');
+
+    const userContent = request.imageInputs?.length && !isKnownTextOnly
       ? [
         { type: 'text', text: request.userPrompt },
         ...request.imageInputs.map((url) => ({ type: 'image_url', image_url: { url } })),
@@ -63,7 +68,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       body.stop = request.stopSequences;
     }
 
-    const response = await httpFetch(this.getChatUrl(), {
+    let response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
@@ -72,7 +77,28 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      throw new Error(`LLM API error ${response.status}: ${text}`);
+      // 如果报错是因为当前服务商不支持 image_url 结构，自动降级为纯文本重试
+      if (
+        response.status === 400 &&
+        request.imageInputs?.length &&
+        (text.includes('image_url') || text.includes('expected `text`') || text.includes('unknown variant'))
+      ) {
+        body.messages = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: request.userPrompt },
+        ];
+        response = await httpFetch(this.getChatUrl(), {
+          method: 'POST',
+          headers: this.getHeaders(),
+          body: JSON.stringify(body),
+          signal: this.timeoutSignal(120_000),
+        });
+      }
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`LLM API error ${response.status}: ${errText || text}`);
+      }
     }
 
     const data = await response.json();
