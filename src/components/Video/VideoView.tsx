@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Typography, message, Button, Tooltip, Form, Input, Modal } from 'antd';
-import { VideoCameraOutlined, ThunderboltOutlined, FormOutlined, FolderAddOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Form, Input, Modal } from 'antd';
+import { VideoCameraOutlined, FolderAddOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
@@ -8,7 +8,6 @@ import type { VideoMetadata } from '@/types';
 import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal, { CreateVideoFormValues } from './CreateVideoModal';
 import VideoGeneratorModal from './VideoGeneratorModal';
-import DirectVideoModal from './DirectVideoModal';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
@@ -43,7 +42,6 @@ const VideoView: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [createMode, setCreateMode] = useState<'novel' | 'direct'>('novel');
   const [genOpen, setGenOpen] = useState(false);
-  const [directOpen, setDirectOpen] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [episodeSeriesId, setEpisodeSeriesId] = useState<string | undefined>();
   const [generatorEpisodeId, setGeneratorEpisodeId] = useState<string | undefined>();
@@ -363,79 +361,11 @@ const VideoView: React.FC = () => {
               <VideoCameraOutlined style={{ fontSize: 56, color: 'var(--accent-primary, #3b82f6)' }} />
               <div>
                 <Title level={4} style={{ margin: '0 0 6px 0', color: 'var(--text-primary, inherit)' }}>
-                  {t('video.empty.title')}
+                  {t('video.series.consistencyTitle')}
                 </Title>
                 <Text type="secondary" style={{ maxWidth: 520, fontSize: 13, display: 'inline-block' }}>
-                  {t('video.empty.hint')}
+                  {t('video.series.descriptionFallback')}
                 </Text>
-              </div>
-
-              {/* 灵感快捷启动卡片 */}
-              <div style={{
-                display: 'grid',
-                display: 'none',
-                gridTemplateColumns: 'repeat(3, 1fr)',
-                gap: 16,
-                maxWidth: 780,
-                width: '100%',
-                marginTop: 8,
-              }}>
-                <div
-                  onClick={() => setDirectOpen(true)}
-                  style={{
-                    padding: 16,
-                    border: '1px solid var(--border-secondary)',
-                    borderRadius: 8,
-                    background: 'var(--bg-container)',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
-                >
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>⚡</div>
-                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>一键灵感生视频</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>输入单条 Prompt 立即文本/图生成短视频片段</Text>
-                </div>
-
-                <div
-                  onClick={() => setDirectOpen(true)}
-                  style={{
-                    padding: 16,
-                    border: '1px solid var(--border-secondary)',
-                    borderRadius: 8,
-                    background: 'var(--bg-container)',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
-                >
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>🎭</div>
-                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>角色一致性短剧</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>提取形象立绘与场景背景图，跨镜头脸部统一</Text>
-                </div>
-
-                <div
-                  onClick={() => setGenOpen(true)}
-                  style={{
-                    padding: 16,
-                    border: '1px solid var(--border-secondary)',
-                    borderRadius: 8,
-                    background: 'var(--bg-container)',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--accent-primary)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-secondary)')}
-                >
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>📜</div>
-                  <Text strong style={{ display: 'block', fontSize: 14, marginBottom: 4 }}>小说/脚本改编</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>选择已有小说章节，14步智能编排完整短片</Text>
-                </div>
               </div>
 
               <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
@@ -478,7 +408,6 @@ const VideoView: React.FC = () => {
           setGeneratorSeriesStyleGuide(undefined);
         }}
       />
-      <DirectVideoModal open={directOpen} onClose={() => setDirectOpen(false)} />
       <Modal
         title={t('video.series.newSeries')}
         open={seriesOpen}
