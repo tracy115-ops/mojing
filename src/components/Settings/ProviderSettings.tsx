@@ -17,6 +17,7 @@ import {
   Steps,
   Alert,
   AutoComplete,
+  Checkbox,
 } from 'antd';
 import {
   PlusOutlined,
@@ -252,7 +253,7 @@ const ProviderSettings: React.FC = () => {
   const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
     // Single source of truth: PROVIDER_CATEGORY from providerStore.
     // Note: includes disabled endpoints — Settings tables show all so the user can toggle.
-    return endpoints.filter((e) => PROVIDER_CATEGORY[e.provider] === category);
+    return endpoints.filter((e) => (e.category ?? PROVIDER_CATEGORY[e.provider]) === category);
   }, [endpoints]);
 
   // Step availability
@@ -279,12 +280,13 @@ const ProviderSettings: React.FC = () => {
       provider: defaultProvider,
       baseUrl: defaultUrl,
       enabled: true,
+      useAsPrimary: true,
     });
     setAddModalOpen(true);
   }, [form]);
 
   const handleEditEndpoint = useCallback((endpoint: ApiEndpoint) => {
-    setAddCategory(PROVIDER_CATEGORY[endpoint.provider] ?? 'llm');
+    setAddCategory(endpoint.category ?? PROVIDER_CATEGORY[endpoint.provider] ?? 'llm');
     setEditingEndpoint(endpoint);
     form.setFieldsValue({
       name: endpoint.name,
@@ -302,6 +304,10 @@ const ProviderSettings: React.FC = () => {
       const models = values.modelsStr
         ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
         : undefined;
+      if (values.provider !== 'edge-tts' && !models?.length) {
+        form.setFields([{ name: 'modelsStr', errors: ['请填写要使用的具体模型名称'] }]);
+        return;
+      }
 
       const provider = values.provider;
       const isEdge = provider === 'edge-tts';
@@ -315,6 +321,7 @@ const ProviderSettings: React.FC = () => {
           baseUrl,
           apiKey,
           models,
+          category: addCategory,
         });
       } else {
         // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
@@ -330,8 +337,16 @@ const ProviderSettings: React.FC = () => {
           enabled: true,
           category: addCategory,
         });
-        if (provider === 'edge-tts') {
+        if (values.useAsPrimary !== false && provider === 'edge-tts') {
           setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
+        } else if (values.useAsPrimary !== false && addCategory === 'llm') {
+          setLLMProvider(provider as LLMProviderId, models?.[0], newId);
+        } else if (values.useAsPrimary !== false && addCategory === 'image') {
+          setImageProvider(provider as ImageProviderId, models?.[0], newId);
+        } else if (values.useAsPrimary !== false && addCategory === 'video') {
+          setVideoProvider(provider as VideoProviderId, models?.[0], newId);
+        } else if (values.useAsPrimary !== false) {
+          setTTSProvider(provider as TTSProviderId, models?.[0], undefined, newId);
         }
       }
       setAddModalOpen(false);
@@ -341,7 +356,7 @@ const ProviderSettings: React.FC = () => {
     } catch {
       // Validation failed
     }
-  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, setTTSProvider, t]);
+  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, setLLMProvider, setImageProvider, setVideoProvider, setTTSProvider, t]);
 
   const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
@@ -847,53 +862,14 @@ const ProviderSettings: React.FC = () => {
 
   return (
     <div style={{ padding: '0 8px' }}>
-      <Steps
-        current={stepIndex}
-        size="small"
-        style={{ marginBottom: 24 }}
-        items={stepsItems.map((item) => ({
-          title: item.title,
-          description: item.description,
-          icon: item.icon,
-          status: canGoToStep(item.key as StepKey)
-            ? undefined
-            : 'wait' as const,
-        }))}
-        onChange={(idx) => {
-          const step = (['endpoints', 'models', 'tasks'] as StepKey[])[idx];
-          if (canGoToStep(step)) setCurrentStep(step);
-        }}
+      <Alert
+        type="info"
+        showIcon
+        message={t('provider.quickSetup.title')}
+        description={t('provider.quickSetup.description')}
+        style={{ marginBottom: 16 }}
       />
-
-      {currentStep === 'endpoints' && renderStepEndpoints()}
-      {currentStep === 'models' && renderStepModels()}
-      {currentStep === 'tasks' && renderStepTasks()}
-
-      {/* Navigation buttons */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
-        <Button
-          disabled={currentStep === 'endpoints'}
-          onClick={() => {
-            const steps: StepKey[] = ['endpoints', 'models', 'tasks'];
-            const idx = steps.indexOf(currentStep);
-            if (idx > 0) setCurrentStep(steps[idx - 1]);
-          }}
-        >
-          {t('common.previous')}
-        </Button>
-        <Button
-          type="primary"
-          disabled={currentStep === 'tasks'}
-          onClick={() => {
-            const steps: StepKey[] = ['endpoints', 'models', 'tasks'];
-            const idx = steps.indexOf(currentStep);
-            const next = steps[idx + 1];
-            if (next && canGoToStep(next)) setCurrentStep(next);
-          }}
-        >
-          {t('common.next')}
-        </Button>
-      </div>
+      {renderStepEndpoints()}
 
       {/* Add/Edit Endpoint Modal */}
       <Modal
@@ -932,6 +908,11 @@ const ProviderSettings: React.FC = () => {
           <Form.Item name="modelsStr" label="模型名称 (可选 / 多个用逗号隔开)" tooltip="自定义中转站或服务的模型名，例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1">
             <Input placeholder="例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1" />
           </Form.Item>
+          {!editingEndpoint && (
+            <Form.Item name="useAsPrimary" valuePropName="checked">
+              <Checkbox>{t('provider.quickSetup.useAsPrimary')}</Checkbox>
+            </Form.Item>
+          )}
           {watchProvider === 'edge-tts' && (
             <Alert type="info" showIcon message={t('provider.edgeTtsHint')} style={{ marginTop: 4 }} />
           )}

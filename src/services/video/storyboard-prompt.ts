@@ -29,6 +29,8 @@ export interface StoryboardContext {
   /** 视频规格：宽高比、镜头时长 */
   aspectRatio: '16:9' | '9:16' | '1:1';
   defaultShotDuration: 3 | 5 | 10 | 18;
+  /** 上一集结尾的剧情状态；只影响本次分镜规划。 */
+  continuityContext?: string;
 }
 
 /**
@@ -132,6 +134,9 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
 }
 
 function buildUserPrompt(batch: RawShot[], ctx: StoryboardContext): string {
+  const continuity = ctx.continuityContext?.trim()
+    ? `【上集承接】以下是已经发生的剧情事实，分镜必须保持角色关系、情绪、场景状态和动作后果连续：${ctx.continuityContext.trim()}\n\n`
+    : '';
   const items = batch.map((rs, i) => `--- 镜头 ${i + 1} ---
 原文（第${rs.sourceChapterNumber}章）：
 ${rs.rawText.slice(0, 1000)}
@@ -141,7 +146,7 @@ ${rs.rawText.slice(0, 1000)}
 
   return `请把下面 ${batch.length} 个段落分别重写成视频分镜。输出严格 JSON 数组，长度必须等于 ${batch.length}。
 
-${items}`;
+${continuity}${items}`;
 }
 
 // --- normalizers ---

@@ -231,6 +231,19 @@ export interface VideoMetadata {
   style: string;
   aspectRatio: string;
   fps: number;
+  /** 系列项目是角色与视觉资产的唯一来源；剧集通过 seriesId 继承它。 */
+  seriesRole?: 'series' | 'episode';
+  seriesId?: string;
+  /** 本集默认承接的上一集，用于首镜视觉延续。 */
+  previousEpisodeId?: string;
+  /** 本集开始前必须承接的剧情状态；仅作为分镜生成上下文，不会写入旁白或字幕。 */
+  episodeContinuity?: string;
+  /** 本集结束时的角色、关系、地点或悬念状态，创建下一集时会自动带入。 */
+  episodeEndingSummary?: string;
+  /** 仅 seriesRole === 'series' 时使用，避免再维护一套孤立的角色 store。 */
+  seriesCharacters?: import('./video').CharacterAnchor[];
+  seriesScenes?: import('./video').SceneAnchor[];
+  seriesStyleGuide?: string;
 }
 
 // ============================================================================

@@ -57,6 +57,7 @@ import type {
   AspectRatio,
   ModelTier,
   SceneSpec,
+  ShotSpec,
   PipelineOptions,
   StageInvocation,
   StageTotals,
@@ -149,7 +150,7 @@ interface VideoStoreState {
   ) => void;
 
   // --- Granular Manual Interventions (Human-in-the-Loop) ---
-  updateSceneSpecShot: (novelProjectId: string, shotId: string, updates: Partial<StoryboardShot>) => void;
+  updateSceneSpecShot: (novelProjectId: string, shotId: string, updates: Partial<StoryboardShot> & Pick<Partial<ShotSpec>, 'costumeVariantRefs'>) => void;
   addSceneSpecShot: (novelProjectId: string, shot: Omit<StoryboardShot, 'id' | 'index'>) => void;
   deleteSceneSpecShot: (novelProjectId: string, shotId: string) => void;
   updateSceneSpecCharacter: (novelProjectId: string, characterId: string, updates: { portraitImage?: string; appearance?: string; name?: string }) => void;

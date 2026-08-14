@@ -681,8 +681,14 @@ fn run_to_completion(mut cmd: FfmpegCommand, label: &str) -> Result<(), String> 
             }
             FfmpegEvent::Done => break,
             FfmpegEvent::Error(e) => {
-                errors.push(format!("{:?}", e));
-                break;
+                // ffmpeg-sidecar starts a stdout reader after parsing metadata.
+                // File outputs intentionally have no stdout stream, which makes the
+                // crate emit this synthetic error even when ffmpeg succeeded.
+                // Real ffmpeg failures are still reported as LogLevel::Error above.
+                if e != "No streams found" {
+                    errors.push(format!("{:?}", e));
+                    break;
+                }
             }
             _ => {}
         }

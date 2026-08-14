@@ -252,6 +252,8 @@ export interface CostumeVariant {
 export interface CharacterAnchor {
   id: string;                    // 'char_xxx'
   name: string;                  // '林墨'
+  /** 剧本中允许使用的别名，用于绑定到同一套项目级角色资产。 */
+  aliases?: string[];
   appearance: string;            // 完整外貌(gender/age/face/hair/...)
   gender?: 'male' | 'female' | 'unknown';
   ageGroup?: 'child' | 'teen' | 'young' | 'middle' | 'elder' | 'unknown';
@@ -270,6 +272,7 @@ export interface CharacterAnchor {
 export interface SceneAnchor {
   id: string;                    // 'scene_xxx'
   name: string;                  // '咖啡馆'
+  aliases?: string[];
   description: string;
   backgroundImage?: string;      // 步 7 产物:base64
   firstAppearShotIndex: number;
@@ -354,6 +357,8 @@ export interface SceneSpec {
     sourceMode: DirectSourceMode;
     /** 'novel' | 'direct' */
     channel: 'novel' | 'direct';
+    /** 系列剧集上一集的收束关键帧，仅供本集第一镜作为附加参考。 */
+    openingReferenceImage?: string;
   };
 }
 

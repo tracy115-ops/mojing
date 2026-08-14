@@ -227,6 +227,11 @@ const ProjectList: React.FC<ProjectListProps> = ({
                             {t('novel.wordCount', { count: (project.metadata as { currentWordCount?: number }).currentWordCount?.toLocaleString() ?? '0' })}
                           </Tag>
                         )}
+                        {project.type === 'video' && (project.metadata as { seriesRole?: string }).seriesRole === 'series' && (
+                          <Tag color="processing" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
+                            {t('video.series.badge')}
+                          </Tag>
+                        )}
                       </div>
                     </div>
                   </div>

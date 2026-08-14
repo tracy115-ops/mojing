@@ -110,14 +110,20 @@ export const useProjectStore = create<ProjectState>()(
 
       deleteProject: (id) => {
         const target = get().projects.find((p) => p.id === id);
+        const isSeries = target?.type === 'video' && (target.metadata as VideoMetadata).seriesRole === 'series';
+        const deletedIds = isSeries
+          ? get().projects
+            .filter((project) => project.id === id || (project.type === 'video' && (project.metadata as VideoMetadata).seriesId === id))
+            .map((project) => project.id)
+          : [id];
         set((s) => ({
-          projects: s.projects.filter((p) => p.id !== id),
-          activeProjectId: s.activeProjectId === id ? null : s.activeProjectId,
+          projects: s.projects.filter((p) => !deletedIds.includes(p.id)),
+          activeProjectId: s.activeProjectId && deletedIds.includes(s.activeProjectId) ? null : s.activeProjectId,
         }));
         // 级联清理 video 产物文件(只在 novel 类型时落盘,其他类型跳过)
-        if (target?.type === 'novel') {
+        if (target) {
           void import('../services/video/asset-store')
-            .then(({ cleanProjectAssets }) => cleanProjectAssets(id))
+            .then(({ cleanProjectAssets }) => Promise.all(deletedIds.map((projectId) => cleanProjectAssets(projectId))))
             .catch(() => {
               // 清理失败不影响项目删除本身
             });

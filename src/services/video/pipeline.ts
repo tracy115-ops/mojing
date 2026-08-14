@@ -27,6 +27,7 @@ import { buildStoryboard, type StoryboardContext } from './storyboard-prompt';
 import { stepExtract } from './core/step-extract';
 import { runPipeline, type VideoGenOptions } from './core/pipeline-runner';
 import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { applySeriesProjectLibrary } from './series-character-library';
 
 export interface PipelineCallbacks {
   onStageChange?: (stage: VideoStage) => void;
@@ -44,6 +45,12 @@ export interface PipelineInput {
   spec: VideoSpec;
   /** Phase 2:用户勾选的可选步骤 */
   options?: PipelineOptions;
+  /** 系列剧集传入的锁定角色资产；章节仍可来自任意小说项目。 */
+  seriesCharacters?: CharacterAnchor[];
+  seriesScenes?: import('@/types/video').SceneAnchor[];
+  seriesStyleGuide?: string;
+  /** 上一集结尾状态，仅参与本次分镜规划。 */
+  seriesContinuityContext?: string;
 }
 
 export class VideoPipeline {
@@ -336,6 +343,7 @@ export class VideoPipeline {
       style,
       aspectRatio: spec.aspectRatio,
       defaultShotDuration: spec.shotDurationSeconds,
+      continuityContext: this.input.seriesContinuityContext,
     };
 
     pushStageContext({ novelProjectId, stage });
@@ -442,7 +450,11 @@ export class VideoPipeline {
     };
 
     store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
-    return sceneSpec;
+    return applySeriesProjectLibrary(sceneSpec, {
+      characters: this.input.seriesCharacters,
+      scenes: this.input.seriesScenes,
+      styleGuide: this.input.seriesStyleGuide,
+    });
   }
 }
 

@@ -38,6 +38,8 @@ export async function runKeyframe(
     style?: string;
     imageTier: ModelTier;
     novelProjectId: string;
+    /** 系列上一集的收束关键帧，只影响本集第一镜。 */
+    openingReferenceImage?: string;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<KeyframeResult> {
@@ -95,7 +97,10 @@ export async function runKeyframe(
       ? [{ url: result[i - 1].keyframeImage! }]
       : [];
 
-    const rawReferences: CollectedRef[] = [...charRefs, ...prevKeyframeRef, ...sceneRefs];
+    const episodeOpeningRef: CollectedRef[] = i === 0 && ctx.openingReferenceImage
+      ? [{ url: ctx.openingReferenceImage }]
+      : [];
+    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
 
     // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
     // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。

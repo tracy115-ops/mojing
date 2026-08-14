@@ -14,12 +14,13 @@ import {
 import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
-  DeleteOutlined, SettingOutlined,
+  DeleteOutlined, SettingOutlined, SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
-import type { VideoStage, StoryboardShot } from '@/types/video';
+import type { CharacterAnchor, SceneSpec, VideoStage, StoryboardShot } from '@/types/video';
+import type { VideoMetadata } from '@/types';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
 import StageInputEditor from './StageInputEditor';
@@ -29,6 +30,9 @@ import { VideoPipeline } from '@/services/video/pipeline';
 import { runFromFirstFailedStage, runFromStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { logger } from '@/services/log';
 import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
+import { reviewSeriesEpisode } from '@/services/video/series-episode-review';
+import { reviewSeriesEpisodeVisuals, type SeriesVisualReview } from '@/services/video/series-visual-review';
+import { reviewSeriesStoryContinuity, type SeriesStoryReview } from '@/services/video/series-story-review';
 
 const { Text, Title } = Typography;
 
@@ -46,13 +50,19 @@ function getShotStatus(
 const ShotRow: React.FC<{
   pid: string;
   shot: StoryboardShot;
+  specShot?: SceneSpec['shots'][number];
+  seriesCharacters?: CharacterAnchor[];
   status: 'pending' | 'running' | 'done' | 'error';
-}> = ({ pid, shot, status }) => {
+}> = ({ pid, shot, specShot, seriesCharacters, status }) => {
   const { t } = useTranslation();
   const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
   const [editing, setEditing] = useState(false);
   const [promptText, setPromptText] = useState(shot.videoPrompt || shot.sourceText);
   const [rerunning, setRerunning] = useState(false);
+  const costumeChoices = useMemo(() => (specShot?.characterIds ?? []).flatMap((characterId) => {
+    const character = seriesCharacters?.find((item) => item.id === characterId);
+    return character?.costumeVariants?.length ? [{ character, characterId }] : [];
+  }), [specShot?.characterIds, seriesCharacters]);
 
   const handleSavePrompt = () => {
     updateSceneSpecShot(pid, shot.id, { videoPrompt: promptText.trim() });
@@ -75,6 +85,13 @@ const ShotRow: React.FC<{
     } finally {
       setRerunning(false);
     }
+  };
+
+  const handleCostumeChange = (characterId: string, variantId?: string) => {
+    const refs = { ...specShot?.costumeVariantRefs };
+    if (variantId) refs[characterId] = variantId;
+    else delete refs[characterId];
+    updateSceneSpecShot(pid, shot.id, { costumeVariantRefs: Object.keys(refs).length ? refs : undefined });
   };
 
   return (
@@ -165,6 +182,24 @@ const ShotRow: React.FC<{
           </>
         )}
       </div>
+      {costumeChoices.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-secondary)' }}>
+          {costumeChoices.map(({ character, characterId }) => (
+            <Space key={characterId} size={4}>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('video.series.shotCostume', { name: character.name })}</Text>
+              <Select
+                size="small"
+                allowClear
+                value={specShot?.costumeVariantRefs?.[characterId]}
+                placeholder={t('video.series.defaultCostume')}
+                style={{ minWidth: 130 }}
+                onChange={(value) => handleCostumeChange(characterId, value)}
+                options={character.costumeVariants?.map((variant) => ({ value: variant.id, label: variant.id }))}
+              />
+            </Space>
+          ))}
+        </div>
+      )}
     </Card>
   );
 };
@@ -190,6 +225,11 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const [exportOpen, setExportOpen] = useState(false);
   /** 断点续跑中标志(禁用重试按钮防重复点击) */
   const [retrying, setRetrying] = useState(false);
+  const [confirmingKeyframes, setConfirmingKeyframes] = useState(false);
+  const [reviewingVisuals, setReviewingVisuals] = useState(false);
+  const [visualReview, setVisualReview] = useState<SeriesVisualReview | undefined>();
+  const [reviewingStory, setReviewingStory] = useState(false);
+  const [storyReview, setStoryReview] = useState<SeriesStoryReview | undefined>();
   const [addShotModalOpen, setAddShotModalOpen] = useState(false);
   const [newShotPrompt, setNewShotPrompt] = useState('');
 
@@ -298,6 +338,48 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
       setRetrying(false);
     }
   };
+
+  const handleConfirmKeyframes = async () => {
+    if (!pipelineId || confirmingKeyframes) return;
+    setConfirmingKeyframes(true);
+    try {
+      const success = await runFromStage(pipelineId, 'video_generation');
+      if (!success) message.warning(t('video.pipeline.keyframeReviewContinuePartial'));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConfirmingKeyframes(false);
+    }
+  };
+  const handleVisualReview = async () => {
+    if (!sceneSpec || !seriesProject || reviewingVisuals) return;
+    setReviewingVisuals(true);
+    try {
+      const metadata = seriesProject.metadata as VideoMetadata;
+      setVisualReview(await reviewSeriesEpisodeVisuals(sceneSpec, {
+        characters: metadata.seriesCharacters,
+        scenes: metadata.seriesScenes,
+      }));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('video.pipeline.visualReviewFailed'));
+    } finally {
+      setReviewingVisuals(false);
+    }
+  };
+  const handleStoryReview = async () => {
+    if (!sceneSpec || !pipelineId || reviewingStory) return;
+    const episode = useProjectStore.getState().projects.find((item) => item.id === pipelineId);
+    const metadata = episode?.metadata as VideoMetadata | undefined;
+    if (!metadata?.seriesId) return;
+    setReviewingStory(true);
+    try {
+      setStoryReview(await reviewSeriesStoryContinuity(sceneSpec, metadata.episodeContinuity, metadata.episodeEndingSummary));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('video.pipeline.storyReviewFailed'));
+    } finally {
+      setReviewingStory(false);
+    }
+  };
   // 用户点 Steps 上某个步骤时,切换产物视图到该步骤。
   // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
@@ -308,6 +390,12 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
     if (pipelineId.startsWith('direct_')) return undefined;
     const np = s.projects.find((p) => p.id === pipelineId);
     return np?.title;
+  });
+  const seriesProject = useProjectStore((s) => {
+    if (!pipelineId) return undefined;
+    const episode = s.projects.find((project) => project.id === pipelineId);
+    const seriesId = (episode?.metadata as VideoMetadata | undefined)?.seriesId;
+    return seriesId ? s.projects.find((project) => project.id === seriesId) : undefined;
   });
   const directTitle = useVideoStore((s) =>
     pipelineId && pipelineId.startsWith('direct_') ? s.projects[pipelineId]?.title : undefined,
@@ -335,6 +423,14 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const visibleStages = VIDEO_PIPELINE_STAGES.filter((s) => !DEFAULT_SKIPPED_STAGES.has(s));
   const activeStageIdx = currentStage ? VIDEO_PIPELINE_STAGES.indexOf(currentStage) : -1;
   const completedStages = visibleStages.filter((s) => stages[s]?.status === 'completed');
+  const awaitingKeyframeReview = stages.video_generation?.status === 'awaiting_review';
+  const continuityReview = useMemo(() => {
+    const metadata = seriesProject?.metadata as VideoMetadata | undefined;
+    return reviewSeriesEpisode(sceneSpec, {
+      characters: metadata?.seriesCharacters,
+      scenes: metadata?.seriesScenes,
+    });
+  }, [sceneSpec, seriesProject]);
 
   // 整体状态
   const overall: 'idle' | 'running' | 'complete' | 'error' = (() => {
@@ -520,7 +616,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               const stage = visibleStages[current];
               if (!stage) return;
               const state = stages[stage];
-              const clickable = state?.status === 'completed' || state?.status === 'running' || state?.status === 'error';
+              const clickable = state?.status === 'completed' || state?.status === 'running' || state?.status === 'awaiting_review' || state?.status === 'error';
               if (clickable) setFocusStage(stage);
             }}
             items={visibleStages.map((stage) => {
@@ -528,6 +624,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               const skipped = DEFAULT_SKIPPED_STAGES.has(stage);
               const completed = state?.status === 'completed';
               const running = state?.status === 'running';
+              const awaitingReview = state?.status === 'awaiting_review';
               const errored = state?.status === 'error';
               const isFocused = stage === inlineStage;
 
@@ -536,6 +633,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               if (skipped) stepStatus = 'wait';
               else if (errored) stepStatus = 'error';
               else if (running) stepStatus = 'process';
+              else if (awaitingReview) stepStatus = 'process';
               else if (completed) stepStatus = 'finish';
               else stepStatus = 'wait';
 
@@ -582,6 +680,12 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                     </div>
                   </div>
                 );
+              } else if (awaitingReview) {
+                description = (
+                  <span style={{ fontSize: 10, color: 'var(--accent-primary)' }}>
+                    {t('video.artifacts.status.awaiting_review')}
+                  </span>
+                );
               } else if (errored && state?.error) {
                 description = (
                   <Tooltip title={state.error}>
@@ -618,7 +722,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   </span>
                 ),
                 description,
-                disabled: !(completed || running || errored),
+                disabled: !(completed || running || awaitingReview || errored),
               };
             })}
           />
@@ -669,6 +773,65 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                 />
               );
             })()}
+
+            {awaitingKeyframeReview && (
+              <Alert
+                type={continuityReview.ready ? 'success' : 'warning'}
+                showIcon
+                icon={<SafetyCertificateOutlined />}
+                style={{ marginBottom: 12 }}
+                message={t('video.pipeline.keyframeReviewTitle')}
+                description={
+                  <div>
+                    <div>{t('video.pipeline.keyframeReviewHint')}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                      <Tag color={continuityReview.missingKeyframeIndexes.length ? 'warning' : 'success'}>
+                        {t('video.pipeline.review.keyframes', { done: continuityReview.keyframedShots, total: continuityReview.totalShots })}
+                      </Tag>
+                      <Tag color={continuityReview.unresolvedCharacterIds.length || continuityReview.libraryCharacterMismatches.length ? 'error' : 'success'}>
+                        {t('video.pipeline.review.characters', { count: continuityReview.unresolvedCharacterIds.length + continuityReview.libraryCharacterMismatches.length })}
+                      </Tag>
+                      <Tag color={continuityReview.unresolvedSceneIds.length || continuityReview.librarySceneMismatches.length ? 'error' : 'success'}>
+                        {t('video.pipeline.review.scenes', { count: continuityReview.unresolvedSceneIds.length + continuityReview.librarySceneMismatches.length })}
+                      </Tag>
+                    </div>
+                    {!continuityReview.ready && (
+                      <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
+                        {t('video.pipeline.review.blockedHint')}
+                      </Text>
+                    )}
+                    {(continuityReview.charactersWithoutPortrait.length > 0 || continuityReview.scenesWithoutReference.length > 0) && (
+                      <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
+                        {t('video.pipeline.review.referenceHint', {
+                          characters: continuityReview.charactersWithoutPortrait.length,
+                          scenes: continuityReview.scenesWithoutReference.length,
+                        })}
+                      </Text>
+                    )}
+                    {visualReview && (
+                      <Text type={visualReview.issues.some((item) => !item.passed) ? 'warning' : 'success'} style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
+                        {t('video.pipeline.visualReviewResult', { reviewed: visualReview.reviewedShots, issues: visualReview.issues.filter((item) => !item.passed).length })}
+                        {visualReview.issues.filter((item) => !item.passed).map((item) => ` · #${item.shotIndex} ${item.reason}`).join('')}
+                      </Text>
+                    )}
+                    {storyReview && (
+                      <Text type={storyReview.risks.length ? 'warning' : 'success'} style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
+                        {t('video.pipeline.storyReviewResult', { count: storyReview.risks.length })}{storyReview.risks.map((risk) => ` · ${risk}`).join('')}
+                      </Text>
+                    )}
+                  </div>
+                }
+                action={
+                  <Space direction="vertical" size={6}>
+                    <Button size="small" loading={reviewingVisuals} onClick={handleVisualReview}>{t('video.pipeline.visualReview')}</Button>
+                    <Button size="small" loading={reviewingStory} onClick={handleStoryReview}>{t('video.pipeline.storyReview')}</Button>
+                    <Button type="primary" size="small" disabled={!continuityReview.ready} loading={confirmingKeyframes} onClick={handleConfirmKeyframes}>
+                      {t('video.pipeline.keyframeReviewContinue')}
+                    </Button>
+                  </Space>
+                }
+              />
+            )}
 
             {/* 最终视频(完成时显示在产物区顶部) */}
             {overall === 'complete' && finalVideoUrl && (
@@ -762,6 +925,8 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                     key={shot.id}
                     pid={pipelineId}
                     shot={shot}
+                    specShot={sceneSpec?.shots.find((item) => item.id === shot.id)}
+                    seriesCharacters={(seriesProject?.metadata as VideoMetadata | undefined)?.seriesCharacters}
                     status={getShotStatus(clips, currentStage, shot)}
                   />
                 ))}

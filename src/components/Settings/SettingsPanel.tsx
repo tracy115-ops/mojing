@@ -438,7 +438,7 @@ const SettingsPanel: React.FC = () => {
         </Space>
       </div>
       <Card size="small" style={{ background: 'var(--bg-container)', border: '1px solid var(--border-secondary)' }}>
-        <Tabs items={tabItems} />
+        <Tabs items={tabItems.filter((item) => item.key !== 'promptTemplates')} />
       </Card>
     </div>
   );

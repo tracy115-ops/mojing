@@ -77,36 +77,39 @@ export async function runCharacterAnchor(
     const portraitPrompt = customPrompt && customPrompt.trim()
       ? customPrompt
       : await enrichCharacterPromptWithLLM(c, ctx.style);
-    let portraitOk = false;
-    try {
-      const img = await providerRouter.generateImage({
-        taskType: 'character',
-        prompt: portraitPrompt,
-        width: 768,
-        height: 1152,
-        style: ctx.style,
-      });
-      result[i].portraitImage = await saveAsset(
-        ctx.novelProjectId,
-        'portrait',
-        img.imageData,
-        `char_${sanitizeFileName(c.name)}`,
-      );
-      okCount++;
-      portraitOk = true;
-    } catch (err) {
-      console.warn(`character_anchor: portrait failed for ${c.name}`, err);
-      lastErr = err;
-      failed.push(c.name);
+    let portraitOk = !!result[i].portraitImage;
+    if (!portraitOk) {
+      try {
+        const img = await providerRouter.generateImage({
+          taskType: 'character',
+          prompt: portraitPrompt,
+          width: 768,
+          height: 1152,
+          style: ctx.style,
+        });
+        result[i].portraitImage = await saveAsset(
+          ctx.novelProjectId,
+          'portrait',
+          img.imageData,
+          `char_${sanitizeFileName(c.name)}`,
+        );
+        okCount++;
+        portraitOk = true;
+      } catch (err) {
+        console.warn(`character_anchor: portrait failed for ${c.name}`, err);
+        lastErr = err;
+        failed.push(c.name);
+      }
+      done++;
+      onProgress?.(done, total);
     }
-    done++;
-    onProgress?.(done, total);
 
     // --- 阶段 1b:variant 单图立绘 ---
     if (c.costumeVariants?.length) {
       for (let j = 0; j < c.costumeVariants.length; j++) {
         const v = c.costumeVariants[j];
         if (v.id === 'default') continue; // default 已生成
+        if (result[i].costumeVariants?.[j].portraitImage) continue;
         try {
           const img = await providerRouter.generateImage({
             taskType: 'character',
@@ -135,7 +138,7 @@ export async function runCharacterAnchor(
     // 三视图作为附加产物,**不覆盖** portraitImage。
     // 用 default 立绘做 reference,保证三视图里的角色和单图是同一个人。
     const portraitUrl = result[i].portraitImage;
-    if (wantTurnaround && portraitOk && portraitUrl) {
+    if (wantTurnaround && !result[i].turnaroundImage && portraitOk && portraitUrl) {
       try {
         const turnaroundRef = await readAsDataUri(portraitUrl);
         const customTurnaround = ctx.turnaroundPrompts?.[c.id] || ctx.turnaroundPrompts?.[c.name];
@@ -173,7 +176,7 @@ export async function runCharacterAnchor(
   }
 
   // 如果一张图都没成功,把整个 stage 当作失败,让上层标记为 error。
-  if (okCount === 0 && total > 0) {
+  if (okCount === 0 && total > 0 && !result.some((character) => !!character.portraitImage)) {
     const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
     throw new Error(`所有 ${total} 次立绘调用都失败(${failed.length} 个角色)。最近一次错误:${reason}`);
   }
@@ -185,11 +188,11 @@ export async function runCharacterAnchor(
 function countAnchorsNeeded(chars: CharacterAnchor[], includeTurnaround: boolean): number {
   let n = 0;
   for (const c of chars) {
-    n += 1; // default 单图
+    if (!c.portraitImage) n += 1; // default 单图
     if (c.costumeVariants?.length) {
-      n += c.costumeVariants.filter((v) => v.id !== 'default').length;
+      n += c.costumeVariants.filter((v) => v.id !== 'default' && !v.portraitImage).length;
     }
-    if (includeTurnaround) n += 1; // 三视图(每个角色额外一张)
+    if (includeTurnaround && !c.turnaroundImage) n += 1; // 三视图(每个角色额外一张)
   }
   return n;
 }

@@ -47,9 +47,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       }
     }
 
+    const userContent = request.imageInputs?.length
+      ? [
+        { type: 'text', text: request.userPrompt },
+        ...request.imageInputs.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ]
+      : request.userPrompt;
+
     body.messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: request.userPrompt },
+      { role: 'user', content: userContent },
     ];
 
     if (request.stopSequences?.length) {
@@ -172,7 +179,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       model,
       max_tokens: request.maxTokens ?? 4096,
       system: request.systemPrompt,
-      messages: [{ role: 'user', content: request.userPrompt }],
+      messages: [{ role: 'user', content: toClaudeUserContent(request) }],
       temperature: request.temperature ?? 0.7,
     };
 
@@ -271,4 +278,13 @@ export class ClaudeProvider extends BaseLLMProvider {
 
     yield { delta: '', done: true };
   }
+}
+
+function toClaudeUserContent(request: LLMGenerateRequest): string | Array<Record<string, unknown>> {
+  if (!request.imageInputs?.length) return request.userPrompt;
+  const images = request.imageInputs.flatMap((input) => {
+    const match = input.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+    return match ? [{ type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } }] : [];
+  });
+  return [{ type: 'text', text: request.userPrompt }, ...images];
 }

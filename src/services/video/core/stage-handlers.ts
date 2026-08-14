@@ -501,6 +501,7 @@ export async function executeKeyframe(ctx: StageContext): Promise<StageResult | 
           style: workingSpec.meta.style,
           imageTier: 'value',
           novelProjectId: pid,
+          openingReferenceImage: workingSpec.meta.openingReferenceImage,
         },
         (done, total) => {
           store.setStageStatus(pid, 'keyframe_image', 'running', { progress: done / total });

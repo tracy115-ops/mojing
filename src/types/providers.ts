@@ -196,6 +196,8 @@ export interface LLMGenerateRequest {
   temperature?: number;
   responseFormat?: 'text' | 'json';
   stopSequences?: string[];
+  /** Optional visual inputs for models that support image understanding. */
+  imageInputs?: string[];
 }
 
 export interface LLMGenerateResponse {

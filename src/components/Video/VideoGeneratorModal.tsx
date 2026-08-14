@@ -28,7 +28,7 @@ import { logger } from '@/services/log';
 import { VideoPipeline } from '@/services/video/pipeline';
 import type {
   VideoProjectState, VideoStage, VideoStageStatus, VideoSpec,
-  StoryboardShot, AspectRatio, ModelTier,
+  StoryboardShot, AspectRatio, ModelTier, CharacterAnchor, SceneAnchor,
 } from '@/types/video';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import ExportVideoModal from './ExportVideoModal';
@@ -43,15 +43,21 @@ interface VideoGeneratorModalProps {
   onClose: () => void;
   /** 默认绑定的小说项目 ID（从 NovelView 传入） */
   defaultNovelId?: string;
+  /** 系列剧集的运行项目 ID；小说仅提供章节素材。 */
+  episodeProjectId?: string;
+  /** 系列项目锁定的角色资产。 */
+  seriesCharacters?: CharacterAnchor[];
+  seriesScenes?: SceneAnchor[];
+  seriesStyleGuide?: string;
+  seriesContinuityContext?: string;
 }
 
 type ModalPhase = 'config' | 'running' | 'done';
 
-const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose, defaultNovelId }) => {
+const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose, defaultNovelId, episodeProjectId, seriesCharacters, seriesScenes, seriesStyleGuide, seriesContinuityContext }) => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
   const videoEndpoints = useProviderStore(useShallow((s) => s.endpoints.filter((e) => e.enabled)));
-  const videoProject = useVideoStore((s) => (defaultNovelId ? s.projects[defaultNovelId] : undefined));
 
   // Config state
   const [selectedNovelId, setSelectedNovelId] = useState<string | undefined>(defaultNovelId);
@@ -67,6 +73,8 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
     hardcodeSubtitles: true,
     bgmStyle: 'cinematic',
   });
+  const pipelineProjectId = episodeProjectId ?? selectedNovelId;
+  const videoProject = useVideoStore((s) => (pipelineProjectId ? s.projects[pipelineProjectId] : undefined));
 
   const [phase, setPhase] = useState<ModalPhase>('config');
   const [errorMsg, setErrorMsg] = useState<string | undefined>(undefined);
@@ -143,14 +151,20 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
 
     const pipeline = new VideoPipeline(
       {
-        novelProjectId: selectedNovelId,
-        novelTitle: novel.title,
+        novelProjectId: pipelineProjectId!,
+        novelTitle: episodeProjectId
+          ? useProjectStore.getState().projects.find((project) => project.id === episodeProjectId)?.title || novel.title
+          : novel.title,
         genre: meta.genre,
         style: meta.style,
         chapters: selectedChapters.map((c) => ({
           id: c.id, order: c.order, content: c.content,
         })),
         spec,
+        seriesCharacters,
+        seriesScenes,
+        seriesStyleGuide,
+        seriesContinuityContext,
       },
       {
         onError: (msg) => setErrorMsg(msg),
@@ -159,7 +173,7 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
     pipelineRef.current = pipeline;
 
     // 切到主面板的流水线 tab,然后立即关闭 Modal —— 执行过程改由 VideoPipelinePanel 展示。
-    useVideoStore.getState().setActivePipelineId(selectedNovelId);
+    useVideoStore.getState().setActivePipelineId(pipelineProjectId);
     onClose();
 
     // 后台跑流水线;Modal 已关闭,phase 状态不再相关。
@@ -171,8 +185,8 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
   };
 
   const handleReset = () => {
-    if (selectedNovelId) {
-      useVideoStore.getState().resetProject(selectedNovelId);
+    if (pipelineProjectId) {
+      useVideoStore.getState().resetProject(pipelineProjectId);
     }
     setPhase('config');
     setErrorMsg(undefined);

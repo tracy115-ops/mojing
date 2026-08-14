@@ -25,10 +25,12 @@ export async function runSceneImage(
   let done = 0;
   let okCount = 0;
   let lastErr: unknown = null;
-  const total = scenes.length;
+  const total = scenes.filter((scene) => !scene.backgroundImage).length;
+  if (total === 0) return { scenes: result, failed: [] };
 
   for (let i = 0; i < scenes.length; i++) {
     const s = scenes[i];
+    if (result[i].backgroundImage) continue;
     try {
       if (i > 0) {
         await new Promise((resolve) => setTimeout(resolve, 800));
@@ -57,7 +59,7 @@ export async function runSceneImage(
     onProgress?.(done, total);
   }
 
-  if (okCount === 0 && total > 0) {
+  if (okCount === 0 && total > 0 && !result.some((scene) => !!scene.backgroundImage)) {
     const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
     throw new Error(`所有 ${total} 个场景图都生成失败。最近一次错误:${reason}`);
   }

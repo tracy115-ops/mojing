@@ -19,6 +19,8 @@ export interface DirectBuildContext {
   defaultShotDuration: 3 | 5 | 10 | 15 | 18;
   targetDurationSeconds?: 5 | 15 | 30 | 60;
   style?: string;
+  /** 剧情承接信息，只注入分镜规划提示词。 */
+  continuityContext?: string;
 }
 
 /**
@@ -77,6 +79,7 @@ export async function buildSceneFromPrompt(
     defaultShotDuration: ctx.defaultShotDuration,
     targetDurationSeconds: ctx.targetDurationSeconds,
     style: ctx.style,
+    continuityContext: ctx.continuityContext,
   });
 
   const extract = await stepExtract({

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Typography, message, Button, Tooltip } from 'antd';
-import { VideoCameraOutlined, ThunderboltOutlined, FormOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Tooltip, Form, Input, Modal } from 'antd';
+import { VideoCameraOutlined, ThunderboltOutlined, FormOutlined, FolderAddOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
@@ -12,8 +12,10 @@ import DirectVideoModal from './DirectVideoModal';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
-import { runPipeline } from '@/services/video/core/pipeline-runner';
-import { DIRECT_MODE_PRESETS, PipelineOptions } from '@/types/video';
+import { runFromStage, runPipeline } from '@/services/video/core/pipeline-runner';
+import { applySeriesProjectLibrary } from '@/services/video/series-character-library';
+import { PipelineOptions, type CharacterAnchor, type SceneAnchor } from '@/types/video';
+import VideoSeriesWorkspace from './VideoSeriesWorkspace';
 
 const { Text, Title } = Typography;
 
@@ -42,6 +44,15 @@ const VideoView: React.FC = () => {
   const [createMode, setCreateMode] = useState<'novel' | 'direct'>('novel');
   const [genOpen, setGenOpen] = useState(false);
   const [directOpen, setDirectOpen] = useState(false);
+  const [seriesOpen, setSeriesOpen] = useState(false);
+  const [episodeSeriesId, setEpisodeSeriesId] = useState<string | undefined>();
+  const [generatorEpisodeId, setGeneratorEpisodeId] = useState<string | undefined>();
+  const [generatorDefaultNovelId, setGeneratorDefaultNovelId] = useState<string | undefined>();
+  const [generatorSeriesCharacters, setGeneratorSeriesCharacters] = useState<CharacterAnchor[] | undefined>();
+  const [generatorSeriesScenes, setGeneratorSeriesScenes] = useState<SceneAnchor[] | undefined>();
+  const [generatorSeriesStyleGuide, setGeneratorSeriesStyleGuide] = useState<string | undefined>();
+  const [generatorSeriesContinuityContext, setGeneratorSeriesContinuityContext] = useState<string | undefined>();
+  const [seriesForm] = Form.useForm<{ title: string; description?: string }>();
 
   // Listen for global "new project" event from titlebar
   useEffect(() => {
@@ -56,15 +67,48 @@ const VideoView: React.FC = () => {
     return () => window.removeEventListener('mojing:create-project', handler);
   }, []);
 
-  const videoProjects = useMemo(() => projects.filter((p) => p.type === 'video'), [projects]);
+  const videoProjects = useMemo(
+    () => projects.filter((p) => p.type === 'video' && (p.metadata as VideoMetadata).seriesRole !== 'episode'),
+    [projects],
+  );
+  const activeProject = projects.find((project) => project.id === activeProjectId);
+  const activeVideoMetadata = activeProject?.metadata as VideoMetadata | undefined;
+  const activeSeries = activeProject?.type === 'video' && activeVideoMetadata?.seriesRole === 'series'
+    ? activeProject
+    : undefined;
+  const activeEpisodeSeries = activeVideoMetadata?.seriesRole === 'episode' && activeVideoMetadata.seriesId
+    ? projects.find((project) => project.id === activeVideoMetadata.seriesId)
+    : undefined;
+  const seriesEpisodes = useMemo(
+    () => activeSeries
+      ? projects.filter((project) => project.type === 'video' && (project.metadata as VideoMetadata).seriesId === activeSeries.id)
+      : [],
+    [activeSeries, projects],
+  );
 
   const handleCreate = async (values: CreateVideoFormValues) => {
     const desc = values.mode === 'direct' ? values.prompt : (values.scriptText || values.description);
+    const seriesId = episodeSeriesId;
+    const series = seriesId
+      ? useProjectStore.getState().projects.find((candidate) => candidate.id === seriesId)
+      : undefined;
+    const seriesCharacters = (series?.metadata as VideoMetadata | undefined)?.seriesCharacters;
+    const seriesScenes = (series?.metadata as VideoMetadata | undefined)?.seriesScenes;
+    const seriesStyleGuide = (series?.metadata as VideoMetadata | undefined)?.seriesStyleGuide;
+    const existingEpisodes = seriesId
+      ? useProjectStore.getState().projects
+        .filter((candidate) => candidate.type === 'video' && (candidate.metadata as VideoMetadata).seriesId === seriesId)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      : [];
+    const previousEpisode = existingEpisodes[existingEpisodes.length - 1];
+    const previousEpisodeMetadata = previousEpisode?.metadata as VideoMetadata | undefined;
+    const episodeContinuity = previousEpisodeMetadata?.episodeEndingSummary?.trim() || undefined;
     const project = useProjectStore.getState().createProject('video', values.title, desc || '', {
       style: values.style,
       resolution: values.resolution,
       aspectRatio: values.aspectRatio,
       fps: values.fps,
+      ...(seriesId ? { seriesRole: 'episode' as const, seriesId, previousEpisodeId: previousEpisode?.id, episodeContinuity } : {}),
     } as Partial<VideoMetadata>);
     
     const duration = values.shotDurationSeconds || 5;
@@ -87,6 +131,7 @@ const VideoView: React.FC = () => {
     setActiveProject(project.id);
     store.setActivePipelineId(project.id);
     setCreateOpen(false);
+    setEpisodeSeriesId(undefined);
 
     if (values.mode === 'direct' && values.prompt) {
       // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成（启用 14 步完整流程包含 TTS 与场景图）
@@ -97,14 +142,20 @@ const VideoView: React.FC = () => {
           defaultShotDuration: duration,
           targetDurationSeconds: values.targetDurationSeconds,
           style: values.style,
+          continuityContext: episodeContinuity,
         });
-        store.setSceneSpec(project.id, sceneSpec);
+        const boundSceneSpec = applySeriesProjectLibrary(sceneSpec, {
+          characters: seriesCharacters,
+          scenes: seriesScenes,
+          styleGuide: seriesStyleGuide,
+        });
+        store.setSceneSpec(project.id, boundSceneSpec);
         store.setStageStatus(project.id, 'script_slicing', 'completed', { progress: 1 });
         store.setStageStatus(project.id, 'storyboard_prompt', 'completed', { progress: 1 });
         store.setStageStatus(project.id, 'extraction', 'completed', { progress: 1 });
         runPipeline({
           novelProjectId: project.id,
-          spec: sceneSpec,
+          spec: boundSceneSpec,
           options: FULL_PIPELINE_OPTIONS,
           videoGen: {
             spec,
@@ -125,11 +176,17 @@ const VideoView: React.FC = () => {
             defaultShotDuration: duration,
             targetDurationSeconds: values.targetDurationSeconds,
             style: values.style,
+            continuityContext: episodeContinuity,
           });
-          store.setSceneSpec(project.id, sceneSpec);
+          const boundSceneSpec = applySeriesProjectLibrary(sceneSpec, {
+            characters: seriesCharacters,
+            scenes: seriesScenes,
+            styleGuide: seriesStyleGuide,
+          });
+          store.setSceneSpec(project.id, boundSceneSpec);
           runPipeline({
             novelProjectId: project.id,
-            spec: sceneSpec,
+            spec: boundSceneSpec,
             options: FULL_PIPELINE_OPTIONS,
             videoGen: {
               spec,
@@ -142,6 +199,14 @@ const VideoView: React.FC = () => {
         }
       } else if (values.novelId) {
         // 关联了已有小说：打开章节选择配置框
+        if (seriesId) {
+          setGeneratorEpisodeId(project.id);
+          setGeneratorDefaultNovelId(values.novelId);
+          setGeneratorSeriesCharacters(seriesCharacters);
+          setGeneratorSeriesScenes(seriesScenes);
+          setGeneratorSeriesStyleGuide(seriesStyleGuide);
+          setGeneratorSeriesContinuityContext(episodeContinuity);
+        }
         setGenOpen(true);
       }
     }
@@ -149,6 +214,11 @@ const VideoView: React.FC = () => {
 
   const handleSelectProject = (id: string) => {
     setActiveProject(id);
+    const selected = projects.find((project) => project.id === id);
+    if (selected?.type === 'video' && (selected.metadata as VideoMetadata).seriesRole === 'series') {
+      useVideoStore.getState().setActivePipelineId(undefined);
+      return;
+    }
     const store = useVideoStore.getState();
     if (!store.projects[id]) {
       const proj = projects.find((p) => p.id === id);
@@ -181,6 +251,25 @@ const VideoView: React.FC = () => {
     }
   };
 
+  const handleCreateSeries = async () => {
+    const values = await seriesForm.validateFields();
+    const series = useProjectStore.getState().createProject('video', values.title.trim(), values.description?.trim() || '', {
+      seriesRole: 'series',
+      seriesCharacters: [],
+    } as Partial<VideoMetadata>);
+    setActiveProject(series.id);
+    useVideoStore.getState().setActivePipelineId(undefined);
+    seriesForm.resetFields();
+    setSeriesOpen(false);
+    message.success(t('video.series.created'));
+  };
+
+  const handleCreateEpisode = (seriesId: string) => {
+    setEpisodeSeriesId(seriesId);
+    setCreateMode('novel');
+    setCreateOpen(true);
+  };
+
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       <div style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -203,35 +292,54 @@ const VideoView: React.FC = () => {
           padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)',
           display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
         }}>
-          <Tooltip title={t('video.direct.tooltip')}>
-            <Button
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              onClick={() => {
-                setCreateMode('direct');
-                setCreateOpen(true);
-              }}
-            >
-              {t('video.direct.button')}
+          <Button type="primary"
+            icon={<FolderAddOutlined />}
+            onClick={() => setSeriesOpen(true)}
+          >
+            {t('video.series.newSeries')}
+          </Button>
+          {activeEpisodeSeries && (
+            <Button onClick={() => handleSelectProject(activeEpisodeSeries.id)}>
+              {t('video.series.backToSeries', { title: activeEpisodeSeries.title })}
             </Button>
-          </Tooltip>
-          <Tooltip title={t('video.gen.description')}>
-            <Button
-              icon={<FormOutlined />}
-              onClick={() => {
-                setCreateMode('novel');
-                setCreateOpen(true);
-              }}
-            >
-              {t('video.gen.title')}
-            </Button>
-          </Tooltip>
+          )}
           <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-            {t('video.direct.tagline')}
+            {t('video.series.consistencyHint')}
           </Text>
         </div>
         <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          {activePipelineId ? (
+          {activeSeries ? (
+            <VideoSeriesWorkspace
+              series={activeSeries}
+              episodes={seriesEpisodes}
+              onUpdateCharacters={(characters: CharacterAnchor[]) => {
+                useProjectStore.getState().updateProjectMetadata(activeSeries.id, { seriesCharacters: characters });
+              }}
+              onUpdateScenes={(scenes: SceneAnchor[]) => {
+                useProjectStore.getState().updateProjectMetadata(activeSeries.id, { seriesScenes: scenes });
+              }}
+              onUpdateStyleGuide={(seriesStyleGuide) => {
+                useProjectStore.getState().updateProjectMetadata(activeSeries.id, { seriesStyleGuide });
+              }}
+              onUpdateEpisodeContinuity={(episodeId, values) => {
+                useProjectStore.getState().updateProjectMetadata(episodeId, values as unknown as Record<string, unknown>);
+              }}
+              onSyncEpisodeAssets={async (episodeId) => {
+                const pipelineProject = useVideoStore.getState().getProject(episodeId);
+                if (!pipelineProject?.sceneSpec) return false;
+                const seriesMetadata = activeSeries.metadata as VideoMetadata;
+                const boundSceneSpec = applySeriesProjectLibrary(pipelineProject.sceneSpec, {
+                  characters: seriesMetadata.seriesCharacters,
+                  scenes: seriesMetadata.seriesScenes,
+                  styleGuide: seriesMetadata.seriesStyleGuide,
+                });
+                useVideoStore.getState().setSceneSpec(episodeId, boundSceneSpec);
+                return runFromStage(episodeId, 'keyframe_image');
+              }}
+              onCreateEpisode={() => handleCreateEpisode(activeSeries.id)}
+              onOpenEpisode={handleSelectProject}
+            />
+          ) : activePipelineId ? (
             <VideoPipelineErrorBoundary
               onReset={() => {
                 useVideoStore.getState().resetProject(activePipelineId);
@@ -265,6 +373,7 @@ const VideoView: React.FC = () => {
               {/* 灵感快捷启动卡片 */}
               <div style={{
                 display: 'grid',
+                display: 'none',
                 gridTemplateColumns: 'repeat(3, 1fr)',
                 gap: 16,
                 maxWidth: 780,
@@ -333,26 +442,65 @@ const VideoView: React.FC = () => {
                 <Button
                   type="primary"
                   size="large"
-                  icon={<ThunderboltOutlined />}
-                  onClick={() => setDirectOpen(true)}
+                  icon={<FolderAddOutlined />}
+                  onClick={() => setSeriesOpen(true)}
                 >
-                  {t('video.direct.cta')}
-                </Button>
-                <Button
-                  size="large"
-                  icon={<FormOutlined />}
-                  onClick={() => setGenOpen(true)}
-                >
-                  {t('video.gen.cta')}
+                  {t('video.series.newSeries')}
                 </Button>
               </div>
             </div>
           )}
         </div>
       </div>
-      <CreateVideoModal open={createOpen} initialMode={createMode} onOk={handleCreate} onCancel={() => setCreateOpen(false)} />
-      <VideoGeneratorModal open={genOpen} onClose={() => setGenOpen(false)} />
+      <CreateVideoModal
+        open={createOpen}
+        initialMode={createMode}
+        onOk={handleCreate}
+        onCancel={() => {
+          setCreateOpen(false);
+          setEpisodeSeriesId(undefined);
+        }}
+      />
+      <VideoGeneratorModal
+        open={genOpen}
+        defaultNovelId={generatorDefaultNovelId}
+        episodeProjectId={generatorEpisodeId}
+        seriesCharacters={generatorSeriesCharacters}
+        seriesScenes={generatorSeriesScenes}
+        seriesStyleGuide={generatorSeriesStyleGuide}
+        seriesContinuityContext={generatorSeriesContinuityContext}
+        onClose={() => {
+          setGenOpen(false);
+          setGeneratorEpisodeId(undefined);
+          setGeneratorDefaultNovelId(undefined);
+          setGeneratorSeriesCharacters(undefined);
+          setGeneratorSeriesScenes(undefined);
+          setGeneratorSeriesStyleGuide(undefined);
+        }}
+      />
       <DirectVideoModal open={directOpen} onClose={() => setDirectOpen(false)} />
+      <Modal
+        title={t('video.series.newSeries')}
+        open={seriesOpen}
+        onOk={() => void handleCreateSeries()}
+        onCancel={() => {
+          seriesForm.resetFields();
+          setSeriesOpen(false);
+        }}
+        okText={t('common.create')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+        getContainer={() => document.getElementById('root')!}
+      >
+        <Form form={seriesForm} layout="vertical">
+          <Form.Item name="title" label={t('video.series.name')} rules={[{ required: true, message: t('video.series.nameRequired') }]}>
+            <Input autoFocus placeholder={t('video.series.namePlaceholder')} />
+          </Form.Item>
+          <Form.Item name="description" label={t('video.series.description')}>
+            <Input.TextArea rows={3} placeholder={t('video.series.descriptionPlaceholder')} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

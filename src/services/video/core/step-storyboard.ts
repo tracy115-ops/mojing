@@ -13,6 +13,7 @@ export interface StoryboardContext {
   defaultShotDuration: 3 | 5 | 10 | 15 | 18;
   targetDurationSeconds?: 5 | 15 | 30 | 60 | number;
   style?: string;
+  continuityContext?: string;
 }
 
 export interface StoryboardResult {
@@ -44,7 +45,9 @@ export async function stepStoryboard(
   const request: LLMGenerateRequest = {
     taskType: 'translation',
     systemPrompt: buildSystemPrompt(rawPrompt, ctx),
-    userPrompt: rawPrompt,
+    userPrompt: ctx.continuityContext?.trim()
+      ? `【上集承接】以下是已经发生的剧情事实，必须保持连续：${ctx.continuityContext.trim()}\n\n【本集剧本】\n${rawPrompt}`
+      : rawPrompt,
     responseFormat: 'json',
     temperature: 0.6,
     maxTokens: 4096,

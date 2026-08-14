@@ -5,6 +5,7 @@
 // 期 1(本次):实装步 3/6/7/9/10/12-14。步 4/8/11(音频链路)留 stub 跳过,期 3 补全。
 
 import { useVideoStore } from '@/stores/videoStore';
+import { useProjectStore } from '@/stores/projectStore';
 import { logger } from '@/services/log';
 import type {
   SceneSpec,
@@ -79,6 +80,10 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
 
   let workingSpec: SceneSpec = {
     ...spec,
+    meta: {
+      ...spec.meta,
+      openingReferenceImage: spec.meta.openingReferenceImage ?? getPreviousEpisodeKeyframe(novelProjectId),
+    },
     characters: (persistedCharacters.length && charactersMatch(persistedCharacters, spec.characters ?? []))
       ? deepCloneCharacters(persistedCharacters)
       : spec.characters?.map((c) => ({ ...c, costumeVariants: c.costumeVariants?.map((v) => ({ ...v })) })),
@@ -152,6 +157,17 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
     if (result) {
       workingSpec = result.spec;
       if (result.clips) clips = result.clips;
+    }
+
+    // 系列剧集在关键帧完成后暂停：让用户先核对角色、场景与镜头连续性，
+    // 明确确认后才进入昂贵且不可逆的视频生成阶段。
+    if (result && stage === 'keyframe_image' && requiresKeyframeReview(novelProjectId)) {
+      store.advanceToStage(novelProjectId, 'video_generation');
+      store.setStageStatus(novelProjectId, 'video_generation', 'awaiting_review', { progress: 0, error: undefined });
+      store.setStageInputSummary(novelProjectId, 'video_generation', {
+        headline: '关键帧已生成，等待人工确认后开始视频生成。',
+      });
+      break;
     }
   }
 
@@ -415,6 +431,15 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
       allOk = false;
       // 单步失败不中断,继续跑后续(handler 内部已标 error)
     }
+
+    if (result && s === 'keyframe_image' && requiresKeyframeReview(pid)) {
+      store.advanceToStage(pid, 'video_generation');
+      store.setStageStatus(pid, 'video_generation', 'awaiting_review', { progress: 0, error: undefined });
+      store.setStageInputSummary(pid, 'video_generation', {
+        headline: '关键帧已重新生成，等待人工确认后开始视频生成。',
+      });
+      break;
+    }
   }
 
   store.setSceneSpec(pid, workingSpec);
@@ -433,10 +458,28 @@ export async function runFromFirstFailedStage(pid: string): Promise<boolean> {
   // 扫描第一个 error 状态的 stage;若无则取 pending 状态的 stage;否则取第一个 stage
   const failedStage =
     RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'error') ||
+    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'awaiting_review') ||
     RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'pending') ||
     RUNTIME_STAGE_ORDER[0];
 
   return runFromStage(pid, failedStage);
+}
+
+function requiresKeyframeReview(projectId: string): boolean {
+  const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+  return project?.type === 'video' && (project.metadata as { seriesRole?: string }).seriesRole === 'episode';
+}
+
+function getPreviousEpisodeKeyframe(projectId: string): string | undefined {
+  const project = useProjectStore.getState().projects.find((item) => item.id === projectId);
+  const previousEpisodeId = (project?.metadata as { previousEpisodeId?: string } | undefined)?.previousEpisodeId;
+  if (!previousEpisodeId) return undefined;
+  const previous = useVideoStore.getState().getProject(previousEpisodeId);
+  return previous?.sceneSpec?.shots
+    .slice()
+    .reverse()
+    .find((shot) => !!shot.keyframeImage)
+    ?.keyframeImage;
 }
 
 /**
@@ -535,4 +578,3 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
     popStageContext();
   }
 }
-
