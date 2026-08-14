@@ -22,18 +22,21 @@ export interface RawShot {
 }
 
 export interface SliceOptions {
-  /** 单镜头目标字数（默认 800） */
+  /** 单镜头目标字数（默认 800，剧本模式默认 100） */
   targetWordsPerShot?: number;
   /** 最小字数（小于此值合并到上一段） */
   minWordsPerShot?: number;
   /** 最大字数（超过此值强制切分） */
   maxWordsPerShot?: number;
+  /** 是否为剧本模式（针对分镜/剧本格式优化切片与分镜粒度） */
+  isScript?: boolean;
 }
 
 const DEFAULT_OPTS: Required<SliceOptions> = {
   targetWordsPerShot: 800,
   minWordsPerShot: 300,
   maxWordsPerShot: 1500,
+  isScript: false,
 };
 
 interface ChapterInput {
@@ -46,7 +49,13 @@ interface ChapterInput {
  * 将多章节正文切成 RawShot 序列。
  */
 export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {}): RawShot[] {
-  const o = { ...DEFAULT_OPTS, ...opts };
+  const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));
+  const o: Required<SliceOptions> = {
+    targetWordsPerShot: isScript ? 100 : (opts.targetWordsPerShot ?? DEFAULT_OPTS.targetWordsPerShot),
+    minWordsPerShot: isScript ? 10 : (opts.minWordsPerShot ?? DEFAULT_OPTS.minWordsPerShot),
+    maxWordsPerShot: isScript ? 400 : (opts.maxWordsPerShot ?? DEFAULT_OPTS.maxWordsPerShot),
+    isScript,
+  };
   const shots: RawShot[] = [];
   let globalIndex = 0;
 
@@ -67,8 +76,8 @@ export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {})
         characters: detectCharacters(text),
         location: detectLocation(text),
         mood: detectMood(text),
-        hasDialogue: /["「『"]/.test(text),
-        hasAction: /(vs\.|战斗|冲|跑|打|撞|刺|劈|射|爆炸|闪避)/.test(text),
+        hasDialogue: /["「『":：]/.test(text),
+        hasAction: /(vs\.|战斗|冲|跑|打|撞|刺|劈|射|爆炸|闪避|拔剑|出手|跃起)/.test(text),
       });
       globalIndex += 1;
     }
@@ -82,7 +91,7 @@ export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {})
 function splitParagraphs(content: string): string[] {
   return content
     .replace(/\r\n/g, '\n')
-    .split(/\n{2,}/)            // 段间空行
+    .split(/\n{2,}|\n(?=(?:镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场))/i)            // 段间空行或镜头前缀
     .map((p) => p.trim())
     .filter(Boolean);
 }
@@ -99,8 +108,8 @@ function groupParagraphs(paragraphs: string[], o: Required<SliceOptions>): strin
   const flush = () => {
     if (current.length === 0) return;
     const totalWords = current.reduce((s, p) => s + countChars(p), 0);
-    // 太短 → 合并到上一组（如果有）
-    if (totalWords < o.minWordsPerShot && groups.length > 0) {
+    // 太短且不是剧本模式 → 合并到上一组（如果有）
+    if (!o.isScript && totalWords < o.minWordsPerShot && groups.length > 0) {
       const prev = groups[groups.length - 1];
       prev.push(...current);
     } else {
@@ -114,17 +123,22 @@ function groupParagraphs(paragraphs: string[], o: Required<SliceOptions>): strin
     const words = countChars(para);
     const sceneChanged = isSceneBoundary(para);
 
-    // 强制切：超过 max
-    if (currentWords + words > o.maxWordsPerShot && current.length > 0) {
+    // 遇到新场景/镜头标记，或者超长，先 flush 前面积累的内容
+    if (sceneChanged && current.length > 0) {
       flush();
-    }
-    // 软切：达到 target 或场景切换
-    else if ((currentWords + words > o.targetWordsPerShot || sceneChanged) && current.length > 0) {
+    } else if (currentWords + words > o.maxWordsPerShot && current.length > 0) {
+      flush();
+    } else if (currentWords + words > o.targetWordsPerShot && current.length > 0) {
       flush();
     }
 
     current.push(para);
     currentWords += words;
+
+    // 如果是剧本模式且当前段落已经是完整镜头描述，直接切
+    if (o.isScript && (words >= o.minWordsPerShot || sceneChanged)) {
+      flush();
+    }
   }
   flush();
 
@@ -137,30 +151,35 @@ function countChars(s: string): number {
 }
 
 /**
- * 启发式检测：段落开头是否暗示场景切换
+ * 启发式检测：段落开头是否暗示场景切换或镜头切换
+ *   - 镜头标记："镜头1" / "第1镜" / "Shot 1"
  *   - "第二天 / 当晚 / 三日后" 等时间词
  *   - "在 xxx / xxx 客栈" 等地点词开头
  *   - 全大写或带【】的场景标记
  */
 function isSceneBoundary(para: string): boolean {
-  if (/^(第二天|当晚|当夜|三日后|数日后|次日|黄昏|清晨|夜晚|午后|几天后|不久|与此同时)/.test(para)) {
+  const trimmed = para.trim();
+  if (/^(镜头|第?\d+镜|分镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场|场\s*\d+)/i.test(trimmed)) {
     return true;
   }
-  if (/^【.+】/.test(para)) return true;
-  if (/^场景[:：]/.test(para)) return true;
-  if (/^(第一章|第二章|第三章|第\S+章)/.test(para)) return true;
+  if (/^(第二天|当晚|当夜|三日后|数日后|次日|黄昏|清晨|夜晚|午后|几天后|不久|与此同时)/.test(trimmed)) {
+    return true;
+  }
+  if (/^【.+】/.test(trimmed)) return true;
+  if (/^场景[:：]/.test(trimmed)) return true;
+  if (/^(第一章|第二章|第三章|第\S+章)/.test(trimmed)) return true;
   return false;
 }
 
 function detectCharacters(text: string): string[] {
-  // 启发式：从对话引用中提取说话人
+  // 启发式：从小说对话引用或剧本对话中提取说话人
   const speakers = new Set<string>();
-  // "xxx说" / 「xxx」xxx 道
-  const patterns = [
+  // 1. "xxx说" / 「xxx」xxx 道
+  const novelPatterns = [
     /["「『"]([^"」』"]{1,8}?)["」』"]\s*[说道笑道喊道问]/g,
     /^(\S{1,8})[说道笑道喊道问]/gm,
   ];
-  for (const re of patterns) {
+  for (const re of novelPatterns) {
     let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const name = m[1]?.trim();
@@ -169,11 +188,30 @@ function detectCharacters(text: string): string[] {
       }
     }
   }
+
+  // 2. 剧本格式：角色名：/ 角色名: / 角色名（动作）：
+  const scriptPatterns = [
+    /^([一-龥A-Za-z0-9_]{1,8})(?:（[^）]+）|\([^)]+\))?[:：]/gm,
+    /【([一-龥A-Za-z0-9_]{1,8})】/g,
+  ];
+  for (const re of scriptPatterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const name = m[1]?.trim();
+      if (name && name.length <= 8 && !/[\s，。！？]/.test(name) && !['场景', '镜头', '旁白', '画面', '音乐', '音效', '时间', '地点'].includes(name)) {
+        speakers.add(name);
+      }
+    }
+  }
+
   return [...speakers].slice(0, 6);
 }
 
 function detectLocation(text: string): string | undefined {
-  // "在 xxx" / "xxx 内" / "xxx 之外"
+  // "在 xxx" / "xxx 内" / "xxx 之外" / "地点：xxx"
+  const locMatch = text.match(/(?:地点|场景)[:：]\s*([一-龥A-Za-z0-9_]{2,12})/);
+  if (locMatch) return locMatch[1];
+
   const m = text.match(/(?:在|回到|进入|离开|来到)([一-龥A-Za-z]{2,8}?)(?:的|里|内|中|前|后|之外|之上|之下)?(?:[，。！？\s])/);
   return m?.[1];
 }

@@ -19,7 +19,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
-import type { CharacterAnchor, SceneSpec, VideoStage, StoryboardShot } from '@/types/video';
+import type { CharacterAnchor, SceneSpec, VideoStage, StoryboardShot, GeneratedClip } from '@/types/video';
 import type { VideoMetadata } from '@/types';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import StageArtifactsModal, { renderStageContent } from './StageArtifactsModal';
@@ -51,15 +51,18 @@ const ShotRow: React.FC<{
   pid: string;
   shot: StoryboardShot;
   specShot?: SceneSpec['shots'][number];
+  clip?: GeneratedClip;
   seriesCharacters?: CharacterAnchor[];
   status: 'pending' | 'running' | 'done' | 'error';
-}> = ({ pid, shot, specShot, seriesCharacters, status }) => {
+}> = ({ pid, shot, specShot, clip, seriesCharacters, status }) => {
   const { t } = useTranslation();
   const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
   const [editing, setEditing] = useState(false);
   const [promptText, setPromptText] = useState(shot.videoPrompt || shot.sourceText);
   const [rerunning, setRerunning] = useState(false);
   const [rerunningKeyframe, setRerunningKeyframe] = useState(false);
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
+
   const costumeChoices = useMemo(() => (specShot?.characterIds ?? []).flatMap((characterId) => {
     const character = seriesCharacters?.find((item) => item.id === characterId);
     return character?.costumeVariants?.length ? [{ character, characterId }] : [];
@@ -77,7 +80,7 @@ const ShotRow: React.FC<{
       const { rerunSingleShot } = await import('@/services/video/core/pipeline-runner');
       const res = await rerunSingleShot(pid, shot.id);
       if (res) {
-        message.success(t('video.pipeline.rerunDone'));
+        message.success('本镜动态视频已重生成并自动合成！');
       } else {
         message.error(t('video.pipeline.rerunFailed'));
       }
@@ -129,6 +132,45 @@ const ShotRow: React.FC<{
               preview={{ mask: '🔍' }}
             />
           </div>
+        )}
+
+        {clip?.videoUrl && (
+          <Tooltip title="点击预览此镜生成视频">
+            <Button
+              size="small"
+              type="primary"
+              ghost
+              icon={<PlayCircleOutlined />}
+              onClick={() => setVideoModalOpen(true)}
+              style={{ fontSize: 11, padding: '0 6px', height: 24 }}
+            >
+              片段
+            </Button>
+          </Tooltip>
+        )}
+
+        {videoModalOpen && clip?.videoUrl && (
+          <Modal
+            title={`第 ${shot.index + 1} 镜视频预览 (${clip.durationSeconds || 5}s)`}
+            open={videoModalOpen}
+            onCancel={() => setVideoModalOpen(false)}
+            footer={null}
+            width={640}
+            centered
+            destroyOnClose
+          >
+            <div style={{ textAlign: 'center', background: '#000', borderRadius: 6, overflow: 'hidden' }}>
+              <video
+                src={clip.videoUrl}
+                controls
+                autoPlay
+                style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block', margin: '0 auto' }}
+              />
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+              <strong>提示词：</strong>{shot.videoPrompt || shot.sourceText}
+            </div>
+          </Modal>
         )}
 
         {editing ? (
@@ -197,14 +239,13 @@ const ShotRow: React.FC<{
                 <Button
                   size="small"
                   type="text"
-                  icon={<ReloadOutlined style={{ display: 'none' }} />} // placeholder icon if needed
                   onClick={() => setEditing(true)}
                   style={{ fontSize: 11 }}
                 >
                   ✏️
                 </Button>
               </Tooltip>
-              <Tooltip title="单独重生成此镜关键帧 (保持角色一致性)">
+              <Tooltip title="单独重生成此镜关键帧画面 (保持角色与光影参考)">
                 <Button
                   size="small"
                   type="text"
@@ -216,7 +257,7 @@ const ShotRow: React.FC<{
                   🖼️
                 </Button>
               </Tooltip>
-              <Tooltip title={t('video.pipeline.rerunSingleShot')}>
+              <Tooltip title="单独重生成此镜动态视频 (基于关键帧与提示词)">
                 <Button
                   size="small"
                   type="text"
@@ -225,7 +266,7 @@ const ShotRow: React.FC<{
                   onClick={handleRerun}
                   style={{ fontSize: 11 }}
                 >
-                  🔄
+                  🎬
                 </Button>
               </Tooltip>
               <Popconfirm
@@ -442,6 +483,75 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
       setReviewingStory(false);
     }
   };
+
+  const handleAddCharacterToSeries = (charName: string) => {
+    if (!seriesProject) return;
+    const metadata = (seriesProject.metadata || {}) as VideoMetadata;
+    const currentChars = metadata.seriesCharacters || [];
+    if (currentChars.some((c) => c.name === charName || c.aliases?.includes(charName))) {
+      message.info(`角色 "${charName}" 已存在于系列资产库`);
+      return;
+    }
+    const newChar: CharacterAnchor = {
+      id: `char_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: charName,
+      aliases: [charName],
+      appearance: `从剧集分镜提取的角色: ${charName}`,
+      firstAppearShotIndex: 0,
+    };
+    const updatedChars = [...currentChars, newChar];
+    useProjectStore.getState().updateProjectMetadata(seriesProject.id, {
+      seriesCharacters: updatedChars,
+    });
+    if (pipelineId && sceneSpec) {
+      const updatedUnmatched = (sceneSpec.meta?.unmatchedCharacterNames || []).filter((n) => n !== charName);
+      const updatedMatched = [...(sceneSpec.meta?.matchedCharacterNames || []), charName];
+      useVideoStore.getState().setSceneSpec(pipelineId, {
+        ...sceneSpec,
+        meta: {
+          ...sceneSpec.meta,
+          unmatchedCharacterNames: updatedUnmatched,
+          matchedCharacterNames: updatedMatched,
+        },
+      });
+    }
+    message.success(`已成功将角色 "${charName}" 录入系列资产库！`);
+  };
+
+  const handleAddSceneToSeries = (sceneName: string) => {
+    if (!seriesProject) return;
+    const metadata = (seriesProject.metadata || {}) as VideoMetadata;
+    const currentScenes = metadata.seriesScenes || [];
+    if (currentScenes.some((s) => s.name === sceneName || s.aliases?.includes(sceneName))) {
+      message.info(`场景 "${sceneName}" 已存在于系列资产库`);
+      return;
+    }
+    const newScene = {
+      id: `scene_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: sceneName,
+      aliases: [sceneName],
+      description: `从剧集分镜提取的场景: ${sceneName}`,
+      firstAppearShotIndex: 0,
+    };
+    const updatedScenes = [...currentScenes, newScene];
+    useProjectStore.getState().updateProjectMetadata(seriesProject.id, {
+      seriesScenes: updatedScenes,
+    });
+    if (pipelineId && sceneSpec) {
+      const updatedUnmatched = (sceneSpec.meta?.unmatchedSceneNames || []).filter((n) => n !== sceneName);
+      const updatedMatched = [...(sceneSpec.meta?.matchedSceneNames || []), sceneName];
+      useVideoStore.getState().setSceneSpec(pipelineId, {
+        ...sceneSpec,
+        meta: {
+          ...sceneSpec.meta,
+          unmatchedSceneNames: updatedUnmatched,
+          matchedSceneNames: updatedMatched,
+        },
+      });
+    }
+    message.success(`已成功将场景 "${sceneName}" 录入系列场景库！`);
+  };
+
   // 用户点 Steps 上某个步骤时,切换产物视图到该步骤。
   // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
@@ -836,6 +946,56 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               );
             })()}
 
+            {/* 系列资产匹配与快速收录提示 */}
+            {seriesProject && (sceneSpec?.meta?.unmatchedCharacterNames?.length || sceneSpec?.meta?.unmatchedSceneNames?.length) ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message="系列资产库匹配与收录提示"
+                description={
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {sceneSpec?.meta?.unmatchedCharacterNames && sceneSpec.meta.unmatchedCharacterNames.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={{ fontSize: 12 }}>发现本集新增/未匹配角色：</Text>
+                        {sceneSpec.meta.unmatchedCharacterNames.map((name) => (
+                          <Tag key={name} color="orange" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            👤 {name}
+                            <Button
+                              type="link"
+                              size="small"
+                              style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                              onClick={() => handleAddCharacterToSeries(name)}
+                            >
+                              ➕ 加入系列库
+                            </Button>
+                          </Tag>
+                        ))}
+                      </div>
+                    )}
+                    {sceneSpec?.meta?.unmatchedSceneNames && sceneSpec.meta.unmatchedSceneNames.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={{ fontSize: 12 }}>发现本集新增/未匹配场景：</Text>
+                        {sceneSpec.meta.unmatchedSceneNames.map((name) => (
+                          <Tag key={name} color="cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            🏛️ {name}
+                            <Button
+                              type="link"
+                              size="small"
+                              style={{ padding: 0, height: 'auto', fontSize: 11 }}
+                              onClick={() => handleAddSceneToSeries(name)}
+                            >
+                              ➕ 加入系列库
+                            </Button>
+                          </Tag>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                }
+              />
+            ) : null}
+
             {awaitingKeyframeReview && (
               <Alert
                 type={continuityReview.ready ? 'success' : 'warning'}
@@ -988,6 +1148,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                     pid={pipelineId}
                     shot={shot}
                     specShot={sceneSpec?.shots.find((item) => item.id === shot.id)}
+                    clip={clips.find((c) => c.shotId === shot.id)}
                     seriesCharacters={(seriesProject?.metadata as VideoMetadata | undefined)?.seriesCharacters}
                     status={getShotStatus(clips, currentStage, shot)}
                   />

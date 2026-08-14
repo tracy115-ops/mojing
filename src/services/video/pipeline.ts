@@ -305,10 +305,12 @@ export class VideoPipeline {
 
     pushStageContext({ novelProjectId: this.input.novelProjectId, stage });
     try {
+      const isScript = this.input.genre === 'script' || this.input.genre === 'custom_script';
       const rawShots: RawShot[] = sliceChapters(
         chapters.map((c) => ({ id: c.id, number: c.order + 1, content: c.content })),
         {
-          targetWordsPerShot: spec.shotDurationSeconds === 10 ? 1200 : 600,
+          isScript,
+          targetWordsPerShot: isScript ? 100 : (spec.shotDurationSeconds === 10 ? 1200 : 600),
         },
       );
 

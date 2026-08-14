@@ -555,45 +555,31 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
 
   const stage: VideoStage = 'video_generation';
   store.setStageStatus(pid, stage, 'running');
-  const { providerRouter } = await import('@/services/providers');
+  const { generateSingleVideoClip } = await import('./step-video-gen');
   const { pushStageContext, popStageContext } = await import('@/services/providers/invocation-context');
 
   pushStageContext({ novelProjectId: pid, stage });
 
   try {
-    const is916 = proj.spec.aspectRatio === '9:16';
-    const is11 = proj.spec.aspectRatio === '1:1';
-    const w = is916 ? 1080 : is11 ? 1080 : 1920;
-    const h = is916 ? 1920 : is11 ? 1080 : 1080;
-
-    const response = await providerRouter.generateVideo({
-      taskType: 'clip',
-      prompt: shot.videoPrompt || shot.sourceText || 'Cinematic video shot',
-      referenceImages: shot.keyframeImage ? [shot.keyframeImage] : undefined,
-      width: w,
-      height: h,
-      durationSeconds: (shot.durationSeconds as 5 | 10) || 5,
-      fps: proj.spec.fps || 24,
-    });
-
-    const clip: GeneratedClip = {
-      shotId: shot.id,
-      videoUrl: response.videoData,
-      durationSeconds: (shot.durationSeconds as 5 | 10) || 5,
-      provider: response.provider,
-      model: response.model,
-      hasAudio: false,
-      generatedAt: new Date().toISOString(),
-      sceneSource: 'direct',
-      directProjectId: pid,
+    const videoGenOpts: VideoGenOptions = {
+      spec: {
+        resolution: proj.spec.resolution,
+        fps: proj.spec.fps,
+        videoTier: proj.spec.videoTier,
+      },
+      sceneSource: 'novel',
+      sourceMode: 'multishot',
+      novelProjectId: pid,
+      characters: proj.sceneSpec.characters,
     };
+
+    const clip = await generateSingleVideoClip(shot, videoGenOpts, true);
 
     store.addClip(pid, clip);
     store.setStageStatus(pid, stage, 'completed');
-    void logger.info(`[pipeline] rerunSingleShot SUCCESS shotId=${shotId} provider=${response.provider}`, 'pipeline');
+    void logger.info(`[pipeline] rerunSingleShot SUCCESS shotId=${shotId} provider=${clip.provider}`, 'pipeline');
 
     // 体验极速更新：单镜重跑成功后，自动在后台更新音视对齐与成片合成！
-    // 这样用户重新生成某个镜头后，主预览视频会自动刷新为最新成片！
     try {
       const { executeAudioMerge, executeCompose } = await import('./stage-handlers');
       const updatedProj = useVideoStore.getState().getProject(pid);
@@ -631,3 +617,5 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
     popStageContext();
   }
 }
+
+export const rerunSingleVideoGen = rerunSingleShot;

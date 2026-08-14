@@ -82,12 +82,16 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
   const workDir = await getWorkDir(opts.novelProjectId);
   const localPaths: string[] = [];
   const subtitles: (string | null)[] = [];
+  const invalidReasons: string[] = [];
+
   for (let i = 0; i < opts.clips.length; i++) {
     const clip = opts.clips[i];
 
     // 校验 clip 是否为真正可播放的视频路径（过滤掉旧数据中的 video_xxx ID 字符串）
     if (!isValidVideoClip(clip)) {
-      console.warn(`step-compose: skip clip ${clip.shotId} — invalid videoUrl: ${clip.videoUrl}`);
+      const reason = `镜头 #${i + 1} (${clip.shotId}): 视频地址无效或非本地文件/可播放 URL (${clip.videoUrl?.slice(0, 30)}...)`;
+      console.warn(`step-compose: ${reason}`);
+      invalidReasons.push(reason);
       continue;
     }
 
@@ -107,7 +111,9 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
 
     // Rust 端校验文件存在 + 非空(避免 ffmpeg 拿到 0 字节文件报 "No streams found")
     if (!(await isFileValid(resolvedPath))) {
-      console.warn(`step-compose: skip clip ${clip.shotId} — file invalid or empty: ${resolvedPath}`);
+      const reason = `镜头 #${i + 1} (${clip.shotId}): 媒体文件为空或不可读 (${resolvedPath})`;
+      console.warn(`step-compose: ${reason}`);
+      invalidReasons.push(reason);
       continue;
     }
     localPaths.push(resolvedPath);
@@ -116,8 +122,9 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
   }
 
   if (localPaths.length === 0) {
+    const reasonsSummary = invalidReasons.slice(0, 3).join('；');
     throw new Error(
-      '合成失败:没有任何有效的 clip 文件。上游 video_generation 可能全部失败 — 请检查视频 provider 配置和额度。',
+      `合成失败: 没有可用的有效视频片段 (共 ${opts.clips.length} 个镜头，有效 0 个)。原因: ${reasonsSummary || '上游视频生成未完成或媒体文件损坏'}。请检查视频服务商设置，或在下方分镜列表点击 🎬 单镜重试。`,
     );
   }
 

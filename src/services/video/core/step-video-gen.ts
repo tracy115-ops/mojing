@@ -112,6 +112,17 @@ export async function runVideoGen(
   return { clips, failedShotIds };
 }
 
+/**
+ * 单镜头生成视频片段（供单镜头重生成与精修使用）
+ */
+export async function generateSingleVideoClip(
+  shot: ShotSpec,
+  options: VideoGenOptions,
+  enableI2V = true,
+): Promise<GeneratedClip> {
+  return generateOne(shot, options, enableI2V);
+}
+
 async function generateOne(
   shot: ShotSpec,
   options: VideoGenOptions,
