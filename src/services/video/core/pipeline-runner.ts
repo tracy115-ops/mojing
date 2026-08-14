@@ -483,6 +483,59 @@ function getPreviousEpisodeKeyframe(projectId: string): string | undefined {
 }
 
 /**
+ * 单镜头关键帧独立重新生成：让用户在审核或修改分镜提示词后单独刷新某镜关键帧。
+ */
+export async function rerunSingleKeyframe(pid: string, shotId: string): Promise<string | null> {
+  void logger.info(`[pipeline] rerunSingleKeyframe pid=${pid} shotId=${shotId}`, 'pipeline');
+  const store = useVideoStore.getState();
+  const proj = store.getProject(pid);
+  if (!proj || !proj.sceneSpec) {
+    void logger.warn(`[pipeline] rerunSingleKeyframe fail: project not found pid=${pid}`, 'pipeline');
+    return null;
+  }
+
+  const shotIndex = proj.sceneSpec.shots.findIndex((s) => s.id === shotId);
+  if (shotIndex === -1) {
+    void logger.warn(`[pipeline] rerunSingleKeyframe fail: shot not found id=${shotId}`, 'pipeline');
+    return null;
+  }
+  const shot = proj.sceneSpec.shots[shotIndex];
+
+  const stage: VideoStage = 'keyframe_image';
+  store.setStageStatus(pid, stage, 'running');
+  const { pushStageContext, popStageContext } = await import('@/services/providers/invocation-context');
+  pushStageContext({ novelProjectId: pid, stage });
+
+  try {
+    const { generateSingleKeyframe } = await import('./step-keyframe');
+    const imagePath = await generateSingleKeyframe(shot, shotIndex, proj.sceneSpec.shots, {
+      characters: proj.sceneSpec.characters ?? [],
+      scenes: proj.sceneSpec.scenes ?? [],
+      aspectRatio: proj.spec.aspectRatio,
+      style: proj.sceneSpec.meta.style,
+      imageTier: proj.spec.imageTier,
+      novelProjectId: pid,
+      openingReferenceImage: proj.sceneSpec.meta.openingReferenceImage ?? getPreviousEpisodeKeyframe(pid),
+    });
+
+    const updatedShots = proj.sceneSpec.shots.map((s, idx) =>
+      idx === shotIndex ? { ...s, keyframeImage: imagePath } : s,
+    );
+    store.setSceneSpec(pid, { ...proj.sceneSpec, shots: updatedShots });
+    store.setStageStatus(pid, stage, 'completed');
+    void logger.info(`[pipeline] rerunSingleKeyframe SUCCESS shotId=${shotId}`, 'pipeline');
+    return imagePath;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    void logger.error(`[pipeline] rerunSingleKeyframe FAIL shotId=${shotId}: ${msg}`, 'pipeline');
+    store.setStageStatus(pid, stage, 'error', { error: msg });
+    return null;
+  } finally {
+    popStageContext();
+  }
+}
+
+/**
  * 单镜头独立重试/重新生成：仅针对单个 Shot 重新跑 T2V / I2V 生成 Clip。
  */
 export async function rerunSingleShot(pid: string, shotId: string): Promise<GeneratedClip | null> {

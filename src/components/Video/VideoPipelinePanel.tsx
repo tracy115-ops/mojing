@@ -9,7 +9,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Typography, Tag, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu,
-  Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal,
+  Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal, Image,
 } from 'antd';
 import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
@@ -59,6 +59,7 @@ const ShotRow: React.FC<{
   const [editing, setEditing] = useState(false);
   const [promptText, setPromptText] = useState(shot.videoPrompt || shot.sourceText);
   const [rerunning, setRerunning] = useState(false);
+  const [rerunningKeyframe, setRerunningKeyframe] = useState(false);
   const costumeChoices = useMemo(() => (specShot?.characterIds ?? []).flatMap((characterId) => {
     const character = seriesCharacters?.find((item) => item.id === characterId);
     return character?.costumeVariants?.length ? [{ character, characterId }] : [];
@@ -87,6 +88,23 @@ const ShotRow: React.FC<{
     }
   };
 
+  const handleRerunKeyframe = async () => {
+    setRerunningKeyframe(true);
+    try {
+      const { rerunSingleKeyframe } = await import('@/services/video/core/pipeline-runner');
+      const res = await rerunSingleKeyframe(pid, shot.id);
+      if (res) {
+        message.success('关键帧已重新生成！');
+      } else {
+        message.error('关键帧重新生成失败');
+      }
+    } catch (err) {
+      message.error(String(err));
+    } finally {
+      setRerunningKeyframe(false);
+    }
+  };
+
   const handleCostumeChange = (characterId: string, variantId?: string) => {
     const refs = { ...specShot?.costumeVariantRefs };
     if (variantId) refs[characterId] = variantId;
@@ -100,6 +118,18 @@ const ShotRow: React.FC<{
         <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : status === 'error' ? 'error' : 'default'}>
           {t('video.gen.shot')} {shot.index + 1}
         </Tag>
+
+        {specShot?.keyframeImage && (
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+            <Image
+              src={specShot.keyframeImage}
+              width={38}
+              height={38}
+              style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border-secondary)' }}
+              preview={{ mask: '🔍' }}
+            />
+          </div>
+        )}
 
         {editing ? (
           <div style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -139,9 +169,29 @@ const ShotRow: React.FC<{
           </div>
         ) : (
           <>
-            <Text style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
-              {shot.videoPrompt || shot.sourceText.slice(0, 100)}
-            </Text>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
+                {shot.videoPrompt || shot.sourceText.slice(0, 100)}
+              </Text>
+              {(specShot?.characterIds?.length || specShot?.sceneId || shot.location) ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, alignItems: 'center' }}>
+                  {specShot?.characterIds?.map((charId) => {
+                    const char = seriesCharacters?.find((c) => c.id === charId);
+                    const isSeries = !!char;
+                    return (
+                      <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
+                        👤 {char?.name || charId} {isSeries ? '(系列)' : ''}
+                      </Tag>
+                    );
+                  })}
+                  {(specShot?.sceneId || shot.location) && (
+                    <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
+                      🏛️ {shot.location || specShot?.sceneId}
+                    </Tag>
+                  )}
+                </div>
+              ) : null}
+            </div>
             <Space size={4}>
               <Tooltip title={t('video.direct.editPrompt')}>
                 <Button
@@ -152,6 +202,18 @@ const ShotRow: React.FC<{
                   style={{ fontSize: 11 }}
                 >
                   ✏️
+                </Button>
+              </Tooltip>
+              <Tooltip title="单独重生成此镜关键帧 (保持角色一致性)">
+                <Button
+                  size="small"
+                  type="text"
+                  loading={rerunningKeyframe}
+                  disabled={rerunningKeyframe}
+                  onClick={handleRerunKeyframe}
+                  style={{ fontSize: 11 }}
+                >
+                  🖼️
                 </Button>
               </Tooltip>
               <Tooltip title={t('video.pipeline.rerunSingleShot')}>

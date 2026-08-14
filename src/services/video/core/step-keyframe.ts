@@ -157,6 +157,86 @@ export async function runKeyframe(
   return { shots: result, failedShotIds };
 }
 
+export async function generateSingleKeyframe(
+  shot: ShotSpec,
+  shotIndex: number,
+  allShots: ShotSpec[],
+  ctx: {
+    characters: CharacterAnchor[];
+    scenes: SceneAnchor[];
+    aspectRatio: AspectRatio;
+    style?: string;
+    imageTier: ModelTier;
+    novelProjectId: string;
+    openingReferenceImage?: string;
+  },
+): Promise<string> {
+  const dims = aspectRatioToDims(ctx.aspectRatio);
+  const charById = new Map(ctx.characters.map((c) => [c.id, c]));
+  const sceneById = new Map(ctx.scenes.map((s) => [s.id, s]));
+
+  const charRefs: CollectedRef[] = [];
+  const sceneRefs: CollectedRef[] = [];
+
+  for (const charId of shot.characterIds) {
+    const c = charById.get(charId);
+    if (!c) continue;
+    const variantId = shot.costumeVariantRefs?.[charId];
+    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+    if (variant) {
+      if (variant.portraitImage) {
+        charRefs.push({ url: variant.portraitImage });
+      }
+    } else if (c.portraitImage) {
+      charRefs.push({ url: c.portraitImage });
+    }
+  }
+
+  if (shot.sceneId) {
+    const sc = sceneById.get(shot.sceneId);
+    if (sc?.backgroundImage) sceneRefs.push({ url: sc.backgroundImage });
+  }
+
+  const prevKeyframeRef: CollectedRef[] = (shotIndex > 0 && allShots[shotIndex - 1]?.keyframeImage)
+    ? [{ url: allShots[shotIndex - 1].keyframeImage! }]
+    : [];
+
+  const episodeOpeningRef: CollectedRef[] = shotIndex === 0 && ctx.openingReferenceImage
+    ? [{ url: ctx.openingReferenceImage }]
+    : [];
+  const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
+
+  const referenceImages: string[] = [];
+  for (const ref of rawReferences) {
+    const dataUri = await readAsDataUri(ref.url);
+    if (ref.cropMiddleThird) {
+      const cropped = await cropMiddleThird(dataUri).catch((err) => {
+        console.warn('keyframe: cropMiddleThird failed, fallback to full image', err);
+        return dataUri;
+      });
+      referenceImages.push(cropped);
+    } else {
+      referenceImages.push(dataUri);
+    }
+  }
+
+  const img = await providerRouter.generateImage({
+    taskType: 'storyboard',
+    prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style),
+    referenceImages,
+    width: dims.w,
+    height: dims.h,
+    style: ctx.style,
+  });
+
+  return await saveAsset(
+    ctx.novelProjectId,
+    'keyframe',
+    img.imageData,
+    `keyframe_shot_${shotIndex + 1}`,
+  );
+}
+
 function buildKeyframePrompt(
   shot: ShotSpec,
   characters: CharacterAnchor[],
