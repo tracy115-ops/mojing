@@ -11,6 +11,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 export interface StoryboardContext {
   aspectRatio: AspectRatio;
   defaultShotDuration: 3 | 5 | 10 | 15 | 18;
+  targetDurationSeconds?: 5 | 15 | 30 | 60 | number;
   style?: string;
 }
 
@@ -80,20 +81,25 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
     ? useSettingsStore.getState().settings.creative.promptTemplates?.storyboardZh
     : useSettingsStore.getState().settings.creative.promptTemplates?.storyboardEn;
 
+  const targetDuration = ctx.targetDurationSeconds || 30;
+  const targetShotCount = Math.max(1, Math.round(targetDuration / ctx.defaultShotDuration));
+
   if (customPrompt && customPrompt.trim()) {
-    return `${customPrompt}\n\n【画面比例】${ctx.aspectRatio}\n【默认时长】${ctx.defaultShotDuration}秒\n【风格】${ctx.style || ''}`;
+    return `${customPrompt}\n\n【目标成片总时长】${targetDuration}秒\n【目标镜头数量】${targetShotCount}个\n【画面比例】${ctx.aspectRatio}\n【默认单镜时长】${ctx.defaultShotDuration}秒\n【风格】${ctx.style || ''}`;
   }
 
   if (isChinese) {
-    return `你是 AI 视频分镜师。把用户的多镜头脚本切成结构化的纯中文镜头数组。
+    return `你是专业 AI 视频导演与分镜师。将用户的文字切分成 ${targetShotCount} 个连续有逻辑演进的镜头（目标成片总时长为 ${targetDuration} 秒，每个镜头约 ${ctx.defaultShotDuration} 秒）。
 
-【输出规范】严格 JSON 数组,每个镜头字段:
+【分镜数量指示】必须严格切分为 ${targetShotCount} 个不同的镜头！将故事从开端、动作演进、细节特写、环境烘托到高潮切分为 ${targetShotCount} 个连续镜头！
+
+【输出规范】严格 JSON 数组，包含 ${targetShotCount} 个对象，每个镜头字段:
 - "videoPrompt": 纯中文 prompt,60-150 字。必须使用纯中文！严禁使用英文！必须包含：场景环境/角色具体外貌与服饰/具体动作与肢体变化/镜头视角与运动/光影与氛围
 - "narration": 中文旁白,30-80 字,用于 TTS
 - "location": 中文场景名
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
-- "durationSeconds": ${ctx.defaultShotDuration} 或 10
+- "durationSeconds": ${ctx.defaultShotDuration}
 - "characterIds": 字符串数组,占位 ['char_0', 'char_1'] 等(后续会回填真实 id)
 - "sceneId": 占位 'scene_0' 等
 
@@ -101,9 +107,10 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
 【风格】${ctx.style ?? '电影级'}
 
 【质量要求】
+- 必须包含 ${targetShotCount} 个镜头！
 - videoPrompt 必须是纯中文的视觉化具体描写，禁止英文单词，禁止抽象词
 - 每镜头是单镜头推拉摇移，无多视角切换
-- 【全局视觉艺术风格继承】如果用户原始 prompt 中指定了全局视觉风格（例如：80-90年代邵氏武侠电影、35mm复古胶片颗粒、暖色调、戴墨镜与僧袍的胖橘猫等）：你必须在生成的每一个分镜的 "videoPrompt" 中，用纯中文显式注入并继承这些全局风格与角色外貌关键词！`;
+- 【全局视觉艺术风格继承】如果用户原始 prompt 中指定了全局视觉风格：你必须在生成的每一个分镜的 "videoPrompt" 中，用纯中文显式注入并继承这些全局风格与角色外貌关键词！`;
   }
 
   return `You are an AI video storyboard director. Slice the user's multi-shot script into a structured array of English shots.

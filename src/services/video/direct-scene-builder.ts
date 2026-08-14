@@ -75,6 +75,7 @@ export async function buildSceneFromPrompt(
   const storyboard = await stepStoryboard(prompt, {
     aspectRatio: ctx.aspectRatio,
     defaultShotDuration: ctx.defaultShotDuration,
+    targetDurationSeconds: ctx.targetDurationSeconds,
     style: ctx.style,
   });
 
