@@ -465,17 +465,17 @@ function toPlaceholderShot(raw: RawShot): StoryboardShot {
 
 /**
  * 从 VideoSpec 的 enable* 字段构造 PipelineOptions。
- * 默认全开角色锚定 + 关键帧 + I2V,场景图和 TTS 默认关(成本敏感)。
+ * 默认开启全部 11 步完整流水线(包含角色锚定、场景空景图、TTS 配音与音视拼接)。
  */
 function specToOptions(spec: VideoSpec): PipelineOptions {
   return {
     enableCharacterAnchor: spec.enableCharacterAnchor ?? true,
-    enableSceneImage: spec.enableSceneImage ?? false,
-    enableTTS: spec.enableTTS ?? false,
+    enableSceneImage: spec.enableSceneImage ?? true,
+    enableTTS: spec.enableTTS ?? true,
     enableKeyframe: true,
     enableI2V: true,
-    enableAudioMerge: spec.enableTTS ?? false,
-    enableSubtitles: spec.hardcodeSubtitles,
+    enableAudioMerge: spec.enableTTS ?? true,
+    enableSubtitles: spec.hardcodeSubtitles ?? true,
     characterAnchorLimit: 5,
   };
 }
