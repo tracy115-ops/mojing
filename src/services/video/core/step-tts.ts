@@ -46,21 +46,35 @@ export async function runTTS(
     attempted++;
 
     // 选音色:
-    // 1. 优先根据台词开头的角色名（如 "猫大师:"、"小美:"、"猫大师："）精准比对角色
+    // 1. 如果 shot 有结构化的 dialogue 字段且标明了 speaker
     let speaker: CharacterAnchor | undefined;
-    for (const c of characters) {
-      if (
-        text.startsWith(`${c.name}:`) ||
-        text.startsWith(`${c.name}：`) ||
-        text.startsWith(`${c.name}：`) ||
-        text.startsWith(c.name)
-      ) {
-        speaker = c;
-        break;
+    const directSpeakerName = shot.dialogue?.find((d) => d.speaker)?.speaker;
+    if (directSpeakerName) {
+      speaker = characters.find(
+        (c) => c.name === directSpeakerName || c.aliases?.includes(directSpeakerName),
+      );
+    }
+
+    // 2. 优先根据台词开头的角色名（如 "女生："、"胖橘猫："、"大师:"）精准比对角色或别名
+    if (!speaker) {
+      for (const c of characters) {
+        const namesToCheck = [c.name, ...(c.aliases || [])].filter(Boolean);
+        const matched = namesToCheck.some(
+          (name) =>
+            text.startsWith(`${name}:`) ||
+            text.startsWith(`${name}：`) ||
+            text.startsWith(`【${name}】`) ||
+            new RegExp(`^${name}(?:（[^）]+）|\\([^)]+\\))?[:：]`).test(text) ||
+            text.startsWith(name),
+        );
+        if (matched) {
+          speaker = c;
+          break;
+        }
       }
     }
 
-    // 2. 若台词没有包含角色名，则在在场角色列表中寻找匹配音色的角色
+    // 3. 若台词没有包含角色名，则在在场角色列表中寻找匹配音色的角色
     if (!speaker) {
       speaker = shot.characterIds
         .map((cid) => charById.get(cid))
@@ -115,9 +129,10 @@ function cleanNarrationForTTS(raw: string): string {
   if (!raw) return '';
   return raw
     .replace(/\[.*?\]/g, '') // 去除 [动作/神态] 提示
+    .replace(/【.*?】/g, '')
     .replace(/（.*?）/g, '') // 去除 (括号) 提示
     .replace(/\(.*?\)/g, '')
-    .replace(/^.*?:/g, '')  // 去除 "角色名:" 前缀
-    .replace(/^.*?:/g, '')
+    .replace(/^.*?[：:]\s*/g, '')  // 去除 "角色名:" 或 "角色名：" 前缀
+    .replace(/[“”"「」]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
     .trim();
 }

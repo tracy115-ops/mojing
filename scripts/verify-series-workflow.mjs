@@ -151,6 +151,78 @@ const updatedClips = mockClips.map(c => c.shotId === 'shot_2' ? regeneratedClip 
 const revalidation = validateClipsForCompose(updatedClips);
 assert(revalidation.valid.length === 3, '单镜重生成后，所有分镜 Clip 恢复 100% 有效并可立即合成');
 
+// -----------------------------------------------------------------------------
+// 5. 验证配音音色精准分配与文本清洗 (TTS Speaker & Clean)
+// -----------------------------------------------------------------------------
+console.log('\n--- 5. 验证配音音色匹配 (甜美少女音 vs 胖橘猫老僧音) 与台词清洗 ---');
+
+function cleanNarrationForTTS(raw) {
+  if (!raw) return '';
+  return raw
+    .replace(/\[.*?\]/g, '') // 去除 [动作/神态] 提示
+    .replace(/【.*?】/g, '')
+    .replace(/（.*?）/g, '') // 去除 (括号) 提示
+    .replace(/\(.*?\)/g, '')
+    .replace(/^.*?[：:]\s*/g, '')  // 去除 "角色名:" 或 "角色名：" 前缀
+    .replace(/[“”"「」]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
+    .trim();
+}
+
+const cleaned1 = cleanNarrationForTTS('女生：“大师，我有一事相求！”');
+assert(cleaned1 === '大师，我有一事相求！', '中文全角冒号与双引号已干净剥离', `实际: ${cleaned1}`);
+
+const cleaned2 = cleanNarrationForTTS('胖橘猫（傲娇）：“我的意思是，你接着编！”');
+assert(cleaned2 === '我的意思是，你接着编！', '带神态括号的角色对白已干净剥离', `实际: ${cleaned2}`);
+
+// 角色音色分配逻辑
+const testCharacters = [
+  {
+    id: 'char_girl_jk',
+    name: '甜美年轻女生',
+    aliases: ['女生', '长发女生', '小师妹'],
+    gender: 'female',
+    ageGroup: 'young',
+    appearance: '甜美年轻女生，黑长直长发，五官清秀，深色眼线，桃粉色唇膏，精致的编发，点缀粉色丝带与花朵发饰。身穿jk服装，现代服饰。',
+    voiceRef: 'zh-CN-XiaoxiaoNeural',
+  },
+  {
+    id: 'char_cat_master',
+    name: '胖橘猫',
+    aliases: ['胖橘猫大师', '猫大师', '猫咪', '大师'],
+    gender: 'male',
+    ageGroup: 'middle',
+    appearance: '胖橘猫，佩戴黑色圆墨镜，身穿黄色古风僧袍，脸型体态全程不变，神态慵懒又狡黠。',
+    voiceRef: 'zh-CN-YunyangNeural',
+  },
+];
+
+function resolveSpeakerVoice(text, characters) {
+  for (const c of characters) {
+    const namesToCheck = [c.name, ...(c.aliases || [])].filter(Boolean);
+    const matched = namesToCheck.some(
+      (name) =>
+        text.startsWith(`${name}:`) ||
+        text.startsWith(`${name}：`) ||
+        text.startsWith(`【${name}】`) ||
+        new RegExp(`^${name}(?:（[^）]+）|\\([^)]+\\))?[:：]`).test(text) ||
+        text.startsWith(name),
+    );
+    if (matched) {
+      return c.voiceRef;
+    }
+  }
+  return undefined;
+}
+
+const voiceGirl = resolveSpeakerVoice('女生：“大师，我有一事相求！”', testCharacters);
+assert(voiceGirl === 'zh-CN-XiaoxiaoNeural', '女生台词准确识别并分配甜美少女音色 (zh-CN-XiaoxiaoNeural)');
+
+const voiceCat = resolveSpeakerVoice('胖橘猫：“竹篮打水一场空。”', testCharacters);
+assert(voiceCat === 'zh-CN-YunyangNeural', '胖橘猫台词准确识别并分配沉稳/老僧男音色 (zh-CN-YunyangNeural)');
+
+const voiceMasterAlias = resolveSpeakerVoice('大师：“我的意思是，你接着编！”', testCharacters);
+assert(voiceMasterAlias === 'zh-CN-YunyangNeural', '别名 "大师" 台词准确识别并分配胖橘猫音色');
+
 console.log('\n================================================================');
 console.log(`🎉 验证完成: ${passCount} 项测试通过，${failCount} 项失败。`);
 console.log('================================================================');

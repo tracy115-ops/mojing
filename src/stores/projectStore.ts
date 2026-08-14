@@ -60,6 +60,9 @@ interface ProjectState {
   addComicCharacter: (projectId: string, character: Omit<import('@/types').ComicCharacter, 'id'>) => void;
   deleteComicCharacter: (projectId: string, characterId: string) => void;
   updateComicCharacter: (projectId: string, characterId: string, updates: Partial<import('@/types').ComicCharacter>) => void;
+
+  // Video Series Seeder
+  seedShawBrothersMartialCatProject: () => { series: CreativeProject; episode: CreativeProject };
 }
 
 export const useProjectStore = create<ProjectState>()(
@@ -468,8 +471,215 @@ export const useProjectStore = create<ProjectState>()(
         }));
       },
 
-      // --- Video ---
-      // (legacy manual Scenes editor removed — pipeline handles sceneSpec internally)
+      seedShawBrothersMartialCatProject: () => {
+        const existingSeries = get().projects.find(
+          (p) => p.type === 'video' && p.title.includes('猫大师'),
+        );
+        if (existingSeries) {
+          const existingEpisode = get().projects.find(
+            (p) => p.type === 'video' && (p.metadata as VideoMetadata).seriesId === existingSeries.id,
+          );
+          set({ activeProjectId: existingSeries.id });
+          return { series: existingSeries, episode: existingEpisode ?? existingSeries };
+        }
+
+        const now = new Date().toISOString();
+        const seriesId = `series_shaw_brothers_${Date.now()}`;
+        const episodeId = `episode_shaw_cat_${Date.now()}`;
+
+        const seriesProject: CreativeProject = {
+          id: seriesId,
+          type: 'video',
+          title: '《80年代港风武侠·猫大师与小师妹》',
+          description: '视频高度还原80-90年代邵氏电影或早期港产武侠剧的美学视觉，温暖高饱和度怀旧胶片质感。',
+          status: 'in_progress',
+          createdAt: now,
+          updatedAt: now,
+          tags: ['港风武侠', '邵氏美学', '复古胶片', '猫大师'],
+          isFavorite: true,
+          metadata: {
+            duration: 30,
+            resolution: '1920x1080',
+            style: 'vintage',
+            aspectRatio: '16:9',
+            fps: 24,
+            seriesRole: 'series',
+            seriesStyleGuide:
+              '80年代香港武侠电影风格, 邵氏电影美学, 怀旧中式武侠片, 复古电视剧质感。色调: 温暖且高饱和度的调色, 怀旧胶片颗粒感, 轻微的彩色胶片色偏。画面: 35mm胶片拍摄, 复古胶片纹理, 细微的色差(色散), 软焦效果, 灯光闪烁, 高亮表面有强烈的晕光效果。',
+            seriesCharacters: [
+              {
+                id: 'char_girl_jk',
+                name: '甜美年轻女生',
+                aliases: ['女生', '长发女生', '小师妹'],
+                gender: 'female',
+                ageGroup: 'young',
+                appearance:
+                  '甜美年轻女生，黑长直长发，五官清秀，深色眼线，桃粉色唇膏，精致的编发，点缀粉色丝带与花朵发饰。身穿jk服装，现代服饰。',
+                voiceRef: 'zh-CN-XiaoxiaoNeural',
+              },
+              {
+                id: 'char_cat_master',
+                name: '胖橘猫',
+                aliases: ['胖橘猫大师', '猫大师', '猫咪', '大师'],
+                gender: 'male',
+                ageGroup: 'middle',
+                appearance:
+                  '胖橘猫，佩戴黑色圆墨镜，身穿黄色古风僧袍，脸型体态全程不变，神态慵懒又狡黠。',
+                voiceRef: 'zh-CN-YunyangNeural',
+              },
+            ],
+            seriesScenes: [
+              {
+                id: 'scene_courtyard',
+                name: '古风庭院',
+                description:
+                  '古风禅意庭院，石桌石凳，樱花缓缓飘落，温暖高饱和度80年代邵氏武侠胶片色调，阳光晕光。',
+              },
+            ],
+          } as VideoMetadata,
+        };
+
+        const episodeProject: CreativeProject = {
+          id: episodeId,
+          type: 'video',
+          title: '第1集：大师，我有一事相求',
+          description:
+            '古风庭院，长发JK女生双手合十向胖橘猫大师请教姻缘，大师神态慵懒闭眼沉思后傲娇怼人。',
+          status: 'in_progress',
+          createdAt: new Date(Date.now() + 1000).toISOString(),
+          updatedAt: now,
+          tags: ['第1集', '分镜1-6'],
+          isFavorite: false,
+          metadata: {
+            duration: 30,
+            resolution: '1920x1080',
+            style: 'vintage',
+            aspectRatio: '16:9',
+            fps: 24,
+            seriesRole: 'episode',
+            seriesId: seriesId,
+          } as VideoMetadata,
+        };
+
+        set((s) => ({
+          projects: [...s.projects, seriesProject, episodeProject],
+          activeProjectId: seriesId,
+        }));
+
+        // 自动将第 1 集的 6 个分镜与场景规范预置到 videoStore 中
+        try {
+          void import('./videoStore').then(({ useVideoStore }) => {
+            const videoStore = useVideoStore.getState();
+            videoStore.initProject(
+              episodeId,
+              ['shot_1', 'shot_2', 'shot_3', 'shot_4', 'shot_5', 'shot_6'],
+              {
+                aspectRatio: '16:9',
+                resolution: '1920x1080',
+                fps: 24,
+                shotDurationSeconds: 5,
+                videoTier: 'value',
+                imageTier: 'value',
+                ttsTier: 'free',
+                hardcodeSubtitles: true,
+                bgmStyle: 'vintage',
+              },
+              '第1集：大师，我有一事相求',
+            );
+            videoStore.setSceneSpec(episodeId, {
+              characters: (seriesProject.metadata as VideoMetadata).seriesCharacters ?? [],
+              scenes: (seriesProject.metadata as VideoMetadata).seriesScenes ?? [],
+              meta: {
+                title: '第1集：大师，我有一事相求',
+                style: 'vintage',
+                genre: 'script',
+                aspectRatio: '16:9',
+                defaultShotDuration: 5,
+                sourceMode: 'multishot',
+                channel: 'novel',
+              },
+              shots: [
+                {
+                  id: 'shot_1',
+                  index: 0,
+                  videoPrompt:
+                    '80s Shaw Brothers cinematic martial arts film, ancient courtyard, stone table, young sweet girl in JK modern dress hands folded, facing a chubby ginger cat monk master sitting cross-legged holding a tiny whisk, zen atmosphere, warm vintage film grain, soft glow.',
+                  narration: '大师，我有一事相求！',
+                  dialogue: [{ speaker: '甜美年轻女生', text: '大师，我有一事相求！' }],
+                  characterIds: ['char_girl_jk', 'char_cat_master'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'pan_left',
+                  durationSeconds: 5,
+                },
+                {
+                  id: 'shot_2',
+                  index: 1,
+                  videoPrompt:
+                    '80s vintage martial arts TV series, medium shot, young girl leaning forward with hopeful eyes, chubby ginger cat in yellow monk robe and dark round sunglasses calmly stroking whiskers and listening, warm color grading, 35mm film texture.',
+                  narration: '我温柔体贴、善良可爱、长相又不差，为什么就是找不到对象啊？',
+                  dialogue: [{ speaker: '甜美年轻女生', text: '我温柔体贴、善良可爱、长相又不差，为什么就是找不到对象啊？' }],
+                  characterIds: ['char_girl_jk', 'char_cat_master'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'zoom_in',
+                  durationSeconds: 5,
+                },
+                {
+                  id: 'shot_3',
+                  index: 2,
+                  videoPrompt:
+                    '80s Shaw Brothers movie close up, chubby ginger cat face, wearing dark round sunglasses, yellow monk robe, eyes closed in deep thought, tail gently swishing, atmospheric vintage cinematic lighting, chromatic aberration, halation.',
+                  narration: '竹篮打水一场空。',
+                  dialogue: [{ speaker: '胖橘猫', text: '竹篮打水一场空。' }],
+                  characterIds: ['char_cat_master'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'static',
+                  durationSeconds: 5,
+                },
+                {
+                  id: 'shot_4',
+                  index: 3,
+                  videoPrompt:
+                    '80s vintage film medium close up, sweet young girl tilting head and frowning, scratching her head with confused puzzled expression, delicate braided hair with pink ribbons, retro 35mm film grain, soft focus.',
+                  narration: '大师，你是说我缘分未到吗？',
+                  dialogue: [{ speaker: '甜美年轻女生', text: '大师，你是说我缘分未到吗？' }],
+                  characterIds: ['char_girl_jk'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'zoom_in',
+                  durationSeconds: 5,
+                },
+                {
+                  id: 'shot_5',
+                  index: 4,
+                  videoPrompt:
+                    '80s Hong Kong martial arts close up, chubby ginger cat suddenly opens sharp eyes behind round sunglasses, one paw pointing forward at the girl with smug mocking expression, yellow monk robe, dramatic vintage kung fu movie lighting.',
+                  narration: '我的意思是，你接着编！',
+                  dialogue: [{ speaker: '胖橘猫', text: '我的意思是，你接着编！' }],
+                  characterIds: ['char_cat_master'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'zoom_in',
+                  durationSeconds: 5,
+                },
+                {
+                  id: 'shot_6',
+                  index: 5,
+                  videoPrompt:
+                    '80s Shaw Brothers movie wide shot ending, girl pouting with hands on hips acting cute and annoyed, chubby ginger cat happily lying on stone table, cherry blossom petals slowly falling, warm nostalgic vintage film aesthetics.',
+                  narration: '哼！你这臭猫！',
+                  dialogue: [{ speaker: '甜美年轻女生', text: '哼！你这臭猫！' }],
+                  characterIds: ['char_girl_jk', 'char_cat_master'],
+                  sceneId: 'scene_courtyard',
+                  cameraMovement: 'zoom_out',
+                  durationSeconds: 5,
+                },
+              ],
+            });
+          });
+        } catch {
+          // ignore
+        }
+
+        return { series: seriesProject, episode: episodeProject };
+      },
     }),
     {
       name: 'mojing-projects',

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Typography, message, Button, Form, Input, Modal } from 'antd';
-import { VideoCameraOutlined, FolderAddOutlined } from '@ant-design/icons';
+import { VideoCameraOutlined, FolderAddOutlined, FireOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
@@ -267,6 +267,16 @@ const VideoView: React.FC = () => {
             onClick={() => setSeriesOpen(true)}
           >
             {t('video.series.newSeries')}
+          </Button>
+          <Button
+            icon={<FireOutlined style={{ color: '#fa8c16' }} />}
+            onClick={() => {
+              const res = useProjectStore.getState().seedShawBrothersMartialCatProject();
+              handleSelectProject(res.series.id);
+              message.success('已载入《80年代港风武侠·猫大师与小师妹》示范项目与第1集');
+            }}
+          >
+            载入猫大师港风示范
           </Button>
           {activeEpisodeSeries && (
             <Button onClick={() => handleSelectProject(activeEpisodeSeries.id)}>
