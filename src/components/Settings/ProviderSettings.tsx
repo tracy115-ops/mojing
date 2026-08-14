@@ -905,9 +905,11 @@ const ProviderSettings: React.FC = () => {
           <Form.Item name="apiKey" label={t('provider.apiKey')} dependencies={['provider']} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
             <Input.Password placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsNoKey') : t('provider.apiKeyPlaceholder')} />
           </Form.Item>
-          <Form.Item name="modelsStr" label="模型名称 (可选 / 多个用逗号隔开)" tooltip="自定义中转站或服务的模型名，例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1">
-            <Input placeholder="例如: FunAudioLLM/CosyVoice-300M, cosyvoice-v1" />
-          </Form.Item>
+          {watchProvider !== 'edge-tts' && (
+            <Form.Item name="modelsStr" label={t('provider.modelNames')} tooltip={t('provider.modelNamesHint')}>
+              <Input placeholder="FunAudioLLM/CosyVoice-300M, cosyvoice-v1" />
+            </Form.Item>
+          )}
           {!editingEndpoint && (
             <Form.Item name="useAsPrimary" valuePropName="checked">
               <Checkbox>{t('provider.quickSetup.useAsPrimary')}</Checkbox>

@@ -1,13 +1,11 @@
-import React, { useState } from 'react';
-import { Modal, Form, Input, Select, InputNumber, Segmented, Typography } from 'antd';
-import { ThunderboltOutlined, FormOutlined } from '@ant-design/icons';
+import React from 'react';
+import { Modal, Form, Input, Select, InputNumber, Typography } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 
 const { Text } = Typography;
 
 export interface CreateVideoFormValues {
-  mode: 'novel' | 'direct';
   title: string;
   description?: string;
   prompt?: string;
@@ -23,20 +21,17 @@ export interface CreateVideoFormValues {
 
 interface CreateVideoModalProps {
   open: boolean;
-  initialMode?: 'novel' | 'direct';
   onOk: (values: CreateVideoFormValues) => void;
   onCancel: () => void;
 }
 
 const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
   open,
-  initialMode = 'novel',
   onOk,
   onCancel,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
-  const [mode, setMode] = useState<'novel' | 'direct'>(initialMode);
   const projects = useProjectStore((s) => s.projects);
   const novelProjects = projects.filter((p) => p.type === 'novel');
 
@@ -50,7 +45,11 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
       open={open}
       onOk={() =>
         form.validateFields().then((values) => {
-          onOk({ ...values, mode });
+          if (!values.novelId && !values.scriptText?.trim()) {
+            form.setFields([{ name: 'scriptText', errors: [t('video.series.episodeSourceRequired')] }]);
+            return;
+          }
+          onOk(values);
           form.resetFields();
         })
       }
@@ -58,42 +57,15 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
         form.resetFields();
         onCancel();
       }}
-      okText={mode === 'direct' ? '⚡ 创建并直接生成视频' : '🚀 创建并开启全流程 AI 生成'}
+      okText={t('video.series.newEpisode')}
       cancelText={t('common.cancel')}
       width={560}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >
-      <div style={{ marginBottom: 16 }}>
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-          选择视频生成模式：
-        </Text>
-        <Segmented
-          block
-          value={mode}
-          onChange={(v) => setMode(v as 'novel' | 'direct')}
-          options={[
-            {
-              label: (
-                <div style={{ padding: '4px 0' }}>
-                  <FormOutlined style={{ marginRight: 6, color: '#1890ff' }} />
-                  <span>✍️ 小说/剧本全流程生成</span>
-                </div>
-              ),
-              value: 'novel',
-            },
-            {
-              label: (
-                <div style={{ padding: '4px 0' }}>
-                  <ThunderboltOutlined style={{ marginRight: 6, color: '#fa8c16' }} />
-                  <span>⚡ 提示词/短文本直接生成</span>
-                </div>
-              ),
-              value: 'direct',
-            },
-          ]}
-        />
-      </div>
+      <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 12 }}>
+        剧集会继承本系列的角色、场景和视觉设定。请选择已有小说，或粘贴本集剧本后继续。
+      </Text>
 
       <Form
         form={form}
@@ -113,39 +85,24 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
           label="项目名称"
           rules={[{ required: true, message: '请输入项目名称' }]}
         >
-          <Input placeholder={mode === 'direct' ? '例如: 赛博朋克都市夜景' : '例如: 诛仙第一集 · 少年张小凡'} />
+          <Input placeholder="例如：诛仙第一集 · 少年张小凡" />
         </Form.Item>
 
-        {mode === 'novel' ? (
-          <>
-            {novelProjects.length > 0 && (
-              <Form.Item name="novelId" label="关联已有小说项目（可选）">
-                <Select
-                  allowClear
-                  placeholder="选择已导入的小说，AI 将提取章节全自动拆分生成"
-                  options={novelProjects.map((p) => ({ value: p.id, label: p.title }))}
-                />
-              </Form.Item>
-            )}
-            <Form.Item name="scriptText" label="粘贴故事/剧本文本（可选）">
-              <Input.TextArea
-                rows={3}
-                placeholder="直接粘贴故事、小说片段或短剧剧本，AI 将自动分析角色与分镜..."
-              />
-            </Form.Item>
-          </>
-        ) : (
-          <Form.Item
-            name="prompt"
-            label="视频场景提示词 / 描述"
-            rules={[{ required: true, message: '请输入视频提示词' }]}
-          >
-            <Input.TextArea
-              rows={3}
-              placeholder="例如: 镜头从高空俯瞰赛博朋克城市，霓虹灯闪烁，一位雨中穿黑风衣的青年缓步前行，镜头跟推..."
+        {novelProjects.length > 0 && (
+          <Form.Item name="novelId" label="关联已有小说项目（可选）">
+            <Select
+              allowClear
+              placeholder="选择已导入的小说后，在下一步选择章节"
+              options={novelProjects.map((p) => ({ value: p.id, label: p.title }))}
             />
           </Form.Item>
         )}
+        <Form.Item name="scriptText" label="本集剧本（可选）">
+          <Input.TextArea
+            rows={4}
+            placeholder="粘贴本集故事、小说片段或短剧剧本；AI 将基于系列资产拆分角色与分镜。"
+          />
+        </Form.Item>
 
         <div style={{ display: 'flex', gap: 16 }}>
           <Form.Item name="targetDurationSeconds" label="期望成片总时长" style={{ flex: 1 }}>

@@ -40,7 +40,6 @@ const VideoView: React.FC = () => {
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [createMode, setCreateMode] = useState<'novel' | 'direct'>('novel');
   const [genOpen, setGenOpen] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [episodeSeriesId, setEpisodeSeriesId] = useState<string | undefined>();
@@ -57,8 +56,7 @@ const VideoView: React.FC = () => {
     const handler = (e: Event) => {
       const { type } = (e as CustomEvent).detail;
       if (type === 'video') {
-        setCreateMode('novel');
-        setCreateOpen(true);
+        setSeriesOpen(true);
       }
     };
     window.addEventListener('mojing:create-project', handler);
@@ -85,7 +83,7 @@ const VideoView: React.FC = () => {
   );
 
   const handleCreate = async (values: CreateVideoFormValues) => {
-    const desc = values.mode === 'direct' ? values.prompt : (values.scriptText || values.description);
+    const desc = values.scriptText || values.description;
     const seriesId = episodeSeriesId;
     const series = seriesId
       ? useProjectStore.getState().projects.find((candidate) => candidate.id === seriesId)
@@ -131,41 +129,7 @@ const VideoView: React.FC = () => {
     setCreateOpen(false);
     setEpisodeSeriesId(undefined);
 
-    if (values.mode === 'direct' && values.prompt) {
-      // ⚡ 直接生成：无需二次弹窗！直接由后台解析分镜并开启生成（启用 14 步完整流程包含 TTS 与场景图）
-      message.loading({ content: '正在为您的提示词分析分镜并启动生成...', key: 'create-pipeline' });
-      try {
-        const sceneSpec = await buildSceneFromPrompt(values.prompt, 'multishot', {
-          aspectRatio: (values.aspectRatio as any) || '16:9',
-          defaultShotDuration: duration,
-          targetDurationSeconds: values.targetDurationSeconds,
-          style: values.style,
-          continuityContext: episodeContinuity,
-        });
-        const boundSceneSpec = applySeriesProjectLibrary(sceneSpec, {
-          characters: seriesCharacters,
-          scenes: seriesScenes,
-          styleGuide: seriesStyleGuide,
-        });
-        store.setSceneSpec(project.id, boundSceneSpec);
-        store.setStageStatus(project.id, 'script_slicing', 'completed', { progress: 1 });
-        store.setStageStatus(project.id, 'storyboard_prompt', 'completed', { progress: 1 });
-        store.setStageStatus(project.id, 'extraction', 'completed', { progress: 1 });
-        runPipeline({
-          novelProjectId: project.id,
-          spec: boundSceneSpec,
-          options: FULL_PIPELINE_OPTIONS,
-          videoGen: {
-            spec,
-          },
-        });
-        message.success({ content: 'AI 智能生成已启动！', key: 'create-pipeline' });
-      } catch (err) {
-        console.error('Failed to start direct video pipeline:', err);
-        message.error({ content: '生成启动失败，请检查 AI 模型配置', key: 'create-pipeline' });
-      }
-    } else if (values.mode === 'novel') {
-      if (values.scriptText) {
+    if (values.scriptText) {
         // ✍️ 粘贴剧本生成：无需二次弹窗！直接解析剧本并开启全流程生成
         message.loading({ content: '正在解析故事剧本并切分子分镜...', key: 'create-pipeline' });
         try {
@@ -195,7 +159,7 @@ const VideoView: React.FC = () => {
           console.error('Failed to start novel script pipeline:', err);
           message.error({ content: '剧本解析启动失败', key: 'create-pipeline' });
         }
-      } else if (values.novelId) {
+    } else if (values.novelId) {
         // 关联了已有小说：打开章节选择配置框
         if (seriesId) {
           setGeneratorEpisodeId(project.id);
@@ -206,7 +170,6 @@ const VideoView: React.FC = () => {
           setGeneratorSeriesContinuityContext(episodeContinuity);
         }
         setGenOpen(true);
-      }
     }
   };
 
@@ -264,7 +227,6 @@ const VideoView: React.FC = () => {
 
   const handleCreateEpisode = (seriesId: string) => {
     setEpisodeSeriesId(seriesId);
-    setCreateMode('novel');
     setCreateOpen(true);
   };
 
@@ -279,8 +241,7 @@ const VideoView: React.FC = () => {
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
           onCreate={() => {
-            setCreateMode('novel');
-            setCreateOpen(true);
+            setSeriesOpen(true);
           }}
         />
       </div>
@@ -384,7 +345,6 @@ const VideoView: React.FC = () => {
       </div>
       <CreateVideoModal
         open={createOpen}
-        initialMode={createMode}
         onOk={handleCreate}
         onCancel={() => {
           setCreateOpen(false);
