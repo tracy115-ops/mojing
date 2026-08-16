@@ -14,25 +14,28 @@ import {
   message,
   Typography,
   Divider,
-  Steps,
   Alert,
   AutoComplete,
-  Checkbox,
+  Switch,
+  Collapse,
+  Row,
+  Col,
 } from 'antd';
 import {
   PlusOutlined,
   DeleteOutlined,
   EditOutlined,
-  ApiOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LoadingOutlined,
   ThunderboltOutlined,
-  ApiOutlined as EndpointIcon,
   SettingOutlined,
-  ThunderboltOutlined as TaskIcon,
-  LockOutlined,
   SoundOutlined,
+  StarFilled,
+  StarOutlined,
+  CheckOutlined,
+  AppstoreOutlined,
+  ControlOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore, PROVIDER_CATEGORY } from '@/stores/providerStore';
@@ -42,140 +45,117 @@ import type {
   VideoProviderId,
   TTSProviderId,
   ApiEndpoint,
-  ProviderConfig,
 } from '@/types/providers';
 
 const LLM_PROVIDER_OPTIONS: { value: LLMProviderId; label: string }[] = [
-  { value: 'openai', label: 'OpenAI' },
+  { value: 'deepseek', label: 'DeepSeek (深度求索 - 推荐)' },
+  { value: 'openai', label: 'OpenAI (GPT-4o / O3)' },
+  { value: 'qwen', label: 'Qwen (通义千问 / 阿里)' },
+  { value: 'doubao', label: 'Doubao (豆包 / 字节)' },
+  { value: 'glm', label: 'GLM (智谱清言)' },
   { value: 'claude', label: 'Claude (Anthropic)' },
-  { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'qwen', label: 'Qwen (通义千问)' },
-  { value: 'doubao', label: 'Doubao (豆包)' },
-  { value: 'glm', label: 'GLM (智谱)' },
-  { value: 'custom', label: 'Custom (OpenAI-compatible)' },
+  { value: 'custom', label: 'Custom (自定义 OpenAI 兼容 API / 中转站)' },
 ];
 
 const IMAGE_PROVIDER_OPTIONS: { value: ImageProviderId; label: string }[] = [
+  { value: 'siliconflow-image', label: '硅基流动 (Kolors / FLUX - 推荐)' },
   { value: 'jimeng', label: '即梦 Seedream (火山方舟 / 字节)' },
   { value: 'wanx', label: '通义万相 (Wanx / 阿里)' },
-  { value: 'siliconflow-image', label: '硅基流动 (Kolors / FLUX)' },
   { value: 'dalle', label: 'DALL-E (OpenAI)' },
-  { value: 'cogview', label: 'CogView (智谱 GLM)' },
   { value: 'kling-image', label: 'Kling (可灵图生图)' },
+  { value: 'cogview', label: 'CogView (智谱 GLM)' },
   { value: 'ideogram', label: 'Ideogram' },
   { value: 'agnes-image', label: 'Agnes Image (免费)' },
   { value: 'leonardo', label: 'Leonardo.ai' },
   { value: 'stable-diffusion', label: 'Stable Diffusion (本地)' },
   { value: 'flux', label: 'Flux (本地)' },
   { value: 'comfyui', label: 'ComfyUI (本地)' },
-  { value: 'custom', label: 'Custom (自定义 OpenAI 兼容 API)' },
+  { value: 'custom', label: 'Custom (自定义生图 API / 中转站)' },
 ];
 
 const VIDEO_PROVIDER_OPTIONS: { value: VideoProviderId; label: string }[] = [
+  { value: 'kling', label: 'Kling (快手可灵视频 - 推荐)' },
   { value: 'doubao-video', label: '即梦 Seedance (火山引擎 / 豆包)' },
+  { value: 'siliconflow-video', label: '硅基流动 (Wan 2.1)' },
   { value: 'minimax-video', label: '海螺 MiniMax (Video-01)' },
   { value: 'vidu', label: 'Vidu (生数科技)' },
   { value: 'cogvideo', label: '智谱 CogVideoX' },
   { value: '302ai-video', label: '302.AI Video' },
-  { value: 'siliconflow-video', label: '硅基流动 (Wan 2.1)' },
-  { value: 'kling', label: 'Kling (可灵视频)' },
-  { value: 'sora', label: 'Sora' },
+  { value: 'sora', label: 'Sora (OpenAI)' },
   { value: 'runway', label: 'Runway (Gen-3 / Gen-4)' },
   { value: 'pika', label: 'Pika' },
   { value: 'agnes-video', label: 'Agnes Video (免费)' },
   { value: 'leonardo-video', label: 'Leonardo Motion' },
-  { value: 'custom', label: 'Custom (自定义视频 API)' },
+  { value: 'custom', label: 'Custom (自定义视频 API / 中转站)' },
 ];
 
 const TTS_PROVIDER_OPTIONS: { value: TTSProviderId; label: string }[] = [
-  { value: 'doubao-tts', label: '字节豆包配音 (火山语音 / Doubao TTS)' },
+  { value: 'edge-tts', label: 'Edge TTS (微软免费配音 - 零配置免 Key 推荐)' },
   { value: 'siliconflow-tts', label: '硅基流动 CosyVoice (SiliconFlow)' },
+  { value: 'doubao-tts', label: '字节豆包配音 (火山语音 / Doubao TTS)' },
   { value: 'openai-tts', label: 'OpenAI TTS (tts-1 / tts-1-hd)' },
-  { value: 'edge-tts', label: 'Edge TTS (微软免费配音)' },
-  { value: 'custom', label: 'Custom (自定义配音 API)' },
+  { value: 'custom', label: 'Custom (自定义配音 API / 中转站)' },
 ];
 
-
 const LLM_TASK_MODELS = [
-  { key: 'planning', labelKey: 'provider.task.planning' },
-  { key: 'generation', labelKey: 'provider.task.generation' },
-  { key: 'review', labelKey: 'provider.task.review' },
-  { key: 'extraction', labelKey: 'provider.task.extraction' },
-  { key: 'translation', labelKey: 'provider.task.translation' },
+  { key: 'planning', label: '剧本分镜规划 (Planning)' },
+  { key: 'generation', label: '正文生成扩展 (Generation)' },
+  { key: 'review', label: '视觉规格审查 (Review)' },
+  { key: 'extraction', label: '实体台词提取 (Extraction)' },
+  { key: 'translation', label: '提示词精准翻译 (Translation)' },
 ];
 
 const IMAGE_TASK_MODELS = [
-  { key: 'character', labelKey: 'provider.task.character' },
-  { key: 'scene', labelKey: 'provider.task.scene' },
-  { key: 'panel', labelKey: 'provider.task.panel' },
-  { key: 'style-transfer', labelKey: 'provider.task.style-transfer' },
-  { key: 'storyboard', labelKey: 'provider.task.storyboard' },
+  { key: 'character', label: '角色立绘三视图 (Character)' },
+  { key: 'scene', label: '场景背景生成 (Scene)' },
+  { key: 'panel', label: '漫画分镜画面 (Panel)' },
+  { key: 'storyboard', label: '电影分镜关键帧 (Storyboard)' },
 ];
 
 const VIDEO_TASK_MODELS = [
-  { key: 'clip', labelKey: 'provider.task.clip' },
-  { key: 'transition', labelKey: 'provider.task.transition' },
-  { key: 'full-scene', labelKey: 'provider.task.full-scene' },
-  { key: 'lip-sync', labelKey: 'provider.task.lip-sync' },
-  { key: 'effects', labelKey: 'provider.task.effects' },
+  { key: 'clip', label: '分镜视频生成 (Clip)' },
+  { key: 'transition', label: '转场过渡衔接 (Transition)' },
+  { key: 'full-scene', label: '全景镜头生成 (Full Scene)' },
+  { key: 'lip-sync', label: '角色说话口型 (Lip Sync)' },
 ];
 
-// Per-provider suggested models — shown as autocomplete dropdown options.
-// User can still type any model name not in this list (the input is free-form).
+// Per-provider suggested models
 const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
-  // LLM
   openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o1', 'o3-mini'],
-  claude: ['claude-sonnet-4-20250514', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
+  claude: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022'],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  siliconflow: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct', 'THUDM/glm-4-9b-chat'],
+  siliconflow: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct'],
   qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
-  doubao: ['doubao-1.5-pro', 'doubao-1.5-lite'],
+  doubao: ['doubao-1.5-pro-32k', 'doubao-1.5-lite-32k'],
   glm: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'],
   // Image
   dalle: ['dall-e-3', 'dall-e-2'],
-  'kling-image': ['kling-v1', 'kling-v1-5', 'kling-v2'],
+  'kling-image': ['kling-v2', 'kling-v1-5', 'kling-v1'],
   cogview: ['cogview-3-plus', 'cogview-3-flash'],
-  wanx: ['wanx-v1', 'wanx-2.1-t2i-turbo', 'wanx-2.1-t2i-plus'],
+  wanx: ['wanx-2.1-t2i-turbo', 'wanx-2.1-t2i-plus', 'wanx-v1'],
   jimeng: ['doubao-seedream-3-0-t2i-250415', 'doubao-seedream-3-0-i2i-250415'],
-  'siliconflow-image': ['black-forest-labs/FLUX.1-schnell', 'black-forest-labs/FLUX.1-dev', 'Kwai-Kolors/Kolors', 'stabilityai/stable-diffusion-3-5-large'],
+  'siliconflow-image': ['black-forest-labs/FLUX.1-schnell', 'black-forest-labs/FLUX.1-dev', 'Kwai-Kolors/Kolors'],
   ideogram: ['V_3', 'V_2'],
   'agnes-image': ['agnes-image-2.1-flash', 'agnes-image-2.0-flash'],
-  leonardo: ['b24a42c0-7a00-4cc4-9753-ca0962555099', '2067ae52-fafc-4a4c-9bbf-75c2b2cbb4c2'],
+  leonardo: ['b24a42c0-7a00-4cc4-9753-ca0962555099'],
   // Video
-  kling: ['kling-v2', 'kling-v2-pro', 'kling-v2-master', 'kling-v1-6'],
+  kling: ['kling-v2', 'kling-v2-pro', 'kling-v1-6'],
   runway: ['gen4_turbo', 'gen3-alpha'],
-  vidu: ['vidu-1.5', 'vidu-1.0', 'vidu-q2'],
+  vidu: ['vidu-1.5', 'vidu-1.0'],
   pika: ['pika-1.5', 'pika-1.0'],
   'agnes-video': ['agnes-video-v2.0'],
   'doubao-video': ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128'],
   'minimax-video': ['video-01', 'video-01-live'],
   cogvideo: ['cogvideox_5b', 'cogvideox_flash'],
-  '302ai-video': ['sora-302', 'kling-302', 'runway-302', 'minimax-302'],
-  'siliconflow-video': ['Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-14B', 'Wan-AI/Wan2.2-I2V-A14B'],
+  '302ai-video': ['kling-302', 'sora-302', 'runway-302'],
+  'siliconflow-video': ['Wan-AI/Wan2.1-T2V-1.4B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'Wan-AI/Wan2.1-T2V-14B'],
   'leonardo-video': ['leonardo-motion'],
   // TTS
-  'openai-tts': ['tts-1', 'tts-1-hd', 'cosyvoice-v1', 'doubao-tts-v1', 'gpt-4o-audio-preview'],
+  'edge-tts': ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunyangNeural'],
+  'siliconflow-tts': ['FunAudioLLM/CosyVoice2-0.5B', 'FunAudioLLM/CosyVoice-300M-Instruct'],
   'doubao-tts': ['doubao-tts-v1', 'doubao-voice-standard'],
-  'siliconflow-tts': ['FunAudioLLM/CosyVoice2-0.5B', 'FunAudioLLM/CosyVoice-300M-Instruct', 'fishaudio/fish-speech-1.5'],
-  'edge-tts': ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
-  // Music
-  'suno-music': ['suno-v3.5', 'suno-v4'],
-  'udio-music': ['udio-v1.5'],
-  'siliconflow-music': ['suno-v3.5', 'suno-v4'],
+  'openai-tts': ['tts-1', 'tts-1-hd'],
 };
-
-/** Return the suggestion list for the *primary* provider of a given category.
- *  This drives the autocomplete dropdown — user can still type anything else. */
-function getModelSuggestions(
-  config: ProviderConfig,
-  category: 'llm' | 'image' | 'video' | 'tts',
-): string[] {
-  const primary = config[category]?.primary;
-  if (!primary) return [];
-  return PROVIDER_MODEL_SUGGESTIONS[primary] ?? [];
-}
-
-type StepKey = 'endpoints' | 'models' | 'tasks';
 
 const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   openai: 'https://api.openai.com/v1',
@@ -221,7 +201,6 @@ function getProviderDefaultUrl(provider: string): string {
 
 const ProviderSettings: React.FC = () => {
   const { t } = useTranslation();
-  const [currentStep, setCurrentStep] = useState<StepKey>('endpoints');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addCategory, setAddCategory] = useState<'llm' | 'image' | 'video' | 'tts'>('llm');
   const [editingEndpoint, setEditingEndpoint] = useState<ApiEndpoint | null>(null);
@@ -229,7 +208,6 @@ const ProviderSettings: React.FC = () => {
   const [form] = Form.useForm();
   const watchProvider = Form.useWatch('provider', form);
 
-  // Individual selectors to prevent unnecessary re-renders
   const config = useProviderStore((s) => s.config);
   const endpoints = useProviderStore((s) => s.endpoints);
   const healthStatus = useProviderStore((s) => s.healthStatus);
@@ -240,45 +218,60 @@ const ProviderSettings: React.FC = () => {
   const setImageProvider = useProviderStore((s) => s.setImageProvider);
   const setVideoProvider = useProviderStore((s) => s.setVideoProvider);
   const setTTSProvider = useProviderStore((s) => s.setTTSProvider);
-  const setLLMFallback = useProviderStore((s) => s.setLLMFallback);
-  const setImageFallback = useProviderStore((s) => s.setImageFallback);
-  const setVideoFallback = useProviderStore((s) => s.setVideoFallback);
   const setLLMModel = useProviderStore((s) => s.setLLMModel);
   const setImageModel = useProviderStore((s) => s.setImageModel);
   const setVideoModel = useProviderStore((s) => s.setVideoModel);
   const checkHealth = useProviderStore((s) => s.checkHealth);
 
-  const hasEndpoints = endpoints.length > 0;
-
   const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
-    // Single source of truth: PROVIDER_CATEGORY from providerStore.
-    // Note: includes disabled endpoints — Settings tables show all so the user can toggle.
     return endpoints.filter((e) => (e.category ?? PROVIDER_CATEGORY[e.provider]) === category);
   }, [endpoints]);
 
-  // Step availability
-  const stepStatus = useMemo(() => ({
-    endpoints: true,
-    models: hasEndpoints,
-    tasks: hasEndpoints,
-  }), [hasEndpoints]);
+  // 判断是否为当前类别的主选端点
+  const isPrimaryEndpoint = useCallback((endpoint: ApiEndpoint) => {
+    const cat = endpoint.category ?? PROVIDER_CATEGORY[endpoint.provider] ?? 'llm';
+    const cfg = config[cat];
+    if (cfg?.endpointId) {
+      return cfg.endpointId === endpoint.id;
+    }
+    const catEndpoints = endpoints.filter((e) => (e.category ?? PROVIDER_CATEGORY[e.provider]) === cat && e.enabled);
+    return catEndpoints[0]?.id === endpoint.id;
+  }, [config, endpoints]);
 
-  const canGoToStep = (step: StepKey) => stepStatus[step];
+  // 一键设为主选端点
+  const handleSetPrimary = useCallback((endpoint: ApiEndpoint) => {
+    const cat = endpoint.category ?? PROVIDER_CATEGORY[endpoint.provider] ?? 'llm';
+    const defaultModel = endpoint.models?.[0];
 
-  // --- Step 1: Endpoints ---
+    if (cat === 'llm') {
+      setLLMProvider(endpoint.provider as LLMProviderId, defaultModel, endpoint.id);
+    } else if (cat === 'image') {
+      setImageProvider(endpoint.provider as ImageProviderId, defaultModel, endpoint.id);
+    } else if (cat === 'video') {
+      setVideoProvider(endpoint.provider as VideoProviderId, defaultModel, endpoint.id);
+    } else if (cat === 'tts') {
+      setTTSProvider(endpoint.provider as TTSProviderId, defaultModel, undefined, endpoint.id);
+    }
+    message.success(`已将【${endpoint.name}】设为当前${cat.toUpperCase()}主力引擎！`);
+  }, [setLLMProvider, setImageProvider, setVideoProvider, setTTSProvider]);
 
   const handleAddEndpoint = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
     setAddCategory(category);
     setEditingEndpoint(null);
     const defaultProvider =
-      category === 'llm' ? 'openai'
-      : category === 'image' ? 'dalle'
+      category === 'llm' ? 'deepseek'
+      : category === 'image' ? 'siliconflow-image'
       : category === 'video' ? 'kling'
-      : 'openai-tts';
+      : 'edge-tts';
     const defaultUrl = getProviderDefaultUrl(defaultProvider);
+    const defaultModels = PROVIDER_MODEL_SUGGESTIONS[defaultProvider] ?? [];
+
     form.setFieldsValue({
       provider: defaultProvider,
+      name: `${defaultProvider.toUpperCase()} 接口`,
       baseUrl: defaultUrl,
+      apiKey: defaultProvider === 'edge-tts' ? 'free' : '',
+      modelsStr: defaultModels.join(', '),
       enabled: true,
       useAsPrimary: true,
     });
@@ -301,18 +294,19 @@ const ProviderSettings: React.FC = () => {
   const handleSaveEndpoint = useCallback(async () => {
     try {
       const values = await form.validateFields();
-      const models = values.modelsStr
-        ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
-        : undefined;
-      if (values.provider !== 'edge-tts' && !models?.length) {
-        form.setFields([{ name: 'modelsStr', errors: ['请填写要使用的具体模型名称'] }]);
-        return;
-      }
-
       const provider = values.provider;
       const isEdge = provider === 'edge-tts';
       const baseUrl = values.baseUrl || (isEdge ? 'https://speech.platform.bing.com' : '');
       const apiKey = values.apiKey || (isEdge ? 'free' : '');
+
+      let models = values.modelsStr
+        ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [];
+      
+      // 智能默认填充模型，不卡用户
+      if (models.length === 0 && !isEdge) {
+        models = PROVIDER_MODEL_SUGGESTIONS[provider] || ['default'];
+      }
 
       if (editingEndpoint) {
         updateEndpoint(editingEndpoint.id, {
@@ -324,10 +318,6 @@ const ProviderSettings: React.FC = () => {
           category: addCategory,
         });
       } else {
-        // Form 没有 enabled 字段(setFieldsValue 不进 form state),显式补 true。
-        // 否则 store 里 endpoint.enabled = undefined,DirectVideoModal 等下游
-        // 按 e.enabled 过滤时全部被排除,表现成"已配置但模式按钮还是灰"。
-        // 同时带上当前 tab 的 category,让 custom endpoint 能在正确类别下被列出。
         const newId = addEndpoint({
           name: values.name,
           provider,
@@ -337,184 +327,365 @@ const ProviderSettings: React.FC = () => {
           enabled: true,
           category: addCategory,
         });
-        if (values.useAsPrimary !== false && provider === 'edge-tts') {
-          setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
-        } else if (values.useAsPrimary !== false && addCategory === 'llm') {
-          setLLMProvider(provider as LLMProviderId, models?.[0], newId);
-        } else if (values.useAsPrimary !== false && addCategory === 'image') {
-          setImageProvider(provider as ImageProviderId, models?.[0], newId);
-        } else if (values.useAsPrimary !== false && addCategory === 'video') {
-          setVideoProvider(provider as VideoProviderId, models?.[0], newId);
-        } else if (values.useAsPrimary !== false) {
-          setTTSProvider(provider as TTSProviderId, models?.[0], undefined, newId);
+
+        if (values.useAsPrimary !== false) {
+          if (isEdge) {
+            setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
+          } else if (addCategory === 'llm') {
+            setLLMProvider(provider as LLMProviderId, models[0], newId);
+          } else if (addCategory === 'image') {
+            setImageProvider(provider as ImageProviderId, models[0], newId);
+          } else if (addCategory === 'video') {
+            setVideoProvider(provider as VideoProviderId, models[0], newId);
+          } else {
+            setTTSProvider(provider as TTSProviderId, models[0], undefined, newId);
+          }
         }
       }
       setAddModalOpen(false);
       setEditingEndpoint(null);
       form.resetFields();
-      message.success(t('common.saved'));
+      message.success('配置已保存并生效！');
     } catch {
-      // Validation failed
+      // Form validation error
     }
-  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, setLLMProvider, setImageProvider, setVideoProvider, setTTSProvider, t]);
+  }, [form, addEndpoint, updateEndpoint, editingEndpoint, addCategory, setLLMProvider, setImageProvider, setVideoProvider, setTTSProvider]);
 
   const handleTestConnection = useCallback(async (endpointId: string) => {
     setTestingId(endpointId);
     try {
       const health = await checkHealth(endpointId);
       if (health.available) {
-        message.success(t('message.connectionSuccess'));
+        message.success(`连接成功！延迟: ${health.latencyMs ?? 0}ms`);
       } else {
-        message.error(`${t('message.connectionFailed')}: ${health.error}`);
+        message.error(`连接失败: ${health.error || '无法访问服务'}`);
       }
     } catch {
-      message.error(t('message.connectionFailed'));
+      message.error('连接失败，请检查网络或 URL');
     } finally {
       setTestingId(null);
     }
-  }, [checkHealth, t]);
+  }, [checkHealth]);
 
-  const endpointColumns = useMemo(() => [
+  // 表格列定义
+  const getEndpointColumns = (category: 'llm' | 'image' | 'video' | 'tts') => [
     {
-      title: t('provider.endpointName'),
-      dataIndex: 'name',
-      key: 'name',
-      ellipsis: true,
-    },
-    {
-      title: t('provider.provider.primary'),
-      dataIndex: 'provider',
-      key: 'provider',
+      title: '主选状态',
+      key: 'primaryStatus',
       width: 130,
-      render: (provider: string) => <Tag>{t(`provider.provider.${provider}` as const)}</Tag>,
-    },
-    {
-      title: t('provider.endpointUrl'),
-      dataIndex: 'baseUrl',
-      key: 'baseUrl',
-      ellipsis: true,
-      render: (url: string) => (
-        <Typography.Text copyable={{ text: url }} style={{ fontSize: 12 }}>{url}</Typography.Text>
-      ),
-    },
-    {
-      title: t('common.status' as const),
-      key: 'status',
-      width: 90,
       render: (_: unknown, record: ApiEndpoint) => {
-        const health = healthStatus[record.id];
-        if (testingId === record.id) return <LoadingOutlined spin />;
-        if (!health) return <Tag>—</Tag>;
-        return health.available
-          ? <Tag icon={<CheckCircleOutlined />} color="success">{t('provider.connected')}</Tag>
-          : <Tooltip title={health.error}><Tag icon={<CloseCircleOutlined />} color="error">{t('provider.disconnected')}</Tag></Tooltip>;
+        const isPrimary = isPrimaryEndpoint(record);
+        return isPrimary ? (
+          <Tag color="gold" icon={<StarFilled style={{ color: '#faad14' }} />}>
+            ⭐ 当前主力
+          </Tag>
+        ) : (
+          <Button
+            size="small"
+            type="link"
+            icon={<StarOutlined />}
+            onClick={() => handleSetPrimary(record)}
+            style={{ padding: 0 }}
+          >
+            设为主力
+          </Button>
+        );
       },
     },
     {
-      title: t('common.test' as const),
+      title: '端点名称',
+      dataIndex: 'name',
+      key: 'name',
+      width: 180,
+      render: (name: string, record: ApiEndpoint) => (
+        <Space direction="vertical" size={2}>
+          <Typography.Text strong style={{ fontSize: 13 }}>{name}</Typography.Text>
+          <Tag style={{ fontSize: 11 }}>{record.provider}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: '支持/默认模型',
+      dataIndex: 'models',
+      key: 'models',
+      render: (models: string[] | undefined, record: ApiEndpoint) => {
+        const displayModels = models && models.length > 0
+          ? models
+          : (PROVIDER_MODEL_SUGGESTIONS[record.provider] ?? ['默认模型']);
+        return (
+          <Space wrap size={[4, 4]}>
+            {displayModels.map((m, idx) => (
+              <Tag key={idx} color={idx === 0 ? 'blue' : 'default'} style={{ fontSize: 11 }}>
+                {idx === 0 ? `👑 ${m}` : m}
+              </Tag>
+            ))}
+          </Space>
+        );
+      },
+    },
+    {
+      title: '启用',
+      key: 'enabled',
+      width: 80,
+      render: (_: unknown, record: ApiEndpoint) => (
+        <Switch
+          size="small"
+          checked={record.enabled ?? true}
+          onChange={(checked) => updateEndpoint(record.id, { enabled: checked })}
+        />
+      ),
+    },
+    {
+      title: '连通性',
+      key: 'status',
+      width: 100,
+      render: (_: unknown, record: ApiEndpoint) => {
+        const health = healthStatus[record.id];
+        if (testingId === record.id) return <LoadingOutlined spin />;
+        if (!health) return <Tag>未检测</Tag>;
+        return health.available ? (
+          <Tag icon={<CheckCircleOutlined />} color="success">正常</Tag>
+        ) : (
+          <Tooltip title={health.error}>
+            <Tag icon={<CloseCircleOutlined />} color="error">异常</Tag>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '操作',
       key: 'actions',
       width: 180,
       render: (_: unknown, record: ApiEndpoint) => (
-        <Space>
+        <Space size="small">
           <Button size="small" onClick={() => handleTestConnection(record.id)} loading={testingId === record.id}>
-            {t('provider.testConnection')}
+            测试
           </Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => handleEditEndpoint(record)} />
           <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeEndpoint(record.id)} />
         </Space>
       ),
     },
-  ], [t, healthStatus, testingId, handleTestConnection, handleEditEndpoint, removeEndpoint]);
+  ];
 
-  const renderStepEndpoints = () => (
-    <div>
-      {!hasEndpoints && (
-        <Alert
-          type="info"
-          showIcon
-          message={t('provider.noEndpoints')}
-          style={{ marginBottom: 16 }}
-        />
-      )}
+  // 顶部 4 大主力引擎快捷卡片
+  const renderActiveOverview = () => {
+    const getSummary = (category: 'llm' | 'image' | 'video' | 'tts') => {
+      const cfg = config[category];
+      const categoryEndpoints = getEndpointsByCategory(category);
+      const activeEp = categoryEndpoints.find((e) => isPrimaryEndpoint(e));
+      const model = activeEp?.models?.[0] || cfg?.defaultModel || '系统推荐';
+      return {
+        provider: activeEp?.name || cfg?.primary || '未配置',
+        model,
+        activeId: activeEp?.id,
+        endpoints: categoryEndpoints,
+      };
+    };
+
+    const llmSummary = getSummary('llm');
+    const imageSummary = getSummary('image');
+    const videoSummary = getSummary('video');
+    const ttsSummary = getSummary('tts');
+
+    return (
+      <Card size="small" style={{ marginBottom: 16, background: 'var(--bg-secondary, #fafafa)', borderRadius: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <Space>
+            <AppstoreOutlined style={{ color: '#1677ff', fontSize: 16 }} />
+            <Typography.Text strong style={{ fontSize: 14 }}>
+              当前生效主力引擎（多端点时直接在卡片切换）
+            </Typography.Text>
+          </Space>
+        </div>
+
+        <Row gutter={[12, 12]}>
+          {/* LLM */}
+          <Col xs={24} sm={12} md={6}>
+            <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>📝 剧本/分镜/审查 (LLM)</div>
+              {llmSummary.endpoints.length > 1 ? (
+                <Select
+                  size="small"
+                  style={{ width: '100%', marginBottom: 4 }}
+                  value={llmSummary.activeId}
+                  onChange={(id) => {
+                    const ep = llmSummary.endpoints.find((e) => e.id === id);
+                    if (ep) handleSetPrimary(ep);
+                  }}
+                  options={llmSummary.endpoints.map((e) => ({ value: e.id, label: e.name }))}
+                />
+              ) : (
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+                  {llmSummary.provider}
+                </Typography.Text>
+              )}
+              <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>模型: {llmSummary.model}</Tag>
+            </Card>
+          </Col>
+
+          {/* Image */}
+          <Col xs={24} sm={12} md={6}>
+            <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎨 角色/场景/关键帧 (Image)</div>
+              {imageSummary.endpoints.length > 1 ? (
+                <Select
+                  size="small"
+                  style={{ width: '100%', marginBottom: 4 }}
+                  value={imageSummary.activeId}
+                  onChange={(id) => {
+                    const ep = imageSummary.endpoints.find((e) => e.id === id);
+                    if (ep) handleSetPrimary(ep);
+                  }}
+                  options={imageSummary.endpoints.map((e) => ({ value: e.id, label: e.name }))}
+                />
+              ) : (
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+                  {imageSummary.provider}
+                </Typography.Text>
+              )}
+              <Tag color="cyan" style={{ fontSize: 11, margin: 0 }}>模型: {imageSummary.model}</Tag>
+            </Card>
+          </Col>
+
+          {/* Video */}
+          <Col xs={24} sm={12} md={6}>
+            <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎬 视频生成 (Video)</div>
+              {videoSummary.endpoints.length > 1 ? (
+                <Select
+                  size="small"
+                  style={{ width: '100%', marginBottom: 4 }}
+                  value={videoSummary.activeId}
+                  onChange={(id) => {
+                    const ep = videoSummary.endpoints.find((e) => e.id === id);
+                    if (ep) handleSetPrimary(ep);
+                  }}
+                  options={videoSummary.endpoints.map((e) => ({ value: e.id, label: e.name }))}
+                />
+              ) : (
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+                  {videoSummary.provider}
+                </Typography.Text>
+              )}
+              <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>模型: {videoSummary.model}</Tag>
+            </Card>
+          </Col>
+
+          {/* TTS */}
+          <Col xs={24} sm={12} md={6}>
+            <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎙️ AI 角色配音 (TTS)</div>
+              {ttsSummary.endpoints.length > 1 ? (
+                <Select
+                  size="small"
+                  style={{ width: '100%', marginBottom: 4 }}
+                  value={ttsSummary.activeId}
+                  onChange={(id) => {
+                    const ep = ttsSummary.endpoints.find((e) => e.id === id);
+                    if (ep) handleSetPrimary(ep);
+                  }}
+                  options={ttsSummary.endpoints.map((e) => ({ value: e.id, label: e.name }))}
+                />
+              ) : (
+                <Typography.Text strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
+                  {ttsSummary.provider}
+                </Typography.Text>
+              )}
+              <Tag color="green" style={{ fontSize: 11, margin: 0 }}>模型/音色: {ttsSummary.model}</Tag>
+            </Card>
+          </Col>
+        </Row>
+      </Card>
+    );
+  };
+
+  return (
+    <div style={{ padding: '0 8px' }}>
+      {/* 顶部主力引擎状态概览 */}
+      {renderActiveOverview()}
+
+      {/* 核心端点管理与模型直观展示 */}
       <Tabs
+        defaultActiveKey="llm"
         items={[
           {
             key: 'llm',
-            label: t('provider.llm'),
+            label: '📝 文本大模型 (LLM)',
             children: (
               <div>
                 <Table
                   dataSource={getEndpointsByCategory('llm')}
-                  columns={endpointColumns}
+                  columns={getEndpointColumns('llm')}
                   rowKey="id"
                   size="small"
                   pagination={false}
-                  locale={{ emptyText: t('common.noData' as const) }}
+                  locale={{ emptyText: '暂无配置 LLM 端点，请点击下方添加' }}
                   style={{ marginBottom: 12 }}
                 />
                 <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('llm')}>
-                  {t('provider.addEndpoint')} — {t('provider.llm')}
+                  添加 LLM 接口端点 (如 DeepSeek / OpenAI / 硅基流动)
                 </Button>
               </div>
             ),
           },
           {
             key: 'image',
-            label: t('provider.image'),
+            label: '🎨 画面生图 (Image)',
             children: (
               <div>
                 <Table
                   dataSource={getEndpointsByCategory('image')}
-                  columns={endpointColumns}
+                  columns={getEndpointColumns('image')}
                   rowKey="id"
                   size="small"
                   pagination={false}
-                  locale={{ emptyText: t('common.noData' as const) }}
+                  locale={{ emptyText: '暂无生图端点，请点击下方添加' }}
                   style={{ marginBottom: 12 }}
                 />
                 <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('image')}>
-                  {t('provider.addEndpoint')} — {t('provider.image')}
+                  添加生图接口端点 (如 硅基流动 FLUX / 即梦 Seedream / DALL-E)
                 </Button>
               </div>
             ),
           },
           {
             key: 'video',
-            label: t('provider.video'),
+            label: '🎬 视频生成 (Video)',
             children: (
               <div>
                 <Table
                   dataSource={getEndpointsByCategory('video')}
-                  columns={endpointColumns}
+                  columns={getEndpointColumns('video')}
                   rowKey="id"
                   size="small"
                   pagination={false}
-                  locale={{ emptyText: t('common.noData' as const) }}
+                  locale={{ emptyText: '暂无视频端点，请点击下方添加' }}
                   style={{ marginBottom: 12 }}
                 />
                 <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('video')}>
-                  {t('provider.addEndpoint')} — {t('provider.video')}
+                  添加视频生成接口端点 (如 可灵 Kling / 即梦 Seedance / 硅基流动 Wan2.1)
                 </Button>
               </div>
             ),
           },
           {
             key: 'tts',
-            label: t('provider.tts'),
+            label: '🎙️ 配音合成 (TTS)',
             children: (
               <div>
                 <Table
                   dataSource={getEndpointsByCategory('tts')}
-                  columns={endpointColumns}
+                  columns={getEndpointColumns('tts')}
                   rowKey="id"
                   size="small"
                   pagination={false}
-                  locale={{ emptyText: t('common.noData' as const) }}
+                  locale={{ emptyText: '暂无配音端点，推荐一键开启免费 Edge TTS' }}
                   style={{ marginBottom: 12 }}
                 />
                 <Space style={{ width: '100%' }} direction="vertical">
                   <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('tts')}>
-                    {t('provider.addEndpoint')} — {t('provider.tts')}
+                    添加自定义配音端点 (如 硅基流动 CosyVoice / 豆包语音)
                   </Button>
                   <Button
                     type="primary"
@@ -529,12 +700,13 @@ const ProviderSettings: React.FC = () => {
                         apiKey: 'free',
                         enabled: true,
                         category: 'tts',
+                        models: ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunyangNeural'],
                       });
                       setTTSProvider('edge-tts', 'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoxiaoNeural', newId);
                       message.success('已一键接入并启用了免费微软 Edge TTS 引擎！');
                     }}
                   >
-                    ⚡ 一键配置并开启免费微软 Edge TTS (无 Key 告别 400 报错)
+                    ⚡ 一键配置并开启免费微软 Edge TTS (免 API Key 高清配音)
                   </Button>
                 </Space>
               </div>
@@ -542,350 +714,93 @@ const ProviderSettings: React.FC = () => {
           },
         ]}
       />
-    </div>
-  );
 
-  // --- Step 2: Model selection ---
+      <Divider style={{ margin: '20px 0 12px 0' }} />
 
-  const renderModelSelector = (
-    category: 'llm' | 'image' | 'video' | 'tts',
-    options: { value: string; label: string }[],
-  ) => {
-    const catConfig = config[category];
-    if (!catConfig) {
-      return <Alert type="warning" message={`Category ${category} not configured`} />;
-    }
-    const setProvider =
-      category === 'llm' ? setLLMProvider
-      : category === 'image' ? setImageProvider
-      : category === 'video' ? setVideoProvider
-      : setTTSProvider;
-    // TTS 暂不支持 fallback selector(setTTSFallback 不存在)
-    const setFallbackFn =
-      category === 'llm' ? setLLMFallback
-      : category === 'image' ? setImageFallback
-      : category === 'video' ? setVideoFallback
-      : (() => {});
-    const categoryEndpoints = getEndpointsByCategory(category);
-    const showFallback = category !== 'tts';
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', gap: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.primary')}</div>
-            <Select
-              style={{ width: '100%' }}
-              value={catConfig.primary}
-              onChange={(v) => {
-                if (category === 'tts') {
-                  setTTSProvider(v as TTSProviderId, catConfig.defaultModel, (catConfig as any).defaultVoice, catConfig.endpointId);
-                } else {
-                  setProvider(v as never, undefined, catConfig.endpointId);
-                }
-              }}
-              options={options}
-            />
-          </div>
-          {showFallback && (
-            <div style={{ flex: 1 }}>
-              <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.fallback')}</div>
-              <Select
-                style={{ width: '100%' }}
-                value={(catConfig as { fallback?: string }).fallback}
-                onChange={(v) => setFallbackFn(v as never, (catConfig as { fallbackEndpointId?: string }).fallbackEndpointId)}
-                options={[{ value: '', label: '— None —' }, ...options]}
-                allowClear
-              />
-            </div>
-          )}
-        </div>
-
-        {categoryEndpoints.length > 0 && (
-          <div>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>{t('provider.endpoint')}</div>
-            <Select
-              style={{ width: '100%' }}
-              value={catConfig.endpointId}
-              onChange={(v) => {
-                if (category === 'tts') {
-                  setTTSProvider(catConfig.primary as TTSProviderId, catConfig.defaultModel, (catConfig as any).defaultVoice, v);
-                } else {
-                  setProvider(catConfig.primary as never, undefined, v);
-                }
-              }}
-              options={categoryEndpoints.map((e) => ({ value: e.id, label: `${e.name} (${e.baseUrl})` }))}
-              placeholder={t('provider.endpoint')}
-              allowClear
-            />
-          </div>
-        )}
-
-        {/* TTS 额外字段:voice / speed 等(从 TTSProviderConfig 读) */}
-        {category === 'tts' && (
-          <Alert
-            type="info"
-            showIcon
-            message={t('provider.tts.voiceTip')}
-            description={t('provider.tts.voiceDesc')}
-          />
-        )}
-      </div>
-    );
-  };
-
-  const renderStepModels = () => {
-    if (!hasEndpoints) {
-      return (
-        <Alert
-          type="warning"
-          showIcon
-          icon={<LockOutlined />}
-          message={t('provider.stepLocked')}
-          description={t('provider.noEndpoints')}
-        />
-      );
-    }
-
-    return (
-      <Tabs
+      {/* 高级微调：各任务细分模型（按需展开，平时不干扰） */}
+      <Collapse
+        ghost
         items={[
           {
-            key: 'llm',
-            label: t('provider.llm'),
-            children: <Card size="small">{renderModelSelector('llm', LLM_PROVIDER_OPTIONS)}</Card>,
-          },
-          {
-            key: 'image',
-            label: t('provider.image'),
-            children: <Card size="small">{renderModelSelector('image', IMAGE_PROVIDER_OPTIONS)}</Card>,
-          },
-          {
-            key: 'video',
-            label: t('provider.video'),
-            children: <Card size="small">{renderModelSelector('video', VIDEO_PROVIDER_OPTIONS)}</Card>,
-          },
-          {
-            key: 'tts',
-            label: t('provider.tts'),
-            children: <Card size="small">{renderModelSelector('tts', TTS_PROVIDER_OPTIONS)}</Card>,
-          },
-          {
-            key: 'music',
-            label: '🎵 AI 音乐生成',
+            key: 'advanced_tasks',
+            label: (
+              <Space>
+                <ControlOutlined style={{ color: '#1677ff' }} />
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  ⚙️ 高级微调：针对不同工序指定特定模型（选填，留空则自动继承主力模型）
+                </Typography.Text>
+              </Space>
+            ),
             children: (
-              <Card size="small">
-                <div style={{ marginBottom: 12 }}>
-                  <Typography.Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>
-                    选择默认 AI 音乐引擎端点
-                  </Typography.Text>
-                  <AutoComplete
-                    style={{ width: '100%' }}
-                    placeholder="选填 Suno AI / 硅基流动 / 自定义中转站音乐模型 (如 suno-v3.5)"
-                    options={[
-                      { value: 'suno-v3.5', label: 'suno-v3.5 (Suno 高清原声推荐)' },
-                      { value: 'suno-v4', label: 'suno-v4 (Suno 最新高品规引擎)' },
-                      { value: 'udio-v1.5', label: 'udio-v1.5 (Udio 交响与流行配乐)' },
-                      { value: 'FunAudioLLM/SenseVoiceSmall', label: 'FunAudioLLM/SenseVoiceSmall (硅基流动免费)' },
-                    ]}
-                  />
-                </div>
-              </Card>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <Card size="small" title="📝 文本工序细分模型">
+                  {LLM_TASK_MODELS.map((task) => (
+                    <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
+                      <AutoComplete
+                        style={{ flex: 1 }}
+                        value={(config.llm.models as Record<string, string>)[task.key] || undefined}
+                        onChange={(v) => setLLMModel(task.key, v)}
+                        placeholder={`留空默认使用: ${config.llm.defaultModel || '主力模型'}`}
+                        size="small"
+                        allowClear
+                        options={(PROVIDER_MODEL_SUGGESTIONS[config.llm.primary] ?? []).map((m) => ({ value: m, label: m }))}
+                      />
+                    </div>
+                  ))}
+                </Card>
+
+                <Card size="small" title="🎨 生图工序细分模型">
+                  {IMAGE_TASK_MODELS.map((task) => (
+                    <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
+                      <AutoComplete
+                        style={{ flex: 1 }}
+                        value={(config.image.models as Record<string, string>)[task.key] || undefined}
+                        onChange={(v) => setImageModel(task.key, v)}
+                        placeholder={`留空默认使用: ${config.image.defaultModel || '主力生图模型'}`}
+                        size="small"
+                        allowClear
+                        options={(PROVIDER_MODEL_SUGGESTIONS[config.image.primary] ?? []).map((m) => ({ value: m, label: m }))}
+                      />
+                    </div>
+                  ))}
+                </Card>
+
+                <Card size="small" title="🎬 视频工序细分模型">
+                  {VIDEO_TASK_MODELS.map((task) => (
+                    <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
+                      <AutoComplete
+                        style={{ flex: 1 }}
+                        value={(config.video.models as Record<string, string>)[task.key] || undefined}
+                        onChange={(v) => setVideoModel(task.key, v)}
+                        placeholder={`留空默认使用: ${config.video.defaultModel || '主力视频模型'}`}
+                        size="small"
+                        allowClear
+                        options={(PROVIDER_MODEL_SUGGESTIONS[config.video.primary] ?? []).map((m) => ({ value: m, label: m }))}
+                      />
+                    </div>
+                  ))}
+                </Card>
+              </div>
             ),
           },
         ]}
       />
-    );
-  };
 
-  // --- Step 3: Task models ---
-
-  /** Render one row of "<label> <AutoComplete model input> [reset]".
-   *  Works for LLM / image / video task models alike. */
-  const renderTaskModelRow = (
-    taskKey: string,
-    labelKey: string,
-    currentValue: string,
-    placeholder: string,
-    suggestions: string[],
-    onCommit: (model: string) => void,
-  ) => {
-    return (
-      <div key={taskKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ width: 120, fontSize: 13, flexShrink: 0 }}>{t(labelKey)}</span>
-        <AutoComplete
-          style={{ flex: 1 }}
-          value={currentValue || undefined}
-          onChange={(v) => onCommit(v)}
-          placeholder={placeholder || t('provider.task.modelPlaceholder')}
-          size="small"
-          allowClear
-          filterOption={(input, option) =>
-            (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-          options={suggestions.map((m) => ({ value: m, label: m }))}
-          popupMatchSelectWidth={false}
-        />
-        {currentValue && (
-          <Button
-            size="small"
-            type="link"
-            onClick={() => onCommit('')}
-            style={{ flexShrink: 0, padding: '0 4px' }}
-          >
-            {t('common.reset')}
-          </Button>
-        )}
-      </div>
-    );
-  };
-
-  const renderStepTasks = () => {
-    if (!hasEndpoints) {
-      return (
-        <Alert
-          type="warning"
-          showIcon
-          icon={<LockOutlined />}
-          message={t('provider.stepLocked')}
-          description={t('provider.noEndpoints')}
-        />
-      );
-    }
-
-    const llmSuggestions = getModelSuggestions(config, 'llm');
-    const imageSuggestions = getModelSuggestions(config, 'image');
-    const videoSuggestions = getModelSuggestions(config, 'video');
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Card size="small" title={t('provider.llm')}>
-          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
-            {t('provider.step.tasks.desc')}
-          </div>
-          {LLM_TASK_MODELS.map((task) => {
-            const currentValue = (config.llm.models as Record<string, string>)[task.key] ?? '';
-            return renderTaskModelRow(
-              task.key,
-              task.labelKey,
-              currentValue,
-              config.llm.defaultModel,
-              llmSuggestions,
-              (v) => setLLMModel(task.key, v),
-            );
-          })}
-        </Card>
-
-        <Card size="small" title={t('provider.image')}>
-          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
-            {t('provider.step.tasks.imageDesc')}
-          </div>
-          {IMAGE_TASK_MODELS.map((task) => {
-            const currentValue = (config.image.models as Record<string, string>)[task.key] ?? '';
-            return renderTaskModelRow(
-              task.key,
-              task.labelKey,
-              currentValue,
-              config.image.defaultModel,
-              imageSuggestions,
-              (v) => setImageModel(task.key, v),
-            );
-          })}
-        </Card>
-
-        <Card size="small" title={t('provider.video')}>
-          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
-            {t('provider.step.tasks.videoDesc')}
-          </div>
-          {VIDEO_TASK_MODELS.map((task) => {
-            const currentValue = (config.video.models as Record<string, string>)[task.key] ?? '';
-            return renderTaskModelRow(
-              task.key,
-              task.labelKey,
-              currentValue,
-              config.video.defaultModel,
-              videoSuggestions,
-              (v) => setVideoModel(task.key, v),
-            );
-          })}
-        </Card>
-
-        <Card size="small" title={`${t('provider.tts')} — 默认模型与音色设置`}>
-          <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
-            设置 TTS 配音调用的默认 Voice Model 及预设音色（如 CosyVoice / 豆包音色）
-          </div>
-          {renderTaskModelRow(
-            'tts_default_model',
-            'TTS 默认模型',
-            config.tts?.defaultModel || '',
-            'FunAudioLLM/CosyVoice-300M',
-            getModelSuggestions(config, 'tts'),
-            (v) => setTTSProvider(config.tts?.primary ?? 'openai-tts', v, config.tts?.defaultVoice, config.tts?.endpointId),
-          )}
-          {renderTaskModelRow(
-            'tts_default_voice',
-            'TTS 默认音色',
-            config.tts?.defaultVoice || '',
-            'alloy / xiaoxiao / yunxi',
-            ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural'],
-            (v) => setTTSProvider(config.tts?.primary ?? 'openai-tts', config.tts?.defaultModel, v, config.tts?.endpointId),
-          )}
-        </Card>
-      </div>
-    );
-  };
-
-  // --- Steps config ---
-
-  const stepsItems = [
-    {
-      key: 'endpoints',
-      title: t('provider.step.endpoints'),
-      description: t('provider.step.endpoints.desc'),
-      icon: <EndpointIcon />,
-    },
-    {
-      key: 'models',
-      title: t('provider.step.models'),
-      description: hasEndpoints ? t('provider.step.models.desc') : <LockOutlined style={{ fontSize: 12 }} />,
-      icon: <SettingOutlined />,
-    },
-    {
-      key: 'tasks',
-      title: t('provider.step.tasks'),
-      description: hasEndpoints ? t('provider.step.tasks.desc') : <LockOutlined style={{ fontSize: 12 }} />,
-      icon: <TaskIcon />,
-    },
-  ];
-
-  const stepIndex = ['endpoints', 'models', 'tasks'].indexOf(currentStep);
-
-  return (
-    <div style={{ padding: '0 8px' }}>
-      <Alert
-        type="info"
-        showIcon
-        message={t('provider.quickSetup.title')}
-        description={t('provider.quickSetup.description')}
-        style={{ marginBottom: 16 }}
-      />
-      {renderStepEndpoints()}
-
-      {/* Add/Edit Endpoint Modal */}
+      {/* 添加 / 编辑端点弹窗 */}
       <Modal
-        title={editingEndpoint ? t('provider.editEndpoint') : t('provider.addEndpoint')}
+        title={editingEndpoint ? '编辑接口端点' : '添加接口端点'}
         open={addModalOpen}
         onOk={handleSaveEndpoint}
         onCancel={() => { setAddModalOpen(false); setEditingEndpoint(null); form.resetFields(); }}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
+        okText="保存并启用"
+        cancelText="取消"
         destroyOnClose
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label={t('provider.endpointName')} rules={[{ required: true, message: t('common.required') }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="provider" label={t('provider.primary')} rules={[{ required: true }]}>
+          <Form.Item name="provider" label="服务商类型" rules={[{ required: true }]}>
             <Select
               disabled={!!editingEndpoint}
               options={
@@ -895,28 +810,47 @@ const ProviderSettings: React.FC = () => {
                 : TTS_PROVIDER_OPTIONS) as { value: string; label: string }[]
               }
               onChange={(value) => {
-                form.setFieldsValue({ baseUrl: getProviderDefaultUrl(value) });
+                form.setFieldsValue({
+                  baseUrl: getProviderDefaultUrl(value),
+                  name: `${value.toUpperCase()} 接口`,
+                  modelsStr: (PROVIDER_MODEL_SUGGESTIONS[value] ?? []).join(', '),
+                });
               }}
             />
           </Form.Item>
-          <Form.Item name="baseUrl" label={t('provider.endpointUrl')} dependencies={['provider']} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]} extra={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : undefined}>
-            <Input placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsUrlAuto') : ''} />
+
+          <Form.Item name="name" label="端点备注名称" rules={[{ required: true, message: '请填写端点名称' }]}>
+            <Input placeholder="例如: 个人 DeepSeek / 官方 OpenAI" />
           </Form.Item>
-          <Form.Item name="apiKey" label={t('provider.apiKey')} dependencies={['provider']} rules={[{ required: watchProvider !== 'edge-tts', message: t('common.required') }]}>
-            <Input.Password placeholder={watchProvider === 'edge-tts' ? t('provider.edgeTtsNoKey') : t('provider.apiKeyPlaceholder')} />
+
+          <Form.Item
+            name="baseUrl"
+            label="API 接口地址 (Base URL)"
+            rules={[{ required: watchProvider !== 'edge-tts', message: '请填写 Base URL' }]}
+          >
+            <Input placeholder={watchProvider === 'edge-tts' ? '微软 Edge TTS 自动连接，无需配置' : 'https://api.openai.com/v1'} />
           </Form.Item>
+
+          <Form.Item
+            name="apiKey"
+            label="API Key / 访问令牌"
+            rules={[{ required: watchProvider !== 'edge-tts', message: '请填写 API Key' }]}
+          >
+            <Input.Password placeholder={watchProvider === 'edge-tts' ? '微软 Edge TTS 完全免费，无需 API Key' : 'sk-...'} />
+          </Form.Item>
+
           {watchProvider !== 'edge-tts' && (
-            <Form.Item name="modelsStr" label={t('provider.modelNames')} tooltip={t('provider.modelNamesHint')}>
-              <Input placeholder="FunAudioLLM/CosyVoice-300M, cosyvoice-v1" />
+            <Form.Item
+              name="modelsStr"
+              label="指定使用模型 (多个用逗号隔开，首个为默认)"
+              tooltip="可直接输入具体模型名称，例如 deepseek-chat, gpt-4o 等"
+            >
+              <Input placeholder="可留空，系统将自动使用该服务商推荐默认模型" />
             </Form.Item>
           )}
-          {!editingEndpoint && (
-            <Form.Item name="useAsPrimary" valuePropName="checked">
-              <Checkbox>{t('provider.quickSetup.useAsPrimary')}</Checkbox>
-            </Form.Item>
-          )}
+
           {watchProvider === 'edge-tts' && (
-            <Alert type="info" showIcon message={t('provider.edgeTtsHint')} style={{ marginTop: 4 }} />
+            <Alert type="info" showIcon message="微软 Edge TTS 支持高质量男女多音色，零门槛开箱即用" style={{ marginTop: 4 }} />
           )}
         </Form>
       </Modal>
