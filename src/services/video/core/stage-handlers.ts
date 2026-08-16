@@ -15,6 +15,7 @@ import type {
   PipelineOptions,
   VideoStage,
   ShotSpec,
+  StoryboardShot,
   GeneratedClip,
   StageInput,
 } from '@/types/video';
@@ -27,6 +28,12 @@ import { runKeyframe } from './step-keyframe';
 import { runVideoGen, type VideoGenOptions } from './step-video-gen';
 import { runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
+import { sliceChapters, type RawShot } from '../chapter-slicer';
+import { buildStoryboard, type StoryboardContext } from '../storyboard-prompt';
+import { stepExtract } from './step-extract';
+import { parseStructuredPromptShots } from '../direct-scene-builder';
+import { useProjectStore } from '@/stores/projectStore';
+import { applySeriesProjectLibrary } from '../series-character-library';
 import { isValidVideoClip } from '../asset-store';
 import { toWebviewUrl } from '../asset-store';
 import { detectInputLanguage } from './lang-detector';
@@ -658,14 +665,308 @@ export async function executeCompose(ctx: StageContext): Promise<StageResult | n
   }
 }
 
+/** 步 1: 剧本切片 (script_slicing) */
+export async function executeScriptSlicing(ctx: StageContext): Promise<StageResult | null> {
+  const { pid, workingSpec, callbacks } = ctx;
+  const store = useVideoStore.getState();
+  callbacks?.onStageChange?.('script_slicing');
+  store.advanceToStage(pid, 'script_slicing');
+  store.setStageStatus(pid, 'script_slicing', 'running');
+
+  try {
+    const pStore = useProjectStore.getState();
+    const globalProj = pStore.projects.find((p) => p.id === pid);
+    const meta = globalProj?.metadata as any;
+
+    // 1. 如果当前项目已有 2 个以上的独立镜头（例如 Demo 预置或已有分镜），坚决保留全部独立分镜，防止冲刷合并成 1 个
+    const existingShots = (workingSpec.shots && workingSpec.shots.length > 1)
+      ? workingSpec.shots
+      : (meta?.initialSceneSpec?.shots && meta.initialSceneSpec.shots.length > 1)
+        ? meta.initialSceneSpec.shots
+        : null;
+
+    if (existingShots && existingShots.length > 1) {
+      const storyboardShots: StoryboardShot[] = (existingShots as any[]).map((s: any, idx: number) => ({
+        id: s.id || `shot_${idx + 1}`,
+        index: idx,
+        sourceChapterId: s.sourceChapterId || 'ch_1',
+        sourceText: s.sourceText || s.videoPrompt || s.narration || `镜头 ${idx + 1}`,
+        videoPrompt: s.videoPrompt || s.sourceText || '',
+        durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as any) ? s.durationSeconds : 5) as any,
+        characters: (s as any).characters || s.characterIds || [],
+        location: s.location,
+        mood: s.mood,
+        narration: s.narration || (s.dialogue?.[0]?.text) || s.sourceText?.slice(0, 100) || '',
+        dialogue: s.dialogue,
+      }));
+
+      store.setShots(pid, storyboardShots);
+      const updatedSpec: SceneSpec = {
+        ...workingSpec,
+        shots: storyboardShots as any,
+      };
+      store.setSceneSpec(pid, updatedSpec);
+      store.setStageInputSummary(pid, 'script_slicing', {
+        headline: `切片就绪: 共 ${storyboardShots.length} 个独立镜头`,
+        details: storyboardShots.slice(0, 5).map((r, i) => `镜头 ${i + 1} · ${(r.sourceText || r.videoPrompt || '').slice(0, 40)}…`),
+      });
+      store.setStageStatus(pid, 'script_slicing', 'completed', { progress: 1 });
+      callbacks?.onStageProgress?.('script_slicing', 1);
+      return { spec: updatedSpec };
+    }
+
+    // 2. 从剧本文本或章节切分
+    let rawText = '';
+    const chapters = meta?.chapters || [];
+    if (chapters.length > 0) {
+      rawText = chapters.map((c: any) => c.content || '').join('\n\n');
+    } else if (globalProj?.description) {
+      rawText = globalProj.description;
+    } else if (workingSpec.shots && workingSpec.shots.length > 0) {
+      rawText = workingSpec.shots.map((s) => s.sourceText || s.videoPrompt || s.narration || '').filter(Boolean).join('\n\n');
+    }
+
+    if (!rawText.trim()) {
+      rawText = '镜头1: 场景初现。主角登场。\n镜头2: 剧情推进。';
+    }
+
+    // 优先使用结构化分镜解析 (分镜1/镜头1/Shot 1/【镜头一】等)
+    const structured = parseStructuredPromptShots(rawText, {
+      aspectRatio: workingSpec.meta.aspectRatio || '16:9',
+      defaultShotDuration: ([3, 5, 10, 18].includes(workingSpec.meta.defaultShotDuration as any) ? workingSpec.meta.defaultShotDuration : 5) as any,
+    });
+
+    let rawShots: RawShot[] = [];
+    if (structured && structured.length > 1) {
+      rawShots = structured.map((s, idx) => ({
+        id: s.id || `shot_${idx + 1}`,
+        index: idx,
+        sourceChapterId: 'ch_1',
+        sourceChapterNumber: 1,
+        rawText: s.videoPrompt || s.sourceText || `镜头 ${idx + 1}`,
+        characters: s.characterIds || [],
+        location: s.location,
+        mood: s.mood,
+        hasDialogue: !!s.dialogue?.length || !!s.narration,
+        hasAction: true,
+      }));
+    } else {
+      const isScript = /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(rawText);
+      rawShots = sliceChapters(
+        [{ id: 'ch_1', number: 1, content: rawText }],
+        {
+          isScript,
+          targetWordsPerShot: isScript ? 50 : 200,
+          minWordsPerShot: 10,
+          maxWordsPerShot: isScript ? 200 : 500,
+        },
+      );
+    }
+
+    // 如果切分后依然只有 1 个镜头且文本有多行，按换行切分
+    if (rawShots.length <= 1 && rawText.trim()) {
+      const lines = rawText
+        .split(/\n+/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 3);
+      if (lines.length > 1) {
+        rawShots = lines.map((line, idx) => ({
+          id: `shot_${idx + 1}`,
+          index: idx,
+          sourceChapterId: 'ch_1',
+          sourceChapterNumber: 1,
+          rawText: line,
+          characters: [],
+          hasDialogue: /["「『":：]/.test(line),
+          hasAction: true,
+        }));
+      }
+    }
+
+    const storyboardShots: StoryboardShot[] = rawShots.map((raw) => ({
+      id: raw.id,
+      index: raw.index,
+      sourceChapterId: raw.sourceChapterId,
+      sourceText: raw.rawText,
+      videoPrompt: '',
+      durationSeconds: (workingSpec.meta?.defaultShotDuration || 5) as any,
+      characters: raw.characters,
+      location: raw.location,
+      mood: raw.mood,
+      narration: raw.rawText.slice(0, 100),
+    }));
+
+    store.setShots(pid, storyboardShots);
+    const updatedSpec: SceneSpec = {
+      ...workingSpec,
+      shots: storyboardShots as any,
+    };
+    store.setSceneSpec(pid, updatedSpec);
+    store.setStageInputSummary(pid, 'script_slicing', {
+      headline: `切片完成: 共 ${rawShots.length} 个候选镜头`,
+      details: rawShots.slice(0, 5).map((r, i) => `镜头 ${i + 1} · ${(r.rawText || '').slice(0, 40)}…`),
+    });
+    store.setStageStatus(pid, 'script_slicing', 'completed', { progress: 1 });
+    callbacks?.onStageProgress?.('script_slicing', 1);
+    return { spec: updatedSpec };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    store.setStageStatus(pid, 'script_slicing', 'error', { error: msg });
+    callbacks?.onError?.(msg);
+    return null;
+  }
+}
+
+/** 步 2: 分镜规划 (storyboard_prompt) */
+export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageResult | null> {
+  const { pid, workingSpec, callbacks } = ctx;
+  const store = useVideoStore.getState();
+  callbacks?.onStageChange?.('storyboard_prompt');
+  store.advanceToStage(pid, 'storyboard_prompt');
+  store.setStageStatus(pid, 'storyboard_prompt', 'running');
+
+  try {
+    const projState = store.getProject(pid);
+    const rawShots = (workingSpec.shots?.length ? workingSpec.shots : (projState?.shots || [])).map((s, idx) => ({
+      id: s.id || `shot_${idx}`,
+      index: idx,
+      sourceChapterId: s.sourceChapterId || 'ch_1',
+      sourceChapterNumber: 1,
+      rawText: s.sourceText || s.videoPrompt || s.narration || '',
+      characters: (s as any).characters || s.characterIds || [],
+      location: s.location,
+      mood: s.mood,
+      hasDialogue: !!s.dialogue || /["「『":：]/.test(s.sourceText || ''),
+      hasAction: true,
+    }));
+
+    const defaultDuration: 3 | 5 | 10 | 18 =
+      ([3, 5, 10, 18].includes(workingSpec.meta.defaultShotDuration as any)
+        ? (workingSpec.meta.defaultShotDuration as any)
+        : 5);
+
+    const sbCtx: StoryboardContext = {
+      novelTitle: workingSpec.meta.title || '漫剧分镜',
+      genre: workingSpec.meta.genre || 'general',
+      style: workingSpec.meta.style || 'anime_standard',
+      aspectRatio: workingSpec.meta.aspectRatio || '16:9',
+      defaultShotDuration: defaultDuration,
+    };
+
+    const storyboardShots = await buildStoryboard(rawShots, sbCtx, (done, total) => {
+      store.setStageStatus(pid, 'storyboard_prompt', 'running', { progress: done / total });
+      callbacks?.onStageProgress?.('storyboard_prompt', done / total);
+    });
+
+    store.setShots(pid, storyboardShots);
+    const updatedSpec: SceneSpec = {
+      ...workingSpec,
+      shots: storyboardShots.map((s) => ({
+        id: s.id,
+        index: s.index,
+        sourceChapterId: s.sourceChapterId,
+        sourceText: s.sourceText,
+        videoPrompt: s.videoPrompt,
+        narration: s.narration,
+        dialogue: s.dialogue,
+        characterIds: s.characters,
+        location: s.location,
+        mood: s.mood,
+        cameraMovement: s.cameraMovement,
+        durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as number) ? s.durationSeconds : 5) as 3 | 5 | 10 | 18,
+      })),
+    };
+    store.setSceneSpec(pid, updatedSpec);
+    store.setStageInputSummary(pid, 'storyboard_prompt', {
+      headline: `规划完成: ${storyboardShots.length} 个分镜已生成视觉 Prompt`,
+      details: storyboardShots.slice(0, 5).map((s) => `镜头 ${s.index + 1} · ${(s.videoPrompt || '').slice(0, 40)}…`),
+    });
+    store.setStageStatus(pid, 'storyboard_prompt', 'completed', { progress: 1 });
+    callbacks?.onStageProgress?.('storyboard_prompt', 1);
+    return { spec: updatedSpec };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    store.setStageStatus(pid, 'storyboard_prompt', 'error', { error: msg });
+    callbacks?.onError?.(msg);
+    return null;
+  }
+}
+
+/** 步 3: 实体提取 (extraction) */
+export async function executeExtraction(ctx: StageContext): Promise<StageResult | null> {
+  const { pid, workingSpec, callbacks } = ctx;
+  const store = useVideoStore.getState();
+  callbacks?.onStageChange?.('extraction');
+  store.advanceToStage(pid, 'extraction');
+  store.setStageStatus(pid, 'extraction', 'running');
+
+  try {
+    const fullText = (workingSpec.shots || [])
+      .map((s) => `${s.sourceText || ''} ${s.videoPrompt || ''} ${s.narration || ''} ${s.dialogue || ''}`)
+      .join('\n\n');
+
+    const extractResult = await stepExtract({
+      text: fullText || '分镜角色与场景',
+      shots: workingSpec.shots,
+    });
+
+    const knownCharNames = new Set(extractResult.characters.map((c) => c.name));
+    const knownCharIds = new Set(extractResult.characters.map((c) => c.id));
+    const finalShots: ShotSpec[] = (extractResult.resolvedShots ?? workingSpec.shots).map((sh) => ({
+      ...sh,
+      characterIds: (sh.characterIds || []).filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
+    }));
+
+    const nameToId = new Map(extractResult.characters.map((c) => [c.name, c.id] as const));
+    for (const sh of finalShots) {
+      sh.characterIds = (sh.characterIds || [])
+        .map((id) => nameToId.get(id) ?? id)
+        .filter((id, idx, arr) => knownCharIds.has(id) && arr.indexOf(id) === idx);
+    }
+
+    const pStore = useProjectStore.getState();
+    const globalProj = pStore.projects.find((p) => p.id === pid);
+    const meta = globalProj?.metadata as any;
+    const seriesChars = (pStore as any).getSeriesCharacterLibrary?.(meta?.seriesId) || meta?.characters;
+
+    let updatedSpec: SceneSpec = {
+      ...workingSpec,
+      characters: extractResult.characters.length > 0 ? extractResult.characters : (workingSpec.characters || []),
+      scenes: extractResult.scenes.length > 0 ? extractResult.scenes : (workingSpec.scenes || []),
+      props: extractResult.props,
+      shots: finalShots,
+    };
+
+    if (seriesChars && seriesChars.length > 0) {
+      updatedSpec = applySeriesProjectLibrary(updatedSpec, { characters: seriesChars });
+    }
+
+    store.setSceneSpec(pid, updatedSpec);
+    store.setStageInputSummary(pid, 'extraction', {
+      headline: `提取完成: ${updatedSpec.characters?.length ?? 0} 个角色, ${updatedSpec.scenes?.length ?? 0} 个场景`,
+      details: (updatedSpec.characters || []).map((c) => `角色: ${c.name} (${c.gender || '未知'}) · ${(c.appearance || '').slice(0, 30)}`),
+    });
+    store.setStageStatus(pid, 'extraction', 'completed', { progress: 1 });
+    callbacks?.onStageProgress?.('extraction', 1);
+    return { spec: updatedSpec };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    store.setStageStatus(pid, 'extraction', 'error', { error: msg });
+    callbacks?.onError?.(msg);
+    return null;
+  }
+}
+
 // --- handler 注册表 ---
 
-/** runPipeline 处理的 stage 顺序(不含 script_slicing/storyboard/extraction,
- *  那三步在 VideoPipeline.resume 里跑)。 */
+/** 完整 11 步统一全流程流水线顺序 */
 export const RUNTIME_STAGE_ORDER: VideoStage[] = [
-  'voice_assignment',
+  'script_slicing',
+  'storyboard_prompt',
+  'extraction',
   'character_anchor',
   'scene_image',
+  'voice_assignment',
   'tts',
   'keyframe_image',
   'video_generation',
@@ -675,6 +976,9 @@ export const RUNTIME_STAGE_ORDER: VideoStage[] = [
 
 /** stage → handler 映射。runPipeline / runSingleStage / runFromStage 共用。 */
 export const STAGE_HANDLERS: Partial<Record<VideoStage, (ctx: StageContext) => Promise<StageResult | null>>> = {
+  script_slicing: executeScriptSlicing,
+  storyboard_prompt: executeStoryboardPrompt,
+  extraction: executeExtraction,
   character_anchor: executeCharacterAnchor,
   voice_assignment: executeVoiceAssignment,
   scene_image: executeSceneImage,
@@ -688,6 +992,12 @@ export const STAGE_HANDLERS: Partial<Record<VideoStage, (ctx: StageContext) => P
 /** stage → 是否启用(根据 options 判断该 stage 该不该跑)。 */
 export function isStageEnabled(stage: VideoStage, options: PipelineOptions, spec: SceneSpec): boolean {
   switch (stage) {
+    case 'script_slicing':
+      return true;
+    case 'storyboard_prompt':
+      return true;
+    case 'extraction':
+      return true;
     case 'character_anchor':
       return !!options.enableCharacterAnchor && !!spec.characters?.length;
     case 'voice_assignment':

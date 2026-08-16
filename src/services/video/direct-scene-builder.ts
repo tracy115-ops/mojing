@@ -112,13 +112,13 @@ export async function buildSceneFromPrompt(
 }
 
 export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildContext): ShotSpec[] | null {
-  const isScript = /(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+)/i.test(prompt);
+  const isScript = /(?:分镜\s*[一二三四五六七八九十\d]+|镜头\s*[一二三四五六七八九十\d]+|第\s*[一二三四五六七八九十\d]+\s*[镜场]|Shot\s*\d+|Scene\s*\d+|【(?:镜头|分镜|场)[^】]*】)/i.test(prompt);
   if (!isScript) return null;
 
   const blocks = prompt
-    .split(/(?=(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+))/i)
+    .split(/(?=(?:分镜\s*[一二三四五六七八九十\d]+|镜头\s*[一二三四五六七八九十\d]+|第\s*[一二三四五六七八九十\d]+\s*[镜场]|Shot\s*\d+|Scene\s*\d+|【(?:镜头|分镜|场)[^】]*】))/i)
     .map((b) => b.trim())
-    .filter((b) => /^(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+)/i.test(b));
+    .filter((b) => /^(?:分镜\s*[一二三四五六七八九十\d]+|镜头\s*[一二三四五六七八九十\d]+|第\s*[一二三四五六七八九十\d]+\s*[镜场]|Shot\s*\d+|Scene\s*\d+|【(?:镜头|分镜|场)[^】]*】)/i.test(b));
 
   if (blocks.length === 0) return null;
 

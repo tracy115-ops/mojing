@@ -377,7 +377,7 @@ const ProviderSettings: React.FC = () => {
         const isPrimary = isPrimaryEndpoint(record);
         return isPrimary ? (
           <Tag color="gold" icon={<StarFilled style={{ color: '#faad14' }} />}>
-            ⭐ 当前主力
+            当前主力
           </Tag>
         ) : (
           <Button
@@ -416,7 +416,7 @@ const ProviderSettings: React.FC = () => {
           <Space wrap size={[4, 4]}>
             {displayModels.map((m, idx) => (
               <Tag key={idx} color={idx === 0 ? 'blue' : 'default'} style={{ fontSize: 11 }}>
-                {idx === 0 ? `👑 ${m}` : m}
+                {m}
               </Tag>
             ))}
           </Space>

@@ -39,7 +39,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
     <Modal
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 16, fontWeight: 600 }}>🎬 新建视频项目</span>
+          <span style={{ fontSize: 16, fontWeight: 600 }}>新建视频项目</span>
         </div>
       }
       open={open}

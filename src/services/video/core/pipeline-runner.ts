@@ -211,6 +211,12 @@ function isStageLiveCompleted(proj: VideoProjectState, stage: VideoStage): boole
   const st = proj.stages[stage];
   if (!st || st.status !== 'completed') return false;
   switch (stage) {
+    case 'script_slicing':
+      return proj.shots.length > 0;
+    case 'storyboard_prompt':
+      return proj.shots.length > 0 && proj.shots.some((s) => !!s.videoPrompt);
+    case 'extraction':
+      return (proj.sceneSpec?.characters?.length ?? 0) > 0 || (proj.sceneSpec?.scenes?.length ?? 0) > 0;
     case 'character_anchor':
       return proj.anchorImages.some((a) => !!a.imageUrl);
     case 'scene_image':

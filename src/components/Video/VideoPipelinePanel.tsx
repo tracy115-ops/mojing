@@ -15,7 +15,8 @@ import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
   DeleteOutlined, SettingOutlined, SafetyCertificateOutlined,
-  ForwardOutlined,
+  ForwardOutlined, UserOutlined, EnvironmentOutlined, EditOutlined,
+  PictureOutlined, PlusOutlined, RedoOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -199,13 +200,13 @@ const ShotRow: React.FC<{
                 });
               }}
               options={[
-                { value: 'zoom_in', label: '🔍 缓慢推进' },
-                { value: 'zoom_out', label: '🔍 缓慢拉远' },
-                { value: 'pan_left', label: '⬅️ 左摇镜头' },
-                { value: 'pan_right', label: '➡️ 右摇镜头' },
-                { value: 'orbit', label: '🔄 360° 环绕' },
-                { value: 'crane_up', label: '⬆️ 摇臂升起' },
-                { value: 'tracking', label: '🏃 跟随镜头' },
+                { value: 'zoom_in', label: '缓慢推进' },
+                { value: 'zoom_out', label: '缓慢拉远' },
+                { value: 'pan_left', label: '左摇镜头' },
+                { value: 'pan_right', label: '右摇镜头' },
+                { value: 'orbit', label: '360° 环绕' },
+                { value: 'crane_up', label: '摇臂升起' },
+                { value: 'tracking', label: '跟随镜头' },
               ]}
             />
             <Button size="small" type="primary" onClick={handleSavePrompt}>{t('common.save')}</Button>
@@ -223,14 +224,16 @@ const ShotRow: React.FC<{
                     const char = seriesCharacters?.find((c) => c.id === charId);
                     const isSeries = !!char;
                     return (
-                      <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
-                        👤 {char?.name || charId} {isSeries ? '(系列)' : ''}
+                      <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                        <UserOutlined style={{ fontSize: 10 }} />
+                        {char?.name || charId} {isSeries ? '(系列)' : ''}
                       </Tag>
                     );
                   })}
                   {(specShot?.sceneId || shot.location) && (
-                    <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
-                      🏛️ {shot.location || specShot?.sceneId}
+                    <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                      <EnvironmentOutlined style={{ fontSize: 10 }} />
+                      {shot.location || specShot?.sceneId}
                     </Tag>
                   )}
                 </div>
@@ -241,35 +244,32 @@ const ShotRow: React.FC<{
                 <Button
                   size="small"
                   type="text"
+                  icon={<EditOutlined />}
                   onClick={() => setEditing(true)}
                   style={{ fontSize: 11 }}
-                >
-                  ✏️
-                </Button>
+                />
               </Tooltip>
               <Tooltip title="单独重生成此镜关键帧画面 (保持角色与光影参考)">
                 <Button
                   size="small"
                   type="text"
+                  icon={<PictureOutlined />}
                   loading={rerunningKeyframe}
                   disabled={rerunningKeyframe}
                   onClick={handleRerunKeyframe}
                   style={{ fontSize: 11 }}
-                >
-                  🖼️
-                </Button>
+                />
               </Tooltip>
               <Tooltip title="单独重生成此镜动态视频 (基于关键帧与提示词)">
                 <Button
                   size="small"
                   type="text"
+                  icon={<VideoCameraOutlined />}
                   loading={rerunning}
                   disabled={rerunning}
                   onClick={handleRerun}
                   style={{ fontSize: 11 }}
-                >
-                  🎬
-                </Button>
+                />
               </Tooltip>
               <Popconfirm
                 title="确定删除此镜头分镜？"
@@ -278,9 +278,7 @@ const ShotRow: React.FC<{
                 cancelText="取消"
               >
                 <Tooltip title="删除分镜">
-                  <Button size="small" type="text" danger style={{ fontSize: 11 }}>
-                    🗑️
-                  </Button>
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 11 }} />
                 </Tooltip>
               </Popconfirm>
             </Space>
@@ -680,7 +678,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                 size="small"
                 icon={<StopOutlined />}
               >
-                ⏹️ 强行终止生成
+                终止生成
               </Button>
             </Popconfirm>
           )}
@@ -692,11 +690,11 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               onClick={async () => {
                 if (!pipelineId) return;
                 message.loading('正在从第一步启动全流程流水线生成...', 1.5);
-                const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
+                const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
                 await runFromStage(pipelineId, firstStage);
               }}
             >
-              🚀 开始全流程生成
+              开始全流程生成
             </Button>
           )}
           {overall === 'error' && (
@@ -711,26 +709,26 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                 await runFromFirstFailedStage(pipelineId);
               }}
             >
-              🚀 从失败处恢复重试
+              从失败处恢复重试
             </Button>
           )}
           <Popconfirm
             title="确定清空全部产物，一键从第一步重新全流程生成吗？"
             onConfirm={async () => {
               if (!pipelineId) return;
-              message.loading('正在重置并从第一步重新生成...', 1.5);
-              const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
+              message.loading('正在重置并从第一步【剧本切片】重新生成...', 1.5);
+              const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
               useVideoStore.getState().resetStagesFrom(pipelineId, firstStage);
               await runFromStage(pipelineId, firstStage);
             }}
           >
-            <Button size="small" icon={<ReloadOutlined />}>
-              🔄 从头重新生成
+            <Button size="small" icon={<RedoOutlined />}>
+              从头重新生成
             </Button>
           </Popconfirm>
           <Tooltip title="导出 4K 高帧率超分增强版本">
             <Tag color="gold" style={{ cursor: 'pointer', fontSize: 11 }}>
-              ⚡ 4K 超分渲染已就绪
+              4K 超分渲染已就绪
             </Tag>
           </Tooltip>
           {finalVideoUrl && (
@@ -978,14 +976,15 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                         <Text style={{ fontSize: 12 }}>发现本集新增/未匹配角色：</Text>
                         {sceneSpec.meta.unmatchedCharacterNames.map((name) => (
                           <Tag key={name} color="orange" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            👤 {name}
+                            <UserOutlined /> {name}
                             <Button
                               type="link"
                               size="small"
+                              icon={<PlusOutlined style={{ fontSize: 10 }} />}
                               style={{ padding: 0, height: 'auto', fontSize: 11 }}
                               onClick={() => handleAddCharacterToSeries(name)}
                             >
-                              ➕ 加入系列库
+                              加入系列库
                             </Button>
                           </Tag>
                         ))}
@@ -996,14 +995,15 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                         <Text style={{ fontSize: 12 }}>发现本集新增/未匹配场景：</Text>
                         {sceneSpec.meta.unmatchedSceneNames.map((name) => (
                           <Tag key={name} color="cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            🏛️ {name}
+                            <EnvironmentOutlined /> {name}
                             <Button
                               type="link"
                               size="small"
+                              icon={<PlusOutlined style={{ fontSize: 10 }} />}
                               style={{ padding: 0, height: 'auto', fontSize: 11 }}
                               onClick={() => handleAddSceneToSeries(name)}
                             >
-                              ➕ 加入系列库
+                              加入系列库
                             </Button>
                           </Tag>
                         ))}

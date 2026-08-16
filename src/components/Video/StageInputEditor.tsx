@@ -47,7 +47,19 @@ function getStageDeps(stage: VideoStage): VideoStage[] {
 
 /** 该 stage 之后的所有 runtime stage(用于「重跑及后续」提示 N 步)。 */
 function getDownstreamCount(stage: VideoStage): number {
-  const order = ['voice_assignment', 'character_anchor', 'scene_image', 'tts', 'keyframe_image', 'video_generation', 'audio_merge', 'composing'] as const;
+  const order = [
+    'script_slicing',
+    'storyboard_prompt',
+    'extraction',
+    'character_anchor',
+    'scene_image',
+    'voice_assignment',
+    'tts',
+    'keyframe_image',
+    'video_generation',
+    'audio_merge',
+    'composing',
+  ] as const;
   const idx = order.indexOf(stage as typeof order[number]);
   if (idx < 0) return 0;
   return order.length - idx - 1;
@@ -183,7 +195,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
         {stage === 'character_anchor' && (
           <div style={{ marginBottom: 12 }}>
             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 6, fontWeight: 600 }}>
-              👤 独立角色生成控制面板 (共 {project.sceneSpec?.characters?.length ?? 0} 个独立实体):
+              独立角色生成控制面板 (共 {project.sceneSpec?.characters?.length ?? 0} 个独立实体):
             </Text>
             {(project.sceneSpec?.characters ?? []).map((char) => {
               const charPrompts = (input as any)?.characterPrompts || {};
@@ -204,13 +216,13 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                     <Text strong style={{ fontSize: 12, color: '#1890ff' }}>
-                      👤 角色实体: {char.name}
+                      角色实体: {char.name}
                     </Text>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div>
                       <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>
-                        🎨 单人立绘 Prompt ({char.name}):
+                        单人立绘 Prompt ({char.name}):
                       </Text>
                       <Input.TextArea
                         rows={2}
@@ -225,7 +237,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
                     </div>
                     <div>
                       <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 2 }}>
-                        📐 三视图模型板 Prompt ({char.name}):
+                        三视图模型板 Prompt ({char.name}):
                       </Text>
                       <Input.TextArea
                         rows={2}
@@ -247,7 +259,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
         {stage === 'composing' && (
           <div style={{ marginBottom: 8 }}>
             <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
-              🎼 BGM 背景音乐氛围挂载:
+              BGM 背景音乐氛围挂载:
             </Text>
             <Radio.Group
               defaultValue="epic"
@@ -256,10 +268,10 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
               style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
             >
               <Radio.Button value="none">无 BGM</Radio.Button>
-              <Radio.Button value="epic">🎻 史诗交响</Radio.Button>
-              <Radio.Button value="piano">🎹 治愈钢琴</Radio.Button>
-              <Radio.Button value="cyber">⚡ 赛博朋克</Radio.Button>
-              <Radio.Button value="oriental">🏮 华风古韵</Radio.Button>
+              <Radio.Button value="epic">史诗交响</Radio.Button>
+              <Radio.Button value="piano">治愈钢琴</Radio.Button>
+              <Radio.Button value="cyber">赛博朋克</Radio.Button>
+              <Radio.Button value="oriental">华风古韵</Radio.Button>
             </Radio.Group>
           </div>
         )}

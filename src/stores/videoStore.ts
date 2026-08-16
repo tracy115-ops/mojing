@@ -649,10 +649,37 @@ export const useVideoStore = create<VideoStoreState>()(
       const proj = s.projects[novelProjectId];
       if (!proj) return s;
       const shots = spec.shots && spec.shots.length > 0 ? (spec.shots as any) : proj.shots;
+      let stages = proj.stages;
+      if (spec.shots && spec.shots.length > 0) {
+        stages = {
+          ...stages,
+          script_slicing: {
+            ...stages.script_slicing,
+            stage: 'script_slicing',
+            status: 'completed',
+            progress: 1,
+            completedAt: stages.script_slicing?.completedAt || now(),
+          },
+          storyboard_prompt: {
+            ...stages.storyboard_prompt,
+            stage: 'storyboard_prompt',
+            status: 'completed',
+            progress: 1,
+            completedAt: stages.storyboard_prompt?.completedAt || now(),
+          },
+          extraction: {
+            ...stages.extraction,
+            stage: 'extraction',
+            status: 'completed',
+            progress: 1,
+            completedAt: stages.extraction?.completedAt || now(),
+          },
+        };
+      }
       return {
         projects: {
           ...s.projects,
-          [novelProjectId]: touch({ ...proj, sceneSpec: spec, shots }),
+          [novelProjectId]: touch({ ...proj, sceneSpec: spec, shots, stages }),
         },
       };
     });
