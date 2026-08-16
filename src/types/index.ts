@@ -244,6 +244,9 @@ export interface VideoMetadata {
   seriesCharacters?: import('./video').CharacterAnchor[];
   seriesScenes?: import('./video').SceneAnchor[];
   seriesStyleGuide?: string;
+  /** 剧集初始化分镜规范与草稿，防止 videoStore 清除后无法恢复重做 */
+  initialSceneSpec?: import('./video').SceneSpec;
+  sceneSpec?: import('./video').SceneSpec;
 }
 
 // ============================================================================

@@ -192,25 +192,46 @@ const VideoView: React.FC = () => {
       return;
     }
     const store = useVideoStore.getState();
-    if (!store.projects[id]) {
-      const proj = projects.find((p) => p.id === id);
-      const meta = proj?.metadata as Partial<VideoMetadata> | undefined;
-      store.initProject(
-        id,
-        [],
-        {
-          aspectRatio: (meta?.aspectRatio as any) || '16:9',
-          resolution: meta?.resolution || '1920x1080',
-          fps: meta?.fps || 24,
-          shotDurationSeconds: 5,
-          videoTier: 'value',
-          imageTier: 'value',
-          ttsTier: 'free',
-          hardcodeSubtitles: false,
-          bgmStyle: meta?.style || 'cinematic',
-        },
-        proj?.title,
-      );
+    const proj = projects.find((p) => p.id === id);
+    const meta = proj?.metadata as Partial<VideoMetadata> | undefined;
+
+    if (!store.projects[id] || !store.projects[id].sceneSpec) {
+      if (meta?.initialSceneSpec) {
+        store.initProject(
+          id,
+          meta.initialSceneSpec.shots.map((s) => s.id),
+          {
+            aspectRatio: (meta?.aspectRatio as any) || '16:9',
+            resolution: meta?.resolution || '1920x1080',
+            fps: meta?.fps || 24,
+            shotDurationSeconds: 5,
+            videoTier: 'value',
+            imageTier: 'value',
+            ttsTier: 'free',
+            hardcodeSubtitles: false,
+            bgmStyle: meta?.style || 'cinematic',
+          },
+          proj?.title,
+        );
+        store.setSceneSpec(id, meta.initialSceneSpec);
+      } else {
+        store.initProject(
+          id,
+          [],
+          {
+            aspectRatio: (meta?.aspectRatio as any) || '16:9',
+            resolution: meta?.resolution || '1920x1080',
+            fps: meta?.fps || 24,
+            shotDurationSeconds: 5,
+            videoTier: 'value',
+            imageTier: 'value',
+            ttsTier: 'free',
+            hardcodeSubtitles: false,
+            bgmStyle: meta?.style || 'cinematic',
+          },
+          proj?.title,
+        );
+      }
     }
     store.setActivePipelineId(id);
   };

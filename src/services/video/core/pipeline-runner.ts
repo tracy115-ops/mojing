@@ -17,6 +17,7 @@ import type {
 } from '@/types/video';
 import type { PipelineCallbacks } from './types';
 import { isValidVideoClip } from '../asset-store';
+import { parseStructuredPromptShots } from '../direct-scene-builder';
 import {
   RUNTIME_STAGE_ORDER,
   STAGE_HANDLERS,
@@ -283,8 +284,79 @@ function buildContextFromStore(pid: string): {
   proj: VideoProjectState;
 } | null {
   const store = useVideoStore.getState();
-  const proj = store.getProject(pid);
-  if (!proj || !proj.sceneSpec) return null;
+  let proj = store.getProject(pid);
+
+  // 如果 store 中没有 proj 或 sceneSpec 为空，自动从 projectStore 恢复
+  if (!proj || !proj.sceneSpec || !proj.sceneSpec.shots || proj.sceneSpec.shots.length === 0) {
+    const project = useProjectStore.getState().projects.find((p) => p.id === pid);
+    if (!project) return null;
+
+    const metadata = (project.metadata || {}) as any;
+    const seriesProject = metadata.seriesId
+      ? useProjectStore.getState().projects.find((p) => p.id === metadata.seriesId)
+      : undefined;
+    const seriesMetadata = (seriesProject?.metadata || {}) as any;
+
+    const characters = metadata.seriesCharacters ?? seriesMetadata.seriesCharacters ?? [];
+    const scenes = metadata.seriesScenes ?? seriesMetadata.seriesScenes ?? [];
+
+    let specToUse: SceneSpec | undefined = metadata.initialSceneSpec || metadata.sceneSpec;
+
+    if (!specToUse) {
+      const parsedShots = parseStructuredPromptShots(project.description || project.title, {
+        aspectRatio: metadata.aspectRatio || '16:9',
+        defaultShotDuration: (metadata.duration as any) || 5,
+      });
+
+      const fallbackShot: ShotSpec = {
+        id: `shot_1`,
+        index: 0,
+        videoPrompt: project.description || project.title,
+        durationSeconds: 5,
+        characterIds: characters.map((c: any) => c.id),
+        sceneId: scenes[0]?.id,
+      };
+
+      const shots = parsedShots && parsedShots.length > 0 ? parsedShots : [fallbackShot];
+
+      specToUse = {
+        characters,
+        scenes,
+        meta: {
+          title: project.title,
+          style: metadata.style || 'cinematic',
+          genre: 'script',
+          aspectRatio: metadata.aspectRatio || '16:9',
+          defaultShotDuration: 5,
+          sourceMode: 'multishot',
+          channel: 'novel',
+        },
+        shots,
+      };
+    }
+
+    store.initProject(
+      pid,
+      specToUse.shots.map((s) => s.id),
+      {
+        aspectRatio: metadata.aspectRatio || '16:9',
+        resolution: metadata.resolution || '1920x1080',
+        fps: metadata.fps || 24,
+        shotDurationSeconds: 5,
+        videoTier: 'value',
+        imageTier: 'value',
+        ttsTier: 'free',
+        hardcodeSubtitles: false,
+        bgmStyle: metadata.style || 'cinematic',
+      },
+      project.title,
+    );
+
+    store.setSceneSpec(pid, specToUse);
+    proj = store.getProject(pid);
+    if (!proj || !proj.sceneSpec) return null;
+  }
+
   return {
     proj,
     ctx: {

@@ -758,10 +758,13 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             </Tooltip>
           )}
           <Popconfirm
-            title={t('video.pipeline.resetConfirm')}
+            title="确定重置所有步骤与产物，回到待生成状态吗？"
             onConfirm={() => {
-              if (pipelineId) resetProject(pipelineId);
-              setActivePipelineId(undefined);
+              if (pipelineId) {
+                const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
+                useVideoStore.getState().resetStagesFrom(pipelineId, firstStage);
+                message.success('已成功重置流水线进度');
+              }
             }}
           >
             <Button size="small" icon={<ReloadOutlined />} danger>

@@ -111,7 +111,7 @@ export async function buildSceneFromPrompt(
   };
 }
 
-function parseStructuredPromptShots(prompt: string, ctx: DirectBuildContext): ShotSpec[] | null {
+export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildContext): ShotSpec[] | null {
   const isScript = /(?:分镜\s*\d+|镜头\s*\d+|第\s*\d+\s*镜|Shot\s*\d+)/i.test(prompt);
   if (!isScript) return null;
 
