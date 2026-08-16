@@ -88,6 +88,19 @@ async function callWithSafetyRetry<T>(
 function isTransientNetworkError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
+  // 不可恢复的模型/鉴权/参数错误，立即抛出，绝不浪费时间做重试退避
+  if (
+    msg.includes('model_not_found') ||
+    msg.includes('no available channel for model') ||
+    msg.includes('invalid_model') ||
+    msg.includes('unknown model') ||
+    msg.includes('unauthorized') ||
+    msg.includes('invalid api key') ||
+    msg.includes('invalid_api_key') ||
+    msg.includes('authentication')
+  ) {
+    return false;
+  }
   if (msg.includes('request canceled')) return true;
   if (msg.includes('timed out') || msg.includes('timeout')) return true;
   if (msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('econnaborted')) return true;

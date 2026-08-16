@@ -418,7 +418,10 @@ export class AgnesImageProvider extends BaseImageProvider {
 
   async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
     const startTime = Date.now();
-    const model = request.model || 'agnes-image-2.1-flash';
+    let model = request.model?.trim() || 'agnes-image-2.1-flash';
+    if (!model.startsWith('agnes-image') || model.toLowerCase().includes('kolors') || model.includes('/')) {
+      model = 'agnes-image-2.1-flash';
+    }
     const width = request.width ?? 1024;
     const height = request.height ?? 1024;
 

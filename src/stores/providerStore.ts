@@ -185,13 +185,17 @@ export const useProviderStore = create<ProviderState>()(
       getEndpoint: (id) => get().endpoints.find((ep) => ep.id === id),
 
       setLLMProvider: (provider, model, endpointId) => {
+        let validModel = model ?? get().config.llm.defaultModel;
+        if (provider === 'deepseek' && (!validModel || validModel.includes('gpt') || validModel.includes('claude'))) {
+          validModel = 'deepseek-chat';
+        }
         set((s) => ({
           config: {
             ...s.config,
             llm: {
               ...s.config.llm,
               primary: provider,
-              defaultModel: model ?? s.config.llm.defaultModel,
+              defaultModel: validModel,
               endpointId,
             },
           },
@@ -199,13 +203,19 @@ export const useProviderStore = create<ProviderState>()(
       },
 
       setImageProvider: (provider, model, endpointId) => {
+        let validModel = model ?? get().config.image.defaultModel;
+        if (provider === 'agnes-image' && (!validModel || !validModel.startsWith('agnes-image') || validModel.includes('Kolors'))) {
+          validModel = 'agnes-image-2.1-flash';
+        } else if (provider === 'siliconflow-image' && (!validModel || validModel.startsWith('agnes-image'))) {
+          validModel = 'black-forest-labs/FLUX.1-schnell';
+        }
         set((s) => ({
           config: {
             ...s.config,
             image: {
               ...s.config.image,
               primary: provider,
-              defaultModel: model ?? s.config.image.defaultModel,
+              defaultModel: validModel,
               endpointId,
             },
           },
@@ -213,13 +223,17 @@ export const useProviderStore = create<ProviderState>()(
       },
 
       setVideoProvider: (provider, model, endpointId) => {
+        let validModel = model ?? get().config.video.defaultModel;
+        if (provider === 'agnes-video' && (!validModel || !validModel.startsWith('agnes-video'))) {
+          validModel = 'agnes-video-v2.0';
+        }
         set((s) => ({
           config: {
             ...s.config,
             video: {
               ...s.config.video,
               primary: provider,
-              defaultModel: model ?? s.config.video.defaultModel,
+              defaultModel: validModel,
               endpointId,
             },
           },

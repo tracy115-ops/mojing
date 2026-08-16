@@ -158,6 +158,9 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
     if (result) {
       workingSpec = result.spec;
       if (result.clips) clips = result.clips;
+    } else {
+      void logger.warn(`[pipeline] stage ${stage} 失败，流水线暂停在当前步骤等待用户处理`, 'pipeline');
+      break;
     }
 
     // 系列剧集在关键帧完成后暂停：让用户先核对角色、场景与镜头连续性，
@@ -501,7 +504,8 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
       if (result.clips) clips = result.clips;
     } else {
       allOk = false;
-      // 单步失败不中断,继续跑后续(handler 内部已标 error)
+      void logger.warn(`[pipeline] runFromStage: stage ${s} 执行失败，流水线暂停在当前步骤等待处理`, 'pipeline');
+      break;
     }
 
     if (result && s === 'keyframe_image' && requiresKeyframeReview(pid)) {

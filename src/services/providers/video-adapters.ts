@@ -434,7 +434,10 @@ export class AgnesVideoProvider extends BaseVideoProvider {
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
-    const model = request.model || 'agnes-video-v2.0';
+    let model = request.model?.trim() || 'agnes-video-v2.0';
+    if (!model.startsWith('agnes-video')) {
+      model = 'agnes-video-v2.0';
+    }
     this.lastModel = model;
     this.requestedDurationSeconds = request.durationSeconds;
 

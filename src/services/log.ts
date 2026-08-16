@@ -130,12 +130,8 @@ export function installGlobalLogCapture(): void {
         : typeof reason === 'string'
           ? reason
           : JSON.stringify(reason);
-    // 已知噪音:tauri-plugin-http 在连接失败/中止时,内部资源句柄释放会
-    // 产生 "The resource id XXX is invalid" 类型的 rejection。这些不影响
-    // 业务逻辑,但会刷屏,淹没真实错误。这里降级到 debug,默认不写盘。
+    // 已知噪音:tauri-plugin-http 在连接释放时产生 "The resource id XXX is invalid"，直接静默忽略
     if (/resource id \d+ is invalid/i.test(msg)) {
-      void invokeLog('debug', `[noise] unhandledrejection: ${msg}`, 'window');
-      // 阻止默认处理,避免控制台额外噪音
       e.preventDefault?.();
       return;
     }
