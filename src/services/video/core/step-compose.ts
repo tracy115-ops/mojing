@@ -12,6 +12,7 @@ export interface ComposeOptions {
   clips: GeneratedClip[];
   shots: ShotSpec[];
   hardcodeSubtitles: boolean;
+  style?: string;
 }
 
 export interface ComposeResult {
@@ -135,6 +136,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     subtitles,
     outputPath,
     hardcodeSubtitles: opts.hardcodeSubtitles,
+    style: opts.style,
   });
 
   return {

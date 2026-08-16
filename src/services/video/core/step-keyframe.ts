@@ -126,7 +126,7 @@ export async function runKeyframe(
       }
       const img = await providerRouter.generateImage({
         taskType: 'storyboard',
-        prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style),
+        prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, i > 0 ? result[i - 1] : undefined),
         referenceImages,
         width: dims.w,
         height: dims.h,
@@ -220,9 +220,10 @@ export async function generateSingleKeyframe(
     }
   }
 
+  const prevShot = shotIndex > 0 ? allShots[shotIndex - 1] : undefined;
   const img = await providerRouter.generateImage({
     taskType: 'storyboard',
-    prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style),
+    prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, prevShot),
     referenceImages,
     width: dims.w,
     height: dims.h,
@@ -237,10 +238,13 @@ export async function generateSingleKeyframe(
   );
 }
 
+import { buildMultiCharacterDnaTokens } from './character-dna';
+
 function buildKeyframePrompt(
   shot: ShotSpec,
   characters: CharacterAnchor[],
   style?: string,
+  prevShot?: ShotSpec,
 ): string {
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
   const charById = new Map(characters.map((c) => [c.id, c]));
@@ -248,45 +252,22 @@ function buildKeyframePrompt(
     .map((id) => charById.get(id))
     .filter((c): c is CharacterAnchor => !!c);
 
-  let charText = '';
-  const isCloseUp = /特写|近景|特写镜头|面部|眼神|表情|close-up|close up|portrait/i.test(
-    `${shot.videoPrompt} ${shot.cameraMovement || ''}`
+  // 1. 角色 DNA 核心锁定 (置顶最高权重)
+  const charDnaText = buildMultiCharacterDnaTokens(
+    presentChars,
+    shot.costumeVariantRefs,
+    isChinese,
   );
 
-  if (presentChars.length === 1) {
-    const c = presentChars[0];
-    const variantId = shot.costumeVariantRefs?.[c.id];
-    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-    const desc = variant ? `${c.name} (${c.appearance}，穿着${variant.description})` : `${c.name} (${c.appearance})`;
-    
-    const fullText = `${c.name} ${c.appearance} ${shot.videoPrompt}`;
-    const aestheticTag = getCharacterAestheticTag(fullText);
-
-    if (isChinese) {
-      const closeUpTag = isCloseUp ? '，面部特写镜头，100%保持与参考图0的面部五官、眼神、发型与肤色一致' : '';
-      charText = `画面主体角色：${desc}，${aestheticTag}，独立单人角色，100%保持与参考图0的全身体设计一致：面部、发型、发色、服装款式、服饰细节、身材比例完全一致${closeUpTag}`;
-    } else {
-      const closeUpTag = isCloseUp ? ', extreme close-up facial shot, 100% exact facial and hair feature match with reference image 0, identical face, eyes, hair, skin tone' : '';
-      charText = `main character in frame: ${desc}, ${aestheticTag}, single isolated character, 100% exact full-body character design match with reference image 0: identical face, identical hair, identical hairstyle, identical costume, identical clothing outfit, identical accessories, and identical body proportions${closeUpTag}`;
+  // 2. 前后分镜接戏与空间连续性
+  let continuityText = '';
+  if (prevShot) {
+    const isSameScene = prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId;
+    if (isSameScene || (prevShot.location && shot.location && prevShot.location === shot.location)) {
+      continuityText = isChinese
+        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、主光源角度与角色动作走向'
+        : '[Shot Continuity] seamlessly inherits spatial position, primary light direction, and motion trajectory from previous shot';
     }
-  } else if (presentChars.length > 1) {
-    // 多角色镜头: 注入空间位置标定与防肢体污染粘连指令
-    const positions = isChinese ? ['画面左侧', '画面右侧', '画面中央'] : ['left side of frame', 'right side of frame', 'center of frame'];
-    const separatedChars = presentChars
-      .map((c, idx) => {
-        const pos = positions[idx % positions.length];
-        const variantId = shot.costumeVariantRefs?.[c.id];
-        const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-        const desc = variant ? `${c.name} (${c.appearance}，穿着${variant.description})` : `${c.name} (${c.appearance})`;
-        return isChinese ? `${desc}位于${pos}` : `${desc} located on ${pos}`;
-      })
-      .join(isChinese ? '；独立角色：' : '; distinct separate person: ');
-
-    charText = isChinese
-      ? `场景内多角色：[${separatedChars}]。独立清晰的角色实体，清晰空间分隔，无肢体融合，无多余肢体，无身体重叠，角色剪影清晰`
-      : `multiple characters in scene: [${separatedChars}]. Standalone distinct individuals with clear spatial separation, no merged bodies, no extra limbs, no overlapping torsos, sharp character silhouettes, perfect anatomy`;
-  } else {
-    charText = isChinese ? '无人物，无人影，空景画面，背景风光' : 'no humans, no people, empty scene, background scenery shot';
   }
 
   const qualityTag = getStyleEnhancers(shot.videoPrompt + ' ' + (shot.mood || ''), style);
@@ -294,8 +275,9 @@ function buildKeyframePrompt(
   if (isChinese) {
     const parts = [
       '电影级分镜关键帧',
+      charDnaText,
       shot.videoPrompt,
-      charText,
+      continuityText,
       shot.location ? `场景位置：${shot.location}` : '',
       shot.mood ? `画面氛围：${shot.mood}` : '',
       shot.cameraMovement ? `镜头视角：${shot.cameraMovement}` : '',
@@ -308,8 +290,9 @@ function buildKeyframePrompt(
 
   const parts = [
     'cinematic movie keyframe storyboard',
+    charDnaText,
     shot.videoPrompt,
-    charText,
+    continuityText,
     shot.location ? `location: ${shot.location}` : '',
     shot.mood ? `mood: ${shot.mood}` : '',
     shot.cameraMovement ? `camera angle: ${shot.cameraMovement}` : '',

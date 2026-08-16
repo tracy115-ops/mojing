@@ -24,6 +24,7 @@ export interface ComposeRequest {
   subtitles: (string | null)[];
   outputPath: string;
   hardcodeSubtitles: boolean;
+  style?: string;
 }
 
 export interface ComposeResult {

@@ -642,6 +642,7 @@ export async function executeCompose(ctx: StageContext): Promise<StageResult | n
       clips,
       shots: workingSpec.shots,
       hardcodeSubtitles: options.enableSubtitles,
+      style: workingSpec.meta.style,
     });
     store.setFinalVideo(pid, toWebviewUrl(result.finalVideoUrl), {
       durationSeconds: result.durationSeconds,

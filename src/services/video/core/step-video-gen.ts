@@ -12,6 +12,7 @@ import type {
 } from '@/types/video';
 import { saveAsset, readAsDataUri, isValidVideoClip } from '../asset-store';
 import { detectInputLanguage } from './lang-detector';
+import { buildMultiCharacterDnaTokens } from './character-dna';
 
 const VIDEO_GENERATION_CONCURRENCY = 2;
 
@@ -141,7 +142,7 @@ async function generateOne(
     }
   }
 
-  const enhancedPrompt = buildEnhancedVideoPrompt(shot);
+  const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);
   const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
 
   let response;
@@ -266,9 +267,22 @@ export function getStyleEnhancers(promptText: string, stylePreset?: string): str
     : 'cinematic movie lighting, 35mm lens depth of field, natural motion, high detail, masterpiece composition, no artifact, clean focus';
 }
 
-function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string {
+function buildEnhancedVideoPrompt(
+  shot: ShotSpec,
+  characters?: CharacterAnchor[],
+  stylePreset?: string,
+): string {
   const basePrompt = shot.videoPrompt.trim();
   const isChinese = detectInputLanguage(basePrompt + ' ' + (shot.mood || '') + ' ' + (shot.narration || '')) === 'zh';
+
+  const charById = new Map((characters || []).map((c) => [c.id, c]));
+  const presentChars = (shot.characterIds || [])
+    .map((id) => charById.get(id))
+    .filter((c): c is CharacterAnchor => !!c);
+
+  const charDna = presentChars.length > 0
+    ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese)
+    : '';
 
   // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)
   const lipSyncPrompt = shot.narration && shot.narration.trim().length > 0
@@ -284,22 +298,8 @@ function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string 
         : 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement')
     : '';
 
-  // 关键原则：用户原始提示词第一优先！
-  // 如果用户的提示词本身已经很详细（> 50 字符），说明用户提供了精准的艺术指导，
-  // 系统绝不上串或硬加预置模板词，保持 100% 用户原意，零污染零稀释！
-  const isUserDetailedPrompt = basePrompt.length > 50;
-
   const delimiter = isChinese ? '，' : ', ';
 
-  if (isUserDetailedPrompt) {
-    return [
-      basePrompt,
-      lipSyncPrompt,
-      multiCharIsolation,
-    ].filter(Boolean).join(delimiter);
-  }
-
-  // 仅在用户提示词极其简短时，才补全默认基础镜头与风格辅助词
   const camera = shot.cameraMovement
     ? (isChinese ? `${shot.cameraMovement}运镜` : `${shot.cameraMovement} camera movement`)
     : '';
@@ -309,6 +309,7 @@ function buildEnhancedVideoPrompt(shot: ShotSpec, stylePreset?: string): string 
   const styleEnhancers = getStyleEnhancers(basePrompt + ' ' + (shot.mood || ''), stylePreset);
 
   return [
+    charDna,
     basePrompt,
     camera,
     mood,

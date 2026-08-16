@@ -87,6 +87,7 @@ pub struct ComposeRequest {
     pub subtitles: Vec<Option<String>>,
     pub output_path: String,
     pub hardcode_subtitles: bool,
+    pub style: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -168,6 +169,7 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         subtitles: valid_subs,
         output_path: req.output_path.clone(),
         hardcode_subtitles: req.hardcode_subtitles,
+        style: req.style.clone(),
     };
     let req = &filtered_req;
 
@@ -241,6 +243,7 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
                 // 强制走 re-encode 路径:随便给个非空字幕是不对的,
                 // 直接调 compose_multishot_with_subtitles 但不实际烧字幕。
                 hardcode_subtitles: false,
+                style: req.style.clone(),
             };
             // 手动重编码每片到统一格式,再 concat
             return compose_reencode_only(&reencode_req, &out_path);
@@ -270,6 +273,7 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
                 subtitles: req.subtitles.clone(),
                 output_path: req.output_path.clone(),
                 hardcode_subtitles: false,
+                style: req.style.clone(),
             };
             let r = compose_reencode_only(&reencode_req, &out_path)?;
             return Ok(attach_meta(r, &out_path));
@@ -395,14 +399,21 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         let rendered = job_dir.join(format!("clip_{:04}.mp4", i));
 
         let has_audio = clip_has_audio_stream(clip_src).unwrap_or(false);
+        let style_filter = get_style_video_filter(req.style.as_deref());
+        let base_scale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+        let filter_chain = if let Some(sf) = &style_filter {
+            format!("{},{}", base_scale, sf)
+        } else {
+            base_scale.to_string()
+        };
 
         // 编码命令统一加上 -err_detect ignore_err,容忍个别坏 packet。
         // 单个 clip 编码失败时跳过(不冒泡),让其余 clip 仍能拼出最终视频。
         let encode_result: Result<(), String> = if let Some(text) = sub {
             let escaped = escape_drawtext_text(text);
             let filter = format!(
-                "scale=trunc(iw/2)*2:trunc(ih/2)*2,drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
-                escaped
+                "{},drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
+                filter_chain, escaped
             );
             let mut cmd = FfmpegCommand::new();
             cmd.arg("-y")
@@ -424,7 +435,7 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
             cmd.arg("-y")
                 .arg("-err_detect").arg("ignore_err")
                 .input(clip_src.to_string())
-                .arg("-vf").arg("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+                .arg("-vf").arg(filter_chain)
                 .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
             if has_audio {
                 cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
@@ -495,6 +506,28 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         duration_seconds: None,
         size_bytes: None,
     })
+}
+
+fn get_style_video_filter(style: Option<&str>) -> Option<String> {
+    let s = style?.to_lowercase();
+    if s.contains("retro") || s.contains("vintage") || s.contains("80") || s.contains("90") || s.contains("shaw") || s.contains("港") || s.contains("胶片") || s.contains("武侠") {
+        // 80-90年代邵氏/港风复古胶片调色: 暖黄微饱和 + 柔和光晕感 + 细微胶片颗粒
+        Some("curves=all='0/0 0.5/0.52 1/1':red='0/0 0.5/0.54 1/1':blue='0/0 0.5/0.46 1/0.95',noise=alls=6:allf=t+u".to_string())
+    } else if s.contains("anime") || s.contains("二次元") || s.contains("新海诚") || s.contains("动漫") {
+        // 二次元动漫/新海诚: 明亮饱和 + 柔和微对比
+        Some("eq=contrast=1.04:brightness=0.01:saturation=1.12".to_string())
+    } else if s.contains("cyberpunk") || s.contains("赛博朋克") || s.contains("neon") {
+        // 赛博朋克: 青蓝+品红对比增强
+        Some("curves=blue='0/0 0.5/0.54 1/1':red='0/0 0.5/0.52 1/1',eq=contrast=1.08:saturation=1.20".to_string())
+    } else if s.contains("ink") || s.contains("水墨") || s.contains("国风") {
+        // 国风水墨: 雅致温润低饱和微高光
+        Some("eq=saturation=0.88:contrast=1.05".to_string())
+    } else if s.contains("cinematic") || s.contains("电影") {
+        // 电影级: 经典电影色阶微调
+        Some("curves=all='0/0 0.25/0.23 0.75/0.77 1/1'".to_string())
+    } else {
+        None
+    }
 }
 
 /// Escape text for ffmpeg drawtext filter. Order matters.
