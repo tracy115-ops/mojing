@@ -15,6 +15,7 @@ import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
   DeleteOutlined, SettingOutlined, SafetyCertificateOutlined,
+  ForwardOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -27,7 +28,8 @@ import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import VideoPromptSettingsModal from './VideoPromptSettingsModal';
 import { VideoPipeline } from '@/services/video/pipeline';
-import { runFromFirstFailedStage, runFromStage, abortPipeline } from '@/services/video/core/pipeline-runner';
+import { runFromFirstFailedStage, runFromStage, runSingleStage, abortPipeline } from '@/services/video/core/pipeline-runner';
+import { RUNTIME_STAGE_ORDER } from '@/services/video/core/stage-handlers';
 import { logger } from '@/services/log';
 import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
 import { reviewSeriesEpisode } from '@/services/video/series-episode-review';
@@ -682,6 +684,21 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               </Button>
             </Popconfirm>
           )}
+          {overall !== 'running' && (
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlayCircleOutlined />}
+              onClick={async () => {
+                if (!pipelineId) return;
+                message.loading('正在从第一步启动全流程流水线生成...', 1.5);
+                const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
+                await runFromStage(pipelineId, firstStage);
+              }}
+            >
+              🚀 开始全流程生成
+            </Button>
+          )}
           {overall === 'error' && (
             <Button
               type="primary"
@@ -702,11 +719,13 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             onConfirm={async () => {
               if (!pipelineId) return;
               message.loading('正在重置并从第一步重新生成...', 1.5);
-              await runFromStage(pipelineId, 'character_anchor');
+              const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
+              useVideoStore.getState().resetStagesFrom(pipelineId, firstStage);
+              await runFromStage(pipelineId, firstStage);
             }}
           >
             <Button size="small" icon={<ReloadOutlined />}>
-              🔄 一键从头重新生成
+              🔄 从头重新生成
             </Button>
           </Popconfirm>
           <Tooltip title="导出 4K 高帧率超分增强版本">
@@ -786,10 +805,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             current={visibleStages.indexOf(inlineStage)}
             onChange={(current) => {
               const stage = visibleStages[current];
-              if (!stage) return;
-              const state = stages[stage];
-              const clickable = state?.status === 'completed' || state?.status === 'running' || state?.status === 'awaiting_review' || state?.status === 'error';
-              if (clickable) setFocusStage(stage);
+              if (stage) setFocusStage(stage);
             }}
             items={visibleStages.map((stage) => {
               const state = stages[stage];
@@ -894,7 +910,6 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   </span>
                 ),
                 description,
-                disabled: !(completed || running || awaitingReview || errored),
               };
             })}
           />
@@ -1076,17 +1091,46 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             {project && (
               <div>
                 <div style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   marginBottom: 8, padding: '6px 0',
                 }}>
-                  <Text strong style={{ fontSize: 13 }}>
-                    {t(`video.gen.stage.${inlineStage}`)}
-                  </Text>
-                  {stages[inlineStage]?.status && (
-                    <Tag style={{ fontSize: 10 }}>
-                      {t(`video.artifacts.status.${stages[inlineStage]!.status}`)}
-                    </Tag>
-                  )}
+                  <Space>
+                    <Text strong style={{ fontSize: 14 }}>
+                      {t(`video.gen.stage.${inlineStage}`)}
+                    </Text>
+                    {stages[inlineStage]?.status && (
+                      <Tag color={stages[inlineStage]?.status === 'completed' ? 'success' : stages[inlineStage]?.status === 'running' ? 'processing' : stages[inlineStage]?.status === 'error' ? 'error' : 'default'} style={{ fontSize: 11 }}>
+                        {t(`video.artifacts.status.${stages[inlineStage]!.status}`)}
+                      </Tag>
+                    )}
+                  </Space>
+                  <Space>
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      icon={<PlayCircleOutlined />}
+                      onClick={async () => {
+                        if (!pipelineId) return;
+                        message.loading(`正在执行【${t(`video.gen.stage.${inlineStage}`)}】...`, 1.5);
+                        await runSingleStage(pipelineId, inlineStage);
+                      }}
+                    >
+                      ▶️ 立即运行此步
+                    </Button>
+                    <Button
+                      size="small"
+                      type="primary"
+                      icon={<ForwardOutlined />}
+                      onClick={async () => {
+                        if (!pipelineId) return;
+                        message.loading(`正在从【${t(`video.gen.stage.${inlineStage}`)}】向下连续生成...`, 1.5);
+                        await runFromStage(pipelineId, inlineStage);
+                      }}
+                    >
+                      🚀 从此步向下连续生成
+                    </Button>
+                  </Space>
                 </div>
                 {renderStageContent(inlineStage, project, sceneSpec, t)}
                 {/* 单步重跑:输入参数编辑 + 重跑按钮 */}

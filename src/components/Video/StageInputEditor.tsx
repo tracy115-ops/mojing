@@ -24,16 +24,16 @@ interface StageInputEditorProps {
  *  只列真正必要的上游,严格白名单,避免误报。 */
 function getStageDeps(stage: VideoStage): VideoStage[] {
   switch (stage) {
-    case 'character_anchor':
-      return []; // 第一个 runtime stage,无前置依赖
     case 'voice_assignment':
-      return ['character_anchor'];
+      return []; // 独立分支,无前置依赖
+    case 'character_anchor':
+      return []; // 独立分支,无前置依赖
     case 'scene_image':
       return []; // 独立分支,和 character_anchor 并行
     case 'tts':
       return ['voice_assignment'];
     case 'keyframe_image':
-      return ['character_anchor', 'scene_image'];
+      return [];
     case 'video_generation':
       return ['keyframe_image'];
     case 'audio_merge':
@@ -47,7 +47,7 @@ function getStageDeps(stage: VideoStage): VideoStage[] {
 
 /** 该 stage 之后的所有 runtime stage(用于「重跑及后续」提示 N 步)。 */
 function getDownstreamCount(stage: VideoStage): number {
-  const order = ['character_anchor', 'voice_assignment', 'scene_image', 'tts', 'keyframe_image', 'video_generation', 'audio_merge', 'composing'] as const;
+  const order = ['voice_assignment', 'character_anchor', 'scene_image', 'tts', 'keyframe_image', 'video_generation', 'audio_merge', 'composing'] as const;
   const idx = order.indexOf(stage as typeof order[number]);
   if (idx < 0) return 0;
   return order.length - idx - 1;
