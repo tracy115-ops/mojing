@@ -60,7 +60,7 @@ async function processBatch(
   ctx: StoryboardContext,
 ): Promise<StoryboardShot[]> {
   const request: LLMGenerateRequest = {
-    taskType: 'translation',
+    taskType: 'planning',
     systemPrompt: buildSystemPrompt(batch, ctx),
     userPrompt: buildUserPrompt(batch, ctx),
     responseFormat: 'json',
@@ -70,13 +70,24 @@ async function processBatch(
 
   try {
     const response = await providerRouter.generate(request);
-    const parsed = parseLLMJson<unknown[]>(response.content);
-    if (!parsed || !Array.isArray(parsed)) {
-      throw new Error('Storyboard LLM returned non-array');
+    let parsed: any = parseLLMJson<any>(response.content);
+
+    // 如果 LLM 返回的是对象(如 { shots: [...] } / { items: [...] } / { data: [...] }),解包出数组
+    if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+      if (Array.isArray(parsed.shots)) parsed = parsed.shots;
+      else if (Array.isArray(parsed.items)) parsed = parsed.items;
+      else if (Array.isArray(parsed.data)) parsed = parsed.data;
+      else if (Array.isArray(parsed.storyboard)) parsed = parsed.storyboard;
+      else if (Array.isArray(parsed.scenes)) parsed = parsed.scenes;
+      else if (Array.isArray(parsed.result)) parsed = parsed.result;
     }
-    return parsed.map((item, i) => normalizeShot(item, batch[i], ctx));
+
+    if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error('Storyboard LLM returned non-array or empty array');
+    }
+    return parsed.map((item, i) => normalizeShot(item, batch[i] || batch[0], ctx));
   } catch (err) {
-    console.warn('Storyboard: LLM failed, using fallback', err);
+    console.warn('Storyboard: LLM failed, using distinct fallback', err);
     return batch.map((rs) => fallbackShot(rs, ctx));
   }
 }
@@ -175,7 +186,7 @@ function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext): Sto
     index: raw.index,
     sourceChapterId: raw.sourceChapterId,
     sourceText: raw.rawText,
-    videoPrompt: String(obj.videoPrompt ?? '').trim() || fallbackVideoPrompt(raw),
+    videoPrompt: String(obj.videoPrompt ?? '').trim() || (raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw)),
     imagePrompt: String(obj.imagePrompt ?? '').trim() || undefined,
     narration,
     durationSeconds: clampDuration(obj.durationSeconds, ctx.defaultShotDuration),
@@ -190,12 +201,13 @@ function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext): Sto
 function fallbackShot(raw: RawShot, ctx: StoryboardContext): StoryboardShot {
   const dialogue = extractDialogue(raw.rawText);
   const narration = dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80);
+  const videoPrompt = raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw);
   return {
     id: raw.id,
     index: raw.index,
     sourceChapterId: raw.sourceChapterId,
     sourceText: raw.rawText,
-    videoPrompt: fallbackVideoPrompt(raw),
+    videoPrompt,
     narration,
     durationSeconds: ctx.defaultShotDuration,
     characters: raw.characters,
@@ -207,10 +219,11 @@ function fallbackShot(raw: RawShot, ctx: StoryboardContext): StoryboardShot {
 }
 
 function fallbackVideoPrompt(raw: RawShot): string {
-  const location = raw.location ?? 'an indoor setting';
-  const mood = raw.mood ?? 'neutral';
-  const action = raw.hasAction ? 'intense action sequence with dynamic movement' : 'subtle character interaction';
-  return `${location}, ${mood} atmosphere, ${action}, cinematic lighting, 24fps, shot on cinema camera, shallow depth of field`;
+  if (raw.rawText && raw.rawText.trim()) return raw.rawText.trim();
+  const location = raw.location ?? `场景 ${raw.index + 1}`;
+  const mood = raw.mood ?? '自然氛围';
+  const action = raw.hasAction ? '主体生动动作，动态运镜' : '人物神态特写，环境光影流动';
+  return `第 ${raw.index + 1} 镜头：${location}，${mood}，${action}，高清电影级光影，景深虚化`;
 }
 
 function defaultCamera(raw: RawShot): string {
