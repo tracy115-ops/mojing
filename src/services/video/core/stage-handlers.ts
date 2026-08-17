@@ -264,17 +264,21 @@ export function applyStageInput(ctx: StageContext, stage: VideoStage): StageCont
 
   if (input.prompt !== undefined) {
     if (stage === 'storyboard_prompt') {
-      workingSpec = {
-        ...workingSpec,
-        shots: workingSpec.shots.map((s) => ({ ...s, sourceText: input.prompt! })),
-      };
-      specChanged = true;
+      if (workingSpec.shots.length <= 1) {
+        workingSpec = {
+          ...workingSpec,
+          shots: workingSpec.shots.map((s) => ({ ...s, sourceText: input.prompt! })),
+        };
+        specChanged = true;
+      }
     } else if (stage === 'keyframe_image' || stage === 'video_generation') {
-      workingSpec = {
-        ...workingSpec,
-        shots: workingSpec.shots.map((s) => ({ ...s, videoPrompt: input.prompt! })),
-      };
-      specChanged = true;
+      if (workingSpec.shots.length <= 1) {
+        workingSpec = {
+          ...workingSpec,
+          shots: workingSpec.shots.map((s) => ({ ...s, videoPrompt: input.prompt! })),
+        };
+        specChanged = true;
+      }
     }
   }
 
@@ -678,11 +682,22 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
     const globalProj = pStore.projects.find((p) => p.id === pid);
     const meta = globalProj?.metadata as any;
 
-    // 1. 如果当前项目已有 2 个以上的独立镜头（例如 Demo 预置或已有分镜），坚决保留全部独立分镜，防止冲刷合并成 1 个
-    const existingShots = (workingSpec.shots && workingSpec.shots.length > 1)
-      ? workingSpec.shots
-      : (meta?.initialSceneSpec?.shots && meta.initialSceneSpec.shots.length > 1)
-        ? meta.initialSceneSpec.shots
+    // 检查分镜是否被污染为全部一模一样的内容
+    const areShotsIdentical = (shots: any[] | undefined) => {
+      if (!shots || shots.length <= 1) return false;
+      const first = (shots[0].videoPrompt || shots[0].sourceText || '').trim();
+      return !!first && shots.every((s) => (s.videoPrompt || s.sourceText || '').trim() === first);
+    };
+
+    // 1. 如果当前项目有初始独立分镜（例如 Demo 预置的 6 个分镜）或有效的多镜头，坚决使用独立分镜
+    const initialShots = meta?.initialSceneSpec?.shots && meta.initialSceneSpec.shots.length > 1
+      ? meta.initialSceneSpec.shots
+      : null;
+
+    const existingShots = initialShots
+      ? initialShots
+      : (workingSpec.shots && workingSpec.shots.length > 1 && !areShotsIdentical(workingSpec.shots))
+        ? workingSpec.shots
         : null;
 
     if (existingShots && existingShots.length > 1) {
