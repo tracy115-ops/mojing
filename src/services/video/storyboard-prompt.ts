@@ -85,10 +85,22 @@ async function processBatch(
     if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
       throw new Error('Storyboard LLM returned non-array or empty array');
     }
-    return parsed.map((item, i) => normalizeShot(item, batch[i] || batch[0], ctx));
+    return parsed.map((item, i) => {
+      const fallbackRaw: RawShot = batch[i] || {
+        id: `shot_${i + 1}`,
+        index: i,
+        sourceChapterId: batch[0]?.sourceChapterId || 'ch_1',
+        sourceChapterNumber: 1,
+        rawText: '',
+        characters: [],
+        hasDialogue: false,
+        hasAction: true,
+      };
+      return normalizeShot(item, fallbackRaw, ctx, i);
+    });
   } catch (err) {
     console.warn('Storyboard: LLM failed, using distinct fallback', err);
-    return batch.map((rs) => fallbackShot(rs, ctx));
+    return batch.map((rs, i) => fallbackShot(rs, ctx, i));
   }
 }
 
@@ -165,48 +177,54 @@ ${continuity}${items}`;
 
 // --- normalizers ---
 
-function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext): StoryboardShot {
+function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext, fallbackIndex = 0): StoryboardShot {
   const obj = (item ?? {}) as Record<string, unknown>;
-  const extractedDialogue = extractDialogue(raw.rawText);
   const itemDialogue = Array.isArray(obj.dialogue) && obj.dialogue.length > 0 ? (obj.dialogue as { speaker: string; text: string }[]) : undefined;
-  const dialogue = extractedDialogue || itemDialogue;
+  const rawDialogue = raw.rawText ? extractDialogue(raw.rawText) : undefined;
+  const dialogue = itemDialogue || rawDialogue;
 
-  // 如果提取到了准确的角色对白，优先使用原对白作为 narration，杜绝第三方改写解说词
   let narration = '';
-  if (dialogue && dialogue.length > 0 && dialogue[0].text?.trim()) {
-    narration = dialogue[0].text.trim();
-  } else if (obj.narration && String(obj.narration).trim()) {
+  if (obj.narration && String(obj.narration).trim()) {
     narration = String(obj.narration).trim();
-  } else {
+  } else if (dialogue && dialogue.length > 0 && dialogue[0].text?.trim()) {
+    narration = dialogue[0].text.trim();
+  } else if (raw.rawText) {
     narration = raw.rawText.slice(0, 80);
+  } else {
+    narration = `镜头 ${fallbackIndex + 1}`;
   }
 
+  const shotIndex = typeof obj.index === 'number' ? obj.index : (raw.index !== undefined ? raw.index : fallbackIndex);
+  const shotId = obj.id ? String(obj.id) : (raw.id && raw.id !== 'shot_1' ? raw.id : `shot_${shotIndex + 1}`);
+  const shotSourceText = String(obj.sourceText || raw.rawText || obj.videoPrompt || `镜头 ${shotIndex + 1}`).trim();
+  const shotVideoPrompt = String(obj.videoPrompt || obj.sourceText || raw.rawText || '').trim() || fallbackVideoPrompt(raw, shotIndex);
+
   return {
-    id: raw.id,
-    index: raw.index,
-    sourceChapterId: raw.sourceChapterId,
-    sourceText: raw.rawText,
-    videoPrompt: String(obj.videoPrompt ?? '').trim() || (raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw)),
+    id: shotId,
+    index: shotIndex,
+    sourceChapterId: raw.sourceChapterId || 'ch_1',
+    sourceText: shotSourceText,
+    videoPrompt: shotVideoPrompt,
     imagePrompt: String(obj.imagePrompt ?? '').trim() || undefined,
     narration,
     durationSeconds: clampDuration(obj.durationSeconds, ctx.defaultShotDuration),
-    characters: raw.characters,
-    location: raw.location,
+    characters: (Array.isArray(obj.characters) && obj.characters.length ? obj.characters : raw.characters) as string[],
+    location: (obj.location as string) || raw.location,
     mood: validateMood(obj.mood) ?? raw.mood,
     cameraMovement: validateCamera(obj.cameraMovement) ?? defaultCamera(raw),
     dialogue,
   };
 }
 
-function fallbackShot(raw: RawShot, ctx: StoryboardContext): StoryboardShot {
+function fallbackShot(raw: RawShot, ctx: StoryboardContext, index = 0): StoryboardShot {
   const dialogue = extractDialogue(raw.rawText);
   const narration = dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80);
-  const videoPrompt = raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw);
+  const videoPrompt = raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw, index);
   return {
-    id: raw.id,
-    index: raw.index,
+    id: raw.id || `shot_${index + 1}`,
+    index: raw.index !== undefined ? raw.index : index,
     sourceChapterId: raw.sourceChapterId,
-    sourceText: raw.rawText,
+    sourceText: raw.rawText || `镜头 ${index + 1}`,
     videoPrompt,
     narration,
     durationSeconds: ctx.defaultShotDuration,
@@ -218,12 +236,12 @@ function fallbackShot(raw: RawShot, ctx: StoryboardContext): StoryboardShot {
   };
 }
 
-function fallbackVideoPrompt(raw: RawShot): string {
+function fallbackVideoPrompt(raw: RawShot, index = 0): string {
   if (raw.rawText && raw.rawText.trim()) return raw.rawText.trim();
-  const location = raw.location ?? `场景 ${raw.index + 1}`;
+  const location = raw.location ?? `场景 ${index + 1}`;
   const mood = raw.mood ?? '自然氛围';
   const action = raw.hasAction ? '主体生动动作，动态运镜' : '人物神态特写，环境光影流动';
-  return `第 ${raw.index + 1} 镜头：${location}，${mood}，${action}，高清电影级光影，景深虚化`;
+  return `第 ${index + 1} 镜头：${location}，${mood}，${action}，高清电影级光影，景深虚化`;
 }
 
 function defaultCamera(raw: RawShot): string {

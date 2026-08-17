@@ -33,9 +33,9 @@ export interface SliceOptions {
 }
 
 const DEFAULT_OPTS: Required<SliceOptions> = {
-  targetWordsPerShot: 800,
-  minWordsPerShot: 300,
-  maxWordsPerShot: 1500,
+  targetWordsPerShot: 80,
+  minWordsPerShot: 10,
+  maxWordsPerShot: 300,
   isScript: false,
 };
 
@@ -51,16 +51,27 @@ interface ChapterInput {
 export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {}): RawShot[] {
   const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));
   const o: Required<SliceOptions> = {
-    targetWordsPerShot: isScript ? 100 : (opts.targetWordsPerShot ?? DEFAULT_OPTS.targetWordsPerShot),
-    minWordsPerShot: isScript ? 10 : (opts.minWordsPerShot ?? DEFAULT_OPTS.minWordsPerShot),
-    maxWordsPerShot: isScript ? 400 : (opts.maxWordsPerShot ?? DEFAULT_OPTS.maxWordsPerShot),
+    targetWordsPerShot: opts.targetWordsPerShot ?? (isScript ? 60 : 100),
+    minWordsPerShot: opts.minWordsPerShot ?? 10,
+    maxWordsPerShot: opts.maxWordsPerShot ?? (isScript ? 200 : 300),
     isScript,
   };
   const shots: RawShot[] = [];
   let globalIndex = 0;
 
   for (const ch of chapters) {
-    const paragraphs = splitParagraphs(ch.content);
+    let paragraphs = splitParagraphs(ch.content);
+    // 如果只有 1 个段落且字符数超过 40，按句号/感叹号/分号细粒度拆句
+    if (paragraphs.length <= 1 && ch.content.length > 40) {
+      const sentenceSplits = ch.content
+        .split(/(?<=[。！？；\n])/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 5);
+      if (sentenceSplits.length > 1) {
+        paragraphs = sentenceSplits;
+      }
+    }
+
     const groups = groupParagraphs(paragraphs, o);
 
     for (const group of groups) {
@@ -91,7 +102,7 @@ export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {})
 function splitParagraphs(content: string): string[] {
   return content
     .replace(/\r\n/g, '\n')
-    .split(/\n{2,}|\n(?=(?:镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场))/i)            // 段间空行或镜头前缀
+    .split(/\n+|(?<=[。！？\n])(?=(?:镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场))/i)
     .map((p) => p.trim())
     .filter(Boolean);
 }

@@ -100,13 +100,15 @@ const VideoView: React.FC = () => {
     const previousEpisode = existingEpisodes[existingEpisodes.length - 1];
     const previousEpisodeMetadata = previousEpisode?.metadata as VideoMetadata | undefined;
     const episodeContinuity = previousEpisodeMetadata?.episodeEndingSummary?.trim() || undefined;
-    const project = useProjectStore.getState().createProject('video', values.title, desc || '', {
+    const project = useProjectStore.getState().createProject('video', values.title, desc || values.scriptText || '', {
       style: values.style,
       resolution: values.resolution,
       aspectRatio: values.aspectRatio,
       fps: values.fps,
+      scriptText: values.scriptText,
+      chapters: values.scriptText ? [{ id: 'ch_1', number: 1, content: values.scriptText }] : undefined,
       ...(seriesId ? { seriesRole: 'episode' as const, seriesId, previousEpisodeId: previousEpisode?.id, episodeContinuity } : {}),
-    } as Partial<VideoMetadata>);
+    } as any);
     
     const duration = values.shotDurationSeconds || 5;
     // 初始化 videoStore 中的对应项目运行时状态
