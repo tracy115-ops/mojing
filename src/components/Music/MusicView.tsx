@@ -282,7 +282,7 @@ const MusicView: React.FC = () => {
         </Card>
 
         {/* 右侧：生成好的音乐列表与当前播放卡片 (高度自适应,内容独立滚动) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%', overflow: 'hidden', minWidth: 0, minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%', overflow: 'hidden', minWidth: 0 }}>
           {/* 当前播放器面板 */}
           {currentTrack && (
             <Card
@@ -297,15 +297,17 @@ const MusicView: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div
                   style={{
-                    width: 72,
-                    height: 72,
+                    width: 64,
+                    height: 64,
+                    minWidth: 64,
+                    flexShrink: 0,
                     borderRadius: 12,
                     background: 'linear-gradient(135deg, #6e29f6 0%, #a855f7 100%)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     color: '#fff',
-                    fontSize: 32,
+                    fontSize: 28,
                     cursor: 'pointer',
                   }}
                   onClick={() => handleTogglePlay(currentTrack)}
@@ -314,20 +316,28 @@ const MusicView: React.FC = () => {
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-                    <Title level={4} style={{ margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentTrack.title}</Title>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Title level={4} style={{ margin: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {currentTrack.title}
+                    </Title>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1, minWidth: 0 }}>
                       {currentTrack.tags.map((t) => (
-                        <Tag color="purple" key={t} style={{ whiteSpace: 'nowrap' }}>{t}</Tag>
+                        <Tag color="purple" key={t} style={{ margin: 0 }}>
+                          {t}
+                        </Tag>
                       ))}
                     </div>
                   </div>
-                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <Text
+                    type="secondary"
+                    ellipsis={{ tooltip: currentTrack.style }}
+                    style={{ fontSize: 12, display: 'block', marginTop: 4 }}
+                  >
                     {currentTrack.style}
                   </Text>
                 </div>
 
-                <Space style={{ flex: 'none' }}>
+                <Space style={{ flexShrink: 0 }}>
                   <Tooltip title="一键导出 MP3">
                     <Button icon={<DownloadOutlined />} shape="circle" href={currentTrack.audioUrl} target="_blank" />
                   </Tooltip>
@@ -353,7 +363,7 @@ const MusicView: React.FC = () => {
             title="📜 资产列表 (你的 AI 原创音乐作品)"
             size="small"
             style={{ borderRadius: 12, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}
-            styles={{ body: { overflowY: 'auto', flex: 1, padding: '12px', minHeight: 0 } }}
+            styles={{ body: { overflowY: 'auto', flex: 1, padding: '12px' } }}
           >
             {tracks.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 40 }}>
@@ -374,19 +384,27 @@ const MusicView: React.FC = () => {
                       padding: '12px 16px',
                       borderRadius: 8,
                       background: currentTrackId === t.id ? 'rgba(110,41,246,0.06)' : 'var(--bg-secondary, rgba(0,0,0,0.02))',
-                      border: currentTrackId === t.id ? '1px solid #b17dff' : '1px solid transparent',
+                      border: currentTrackId === t.id ? '1px solid #b17dff' : '1px solid rgba(0,0,0,0.06)',
+                      gap: 12,
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                       <Button
                         type={currentTrackId === t.id && isPlaying ? 'primary' : 'default'}
                         shape="circle"
                         icon={currentTrackId === t.id && isPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
                         onClick={() => handleTogglePlay(t)}
+                        style={{ flexShrink: 0 }}
                       />
-                      <div>
-                        <Text style={{ fontWeight: 600, display: 'block' }}>{t.title}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontWeight: 600, display: 'block' }} ellipsis={{ tooltip: t.title }}>
+                          {t.title}
+                        </Text>
+                        <Text
+                          type="secondary"
+                          style={{ fontSize: 12, display: 'block' }}
+                          ellipsis={{ tooltip: `${t.style} · ${t.durationSeconds}s` }}
+                        >
                           {t.style} · {t.durationSeconds}s
                         </Text>
                       </div>

@@ -144,18 +144,22 @@ async function generateOne(
 
   const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);
   const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
+  const negativePrompt = 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, poorly drawn face';
+  const seed = (shot as any).seed ?? (Math.abs((shot.index + 1) * 31337 + Date.now()) % 2147483647);
 
   let response;
   try {
     response = await providerRouter.generateVideo({
       taskType: 'clip',
       prompt: enhancedPrompt,
+      negativePrompt,
       model: targetModel,
       endpointId: options.endpointId,
       width: w,
       height: h,
       durationSeconds: shot.durationSeconds,
       fps: options.spec.fps,
+      seed,
       referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
     });
   } catch (err) {
@@ -165,12 +169,14 @@ async function generateOne(
       response = await providerRouter.generateVideo({
         taskType: 'clip',
         prompt: enhancedPrompt,
+        negativePrompt,
         model: targetModel,
         endpointId: options.endpointId,
         width: w,
         height: h,
         durationSeconds: shot.durationSeconds,
         fps: options.spec.fps,
+        seed,
         referenceImages: undefined,
       });
     } else {

@@ -247,6 +247,9 @@ export interface VideoGenerateRequest {
   referenceImages?: string[];
   audioPrompt?: string;
   endpointId?: string; // Optional: use a specific endpoint instead of the configured primary
+  seed?: number;
+  numInferenceSteps?: number;
+  mode?: string;
 }
 
 export interface VideoGenerateResponse {

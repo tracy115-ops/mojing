@@ -21,15 +21,16 @@ function stripDataUriPrefix(s: string | undefined | null): string | null {
   if (!s) return null;
   const trimmed = s.trim();
   if (!trimmed) return null;
-  // URL 形式 — 后端拉不到
-  if (/^(https?:|tauri:|blob:|file:|\/|[a-zA-Z]:[\\/])/.test(trimmed)) return null;
+  // 公网 HTTP/HTTPS URL — Agnes 后端可直接拉取
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // 本地 URL 或本地路径形式 — 必须先经 readAsDataUri 转成 data URI
+  if (/^(tauri:|blob:|file:|\/|[a-zA-Z]:[\\/])/.test(trimmed)) return null;
   // data URI — 剥前缀
   const m = trimmed.match(/^data:[^;]+;base64,(.*)$/);
-  if (m) return m[1];
-  // 已经是纯 base64 — 校验下长度
-  // Python b64decode 严格要求 len % 4 == 0(尾部 = 填充除外)
-  if (!/^[A-Za-z0-9+/\s]+=*$/.test(trimmed)) return null;
-  return trimmed.replace(/\s/g, '');
+  if (m) return m[1].replace(/\s/g, '');
+  // 已经是纯 base64 — 校验并去空格
+  if (/^[A-Za-z0-9+/\s]+=*$/.test(trimmed)) return trimmed.replace(/\s/g, '');
+  return null;
 }
 
 /**
@@ -452,29 +453,68 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       prompt: request.prompt,
     };
 
-    // 时长:Agnes V2.0 通过 num_frames + frame_rate 控制时长(参考官方文档)。
-    //   num_frames=81,  frame_rate=24 → ~3.4s
-    //   num_frames=121, frame_rate=24 → ~5.0s
-    //   num_frames=241, frame_rate=24 → ~10.0s
-    //   num_frames=441, frame_rate=24 → ~18.4s
-    // 用户传的 durationSeconds 落到最接近的标准档位;不传默认 5s(121/24)。
+    // 1. 分辨率计算 (width / height): 优先适配 16:9 / 9:16 / 1:1 标准规格 (默认 1152x768)
+    let w = request.width || 1152;
+    let h = request.height || 768;
+    if (w > 0 && h > 0) {
+      const aspect = w / h;
+      if (Math.abs(aspect - 16 / 9) < 0.1) {
+        w = 1152;
+        h = 768;
+      } else if (Math.abs(aspect - 9 / 16) < 0.1) {
+        w = 768;
+        h = 1152;
+      } else if (Math.abs(aspect - 1) < 0.1) {
+        w = 896;
+        h = 896;
+      } else {
+        w = Math.round(w / 32) * 32;
+        h = Math.round(h / 32) * 32;
+      }
+    } else {
+      w = 1152;
+      h = 768;
+    }
+    body.width = w;
+    body.height = h;
+
+    // 2. 帧数 (num_frames) & 帧率 (frame_rate): 遵循 8n + 1 规则且 <= 441
     const tier = pickAgnesFramesTier(request.durationSeconds);
     body.num_frames = tier.numFrames;
-    body.frame_rate = tier.frameRate;
+    body.frame_rate = request.fps && request.fps >= 1 && request.fps <= 60 ? request.fps : tier.frameRate;
 
-    if (request.referenceImages?.length) {
-      // Agnes 后端用 Python base64.b64decode(image) 严格校验:
-      //   - 不能带 `data:image/...;base64,` 前缀(非 base64 字符 → Incorrect padding)
-      //   - 不能传 URL(本地 webview URL 后端拉不到,且 `:` 不是 base64 字符)
-      // 这里做规范化:剥前缀、校验长度;URL 形式的直接抛清晰错误。
-      const raw = request.referenceImages[0];
-      const cleaned = stripDataUriPrefix(raw);
-      if (!cleaned) {
-        throw new Error(
-          'Agnes Video: 关键帧是本地文件 URL,Agnes 后端无法读取。请在「设置 → 视频」关闭 I2V,或换用支持 URL 引用的 provider。',
-        );
+    // 3. 推理步数 (num_inference_steps)
+    if (request.numInferenceSteps && request.numInferenceSteps > 0) {
+      body.num_inference_steps = request.numInferenceSteps;
+    }
+
+    // 4. 随机种子 (seed): 增强画面连贯性与可复现性
+    if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
+      body.seed = request.seed;
+    }
+
+    // 5. 反向提示词 (negative_prompt): 过滤模糊、畸变与杂质
+    body.negative_prompt = request.negativePrompt || 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch';
+
+    // 6. 模式 (mode) & 图生视频 (image) / 多关键帧模式 (extra_body)
+    if (request.referenceImages && request.referenceImages.length > 0) {
+      const cleanedImages = request.referenceImages
+        .map((img) => stripDataUriPrefix(img))
+        .filter((img): img is string => !!img);
+
+      if (cleanedImages.length === 1) {
+        body.image = cleanedImages[0];
+        body.mode = request.mode || 'ti2vid';
+      } else if (cleanedImages.length > 1) {
+        body.image = cleanedImages[0];
+        body.mode = 'keyframes';
+        body.extra_body = {
+          image: cleanedImages,
+          mode: 'keyframes',
+        };
       }
-      body.image = cleaned;
+    } else if (request.mode) {
+      body.mode = request.mode;
     }
 
     const submitResp = await httpFetch(submitUrl, {
