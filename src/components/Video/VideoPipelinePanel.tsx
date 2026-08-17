@@ -1065,7 +1065,12 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   <Space direction="vertical" size={6}>
                     <Button size="small" loading={reviewingVisuals} onClick={handleVisualReview}>{t('video.pipeline.visualReview')}</Button>
                     <Button size="small" loading={reviewingStory} onClick={handleStoryReview}>{t('video.pipeline.storyReview')}</Button>
-                    <Button type="primary" size="small" disabled={!continuityReview.ready} loading={confirmingKeyframes} onClick={handleConfirmKeyframes}>
+                    <Button
+                      type="primary"
+                      size="small"
+                      loading={confirmingKeyframes}
+                      onClick={handleConfirmKeyframes}
+                    >
                       {t('video.pipeline.keyframeReviewContinue')}
                     </Button>
                   </Space>
