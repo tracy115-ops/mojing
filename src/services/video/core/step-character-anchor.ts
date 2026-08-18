@@ -205,27 +205,39 @@ export function getCharacterAestheticTag(fullText: string): string {
 
   // 1. 显式欧美 / 外国特征
   if (/western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发|碧眼/i.test(text)) {
-    return '';
+    return isChinese ? '精致立体五官，工作室灯光，超高画质' : 'detailed refined facial features, studio lighting, hyperrealistic';
   }
 
   // 2. 动物 / 宠物 / 奇幻生物 (猫/狗/胖橘猫/神兽/妖/机器人等) -> 避免强加人类面部与性别词导致毁图！
   if (/cat|dog|animal|pet|dragon|monster|robot|fox|wolf|bear|tiger|lion|bird|monkey|猫|狗|胖橘|橘猫|肥猫|动物|神兽|妖|怪|兽|机器人|坐骑|宠物|狐狸|狼|熊|虎|狮|鸟|猴|悟空/i.test(text)) {
     return isChinese
-      ? '大师级角色设计，精细毛发与物理质感，生动生物特征，高品质概念图'
-      : 'masterpiece character design, highly detailed fur and physical texture, expressive creature features, high quality concept art';
+      ? '大师级生物角色设计，精细毛发物理质感，逼真生动神态，高品质概念立绘'
+      : 'masterpiece creature design, detailed fur and physical texture, expressive eyes, high quality character concept art';
   }
 
-  // 3. 男性角色 -> 东方男性美学 (英俊/汉子/儒雅/和尚/少爷/老者)
+  // 3. 现代 / JK / 制服 / 校服 / 西装
+  if (/jk|制服|校服|西装|现代|卫衣|风衣|都市|裙|衬衫/i.test(text)) {
+    if (/male|man|boy|guy|男|少年|青年|大叔|帅哥/i.test(text)) {
+      return isChinese
+        ? '阳光帅气东方男子，清爽发型，现代时尚穿搭，高画质写真'
+        : 'handsome modern East Asian male, stylish outfit, studio portrait photography';
+    }
+    return isChinese
+      ? '青春甜美东方少女，清秀可人面容，自然光泽长发，现代时尚写真'
+      : 'gorgeous youthful East Asian girl, beautiful delicate features, natural silky hair, modern fashion portrait photography';
+  }
+
+  // 4. 男性角色 -> 东方男性美学
   if (/male|man|boy|monk|guy|gentleman|king|father|brother|prince|master|男|汉子|和尚|小和尚|老和尚|少年|青年|大叔|老者|皇帝|王爷|少爷|师傅|师父|公|爷|哥|侠客|书生/i.test(text)) {
     return isChinese
       ? '东方男子英俊面容，五官端正，儒雅威武气场，东方男性美学'
       : 'handsome East Asian Chinese male features, refined facial structure, dignified posture, elegant oriental male aesthetic';
   }
 
-  // 4. 女性角色 (默认/显式女性) -> 东方女神/佳人
+  // 5. 古风 / 女性角色
   return isChinese
-    ? '东方绝色女子，精致面容，温婉优雅气场，瓷白肌肤，东方佳人美学'
-    : 'gorgeous East Asian Chinese beauty, delicate Chinese facial features, fair porcelain skin, silky hair, elegant almond eyes, oriental goddess aesthetic';
+    ? '精致面容，温婉优雅气场，瓷白肌肤，东方佳人美学'
+    : 'delicate East Asian facial features, fair porcelain skin, silky hair, elegant oriental aesthetic';
 }
 
 function buildPortraitPrompt(
@@ -246,16 +258,13 @@ function buildPortraitPrompt(
       : '写实人像摄影，高品质电影角色照，超高清精细特征';
 
     const parts = [
-      `角色单人全身立绘：${c.name}`,
+      `【角色主体与服装】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}`,
+      '单人居中全身立绘，从头到脚完整可见',
+      '纯色干净简洁背景，专业工作室光照',
       aestheticTag,
-      `完整外貌特征：${c.appearance}`,
-      costumeOverride ? `穿着服饰：${costumeOverride}` : '',
-      '全身设计锁定：保持面部、发型、发色、服装款式、服饰细节、身材比例、配饰完全一致',
-      '自然站姿，纯色简洁背景，工作室光照',
-      '从头到脚全身完整可见，单人居中',
       artTypeTag,
       styleEnhancer,
-      '无文字，无水印，无签名，无多余人物，无残缺，无三视图模型板',
+      '高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图',
     ].filter(Boolean);
     return parts.join('，');
   }
@@ -265,16 +274,13 @@ function buildPortraitPrompt(
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
   const parts = [
-    `solo, single character portrait of ${c.name}`,
+    `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
+    'single centered full-body character portrait, fully visible from head to toe',
+    'plain solid clean background, professional studio lighting',
     aestheticTag,
-    `complete character appearance and physical features: ${c.appearance}`,
-    costumeOverride ? `wearing ${costumeOverride}` : '',
-    'full-body character design lock, 100% identical face, hairstyle, hair color, clothing outfit, costume details, body proportions, and accessories',
-    'neutral pose, plain simple solid background, studio lighting',
-    'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
+    'masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean);
   return parts.join(', ');
 }

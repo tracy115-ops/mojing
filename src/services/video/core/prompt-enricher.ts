@@ -69,9 +69,9 @@ CRITICAL MANDATE:
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
       if (isChinese) {
-        return `${enriched}，${aestheticTag ? `${aestheticTag}，` : ''}${styleEnhancer}，高品质角色立绘，单人全身照，纯色简洁背景，工作室光效，高品质，无文字，无水印，无签名，无多余人物，无肢体残缺，无三视图，无多视角`;
+        return `【角色主体与服装造型】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}。${enriched}，单人居中全身立绘，从头到脚完整可见，纯色干净简洁背景，专业工作室光照，${aestheticTag ? `${aestheticTag}，` : ''}${styleEnhancer}，高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图`;
       }
-      return `${enriched}, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, high quality character portrait, single centered figure, full body, plain solid background, studio lighting, masterpiece, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views`;
+      return `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}. ${enriched}, single centered full-body character portrait, fully visible from head to toe, plain solid clean background, professional studio lighting, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views`;
     }
   } catch (err) {
     console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
@@ -151,15 +151,13 @@ function defaultCharacterPrompt(
       : '写实人像摄影，高品质电影角色照，超高清精细特征';
 
     return [
-      `单人角色全身立绘：${c.name}`,
+      `【角色主体与服装】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}`,
+      '单人居中全身立绘，从头到脚完整可见',
+      '纯色干净简洁背景，专业工作室光照',
       aestheticTag,
-      `角色外观特征：${c.appearance}`,
-      costumeOverride ? `穿着服饰：${costumeOverride}` : '',
-      '自然站姿，纯色简洁背景，工作室光照',
-      '从头到脚全身完整可见，单人居中',
       artTypeTag,
       styleEnhancer,
-      '无文字，无水印，无签名，无多余人物，无残缺，无三视图模型板',
+      '高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图',
     ].filter(Boolean).join('，');
   }
 
@@ -168,15 +166,13 @@ function defaultCharacterPrompt(
     : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
 
   return [
-    `solo, single character portrait of ${c.name}`,
+    `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
+    'single centered full-body character portrait, fully visible from head to toe',
+    'plain solid clean background, professional studio lighting',
     aestheticTag,
-    `character appearance and physical features: ${c.appearance}`,
-    costumeOverride ? `wearing ${costumeOverride}` : '',
-    'neutral pose, plain simple solid background, studio lighting',
-    'full body visible from head to toe, single centered figure',
     artTypeTag,
     styleEnhancer,
-    'no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
+    'masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean).join(', ');
 }
 
