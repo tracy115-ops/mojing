@@ -56,6 +56,43 @@ export function autoResolveCostumeVariant(
 }
 
 /**
+ * 智能检索当前分镜在场的角色（支持 ID / 名称 / 别名 / 正文与分镜 Prompt 语义精准比对）
+ */
+export function findMatchingCharacters(
+  shot: { characterIds?: string[]; videoPrompt?: string; sourceText?: string; narration?: string },
+  characters?: CharacterAnchor[],
+): CharacterAnchor[] {
+  if (!characters || characters.length === 0) return [];
+  const matched = new Set<CharacterAnchor>();
+  const charIds = (shot.characterIds || []).map((id) => id.trim().toLowerCase());
+  const shotText = `${shot.videoPrompt || ''} ${shot.sourceText || ''} ${shot.narration || ''}`.toLowerCase();
+
+  for (const c of characters) {
+    const cId = c.id.toLowerCase();
+    const cName = c.name.toLowerCase();
+    const aliases = (c.aliases || []).map((a) => a.toLowerCase());
+
+    // 1. 直接 ID / Name / Alias 匹配
+    const isIdMatch = charIds.some((id) => id === cId || id === cName || aliases.includes(id));
+
+    // 2. 文本语义中包含角色名或别名
+    const isTextMatch = (cName.length >= 2 && shotText.includes(cName)) ||
+      aliases.some((a) => a.length >= 2 && shotText.includes(a));
+
+    if (isIdMatch || isTextMatch) {
+      matched.add(c);
+    }
+  }
+
+  // 3. 兜底：如果分镜明确有在场角色需求，但未识别到具体名字，且总角色库只有 1 个主角，自动关联该主角
+  if (matched.size === 0 && characters.length === 1) {
+    matched.add(characters[0]);
+  }
+
+  return Array.from(matched);
+}
+
+/**
  * 为多个在场角色生成联合 DNA 锁定词（尊重原版，直接拼接人物原版特征）
  */
 export function buildMultiCharacterDnaTokens(

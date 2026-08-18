@@ -61,28 +61,17 @@ export async function runKeyframe(
     const charRefs: CollectedRef[] = [];
     const sceneRefs: CollectedRef[] = [];
 
-    // 收集在场角色立绘。
-    // 三视图策略:
-    //   - 完整三视图(model sheet)→ 让 provider 看到角色正/侧/背全貌
-    //   - 裁好的正面图(中间 1/3)→ 精准锚定正脸
-    //   - 单图立绘(无三视图时)→ 直接用作正面 reference
-    // variant 立绘永远是单图,不走裁剪。
-    for (const charId of shot.characterIds) {
-      const c = charById.get(charId);
-      if (!c) continue;
-      const variantId = shot.costumeVariantRefs?.[charId];
+    // 收集在场角色立绘（支持 ID / 名称 / 别名 / 正文与 Prompt 语义深度匹配）
+    const presentChars = findMatchingCharacters(shot, ctx.characters);
+    for (const c of presentChars) {
+      const variantId = shot.costumeVariantRefs?.[c.id] || shot.costumeVariantRefs?.[c.name];
       let variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
       if (!variant && c.costumeVariants?.length) {
         variant = autoResolveCostumeVariant(c, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`);
       }
-      if (variant) {
-        if (variant.portraitImage) {
-          charRefs.push({ url: variant.portraitImage });
-        } else if (c.portraitImage) {
-          charRefs.push({ url: c.portraitImage });
-        }
+      if (variant && variant.portraitImage) {
+        charRefs.push({ url: variant.portraitImage });
       } else if (c.portraitImage) {
-        // 100% 独占锁定高清单图立绘！彻底封杀三视图对关键帧人物颜值的污染！
         charRefs.push({ url: c.portraitImage });
       }
     }
@@ -243,7 +232,7 @@ export async function generateSingleKeyframe(
   );
 }
 
-import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant } from './character-dna';
+import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters } from './character-dna';
 
 function buildKeyframePrompt(
   shot: ShotSpec,
@@ -252,10 +241,7 @@ function buildKeyframePrompt(
   _prevShot?: ShotSpec,
 ): string {
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
-  const charById = new Map(characters.map((c) => [c.id, c]));
-  const presentChars = shot.characterIds
-    .map((id) => charById.get(id))
-    .filter((c): c is CharacterAnchor => !!c);
+  const presentChars = findMatchingCharacters(shot, characters);
 
   // 1. 角色外貌特征（忠实保留原貌与变装）
   const charDnaText = buildMultiCharacterDnaTokens(

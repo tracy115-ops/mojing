@@ -12,7 +12,7 @@ import type {
 } from '@/types/video';
 import { saveAsset, readAsDataUri, isValidVideoClip } from '../asset-store';
 import { detectInputLanguage } from './lang-detector';
-import { buildMultiCharacterDnaTokens } from './character-dna';
+import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters } from './character-dna';
 
 const VIDEO_GENERATION_CONCURRENCY = 2;
 
@@ -132,27 +132,46 @@ async function generateOne(
   enableI2V: boolean,
 ): Promise<GeneratedClip> {
   const [w, h] = parseResolution(options.spec.resolution);
-  // Agnes / 部分其他 provider 的 image 字段要 base64,不接受 URL。
-  // asset-store 落盘后 keyframe 可能是 webview URL,这里读盘转回 data URI。
   let referenceImages: string[] = [];
-  const refSource = shot.keyframeImage
-    || options.characters?.find((c) => shot.characterIds.includes(c.id))?.portraitImage;
-  if (enableI2V && refSource) {
-    const dataUri = await readAsDataUri(refSource);
-    if (dataUri) {
-      referenceImages.push(dataUri);
+  if (enableI2V) {
+    // 1. 优先使用本镜头的专属关键帧
+    if (shot.keyframeImage) {
+      const dataUri = await readAsDataUri(shot.keyframeImage);
+      if (dataUri) {
+        referenceImages.push(dataUri);
+      }
     }
-  }
 
-  // 连续性强化：若存在同场景下一镜头关键帧，作为首尾关键帧一并传入（Agnes keyframes 插值模式）
-  if (enableI2V && options.allShots && shot.index < options.allShots.length - 1) {
-    const nextShot = options.allShots[shot.index + 1];
-    const isSameScene = (nextShot.sceneId && shot.sceneId && nextShot.sceneId === shot.sceneId)
-      || (nextShot.location && shot.location && nextShot.location === shot.location);
-    if (isSameScene && nextShot.keyframeImage) {
-      const nextDataUri = await readAsDataUri(nextShot.keyframeImage);
-      if (nextDataUri) {
-        referenceImages.push(nextDataUri);
+    // 2. 若未生成关键帧图像，自动精准提取在场主角立绘（含变装）作为起始参考帧
+    if (referenceImages.length === 0 && options.characters?.length) {
+      const presentChars = findMatchingCharacters(shot, options.characters);
+      for (const c of presentChars) {
+        const variantId = shot.costumeVariantRefs?.[c.id] || shot.costumeVariantRefs?.[c.name];
+        let variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+        if (!variant && c.costumeVariants?.length) {
+          variant = autoResolveCostumeVariant(c, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`);
+        }
+        const imgUrl = variant?.portraitImage || c.portraitImage;
+        if (imgUrl) {
+          const dataUri = await readAsDataUri(imgUrl);
+          if (dataUri) {
+            referenceImages.push(dataUri);
+            break; // 视频起始帧锁定首位主角
+          }
+        }
+      }
+    }
+
+    // 3. 连续性强化：若存在同场景下一镜头关键帧，作为首尾关键帧一并传入（Agnes keyframes 插值模式）
+    if (options.allShots && shot.index < options.allShots.length - 1) {
+      const nextShot = options.allShots[shot.index + 1];
+      const isSameScene = (nextShot.sceneId && shot.sceneId && nextShot.sceneId === shot.sceneId)
+        || (nextShot.location && shot.location && nextShot.location === shot.location);
+      if (isSameScene && nextShot.keyframeImage) {
+        const nextDataUri = await readAsDataUri(nextShot.keyframeImage);
+        if (nextDataUri) {
+          referenceImages.push(nextDataUri);
+        }
       }
     }
   }
@@ -296,10 +315,7 @@ function buildEnhancedVideoPrompt(
   const basePrompt = shot.videoPrompt.trim();
   const isChinese = detectInputLanguage(basePrompt + ' ' + (shot.mood || '') + ' ' + (shot.narration || '')) === 'zh';
 
-  const charById = new Map((characters || []).map((c) => [c.id, c]));
-  const presentChars = (shot.characterIds || [])
-    .map((id) => charById.get(id))
-    .filter((c): c is CharacterAnchor => !!c);
+  const presentChars = findMatchingCharacters(shot, characters);
 
   const charDna = presentChars.length > 0
     ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`)
