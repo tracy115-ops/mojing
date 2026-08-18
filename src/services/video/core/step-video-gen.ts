@@ -26,6 +26,8 @@ export interface VideoGenOptions {
   sceneSource?: 'novel' | 'direct';
   sourceMode?: 'pure' | 'extract' | 'multishot';
   characters?: CharacterAnchor[];
+  /** 所有镜头列表，用于提取前后镜头的连续性与首尾帧衔接 */
+  allShots?: ShotSpec[];
   /**
    * 用于产物落盘(appDataDir/video-assets/<projectId>/clip/)。
    * Novel pipeline 总是传;Direct modal 可不传 — 不传则不落盘,
@@ -139,6 +141,19 @@ async function generateOne(
     const dataUri = await readAsDataUri(refSource);
     if (dataUri) {
       referenceImages.push(dataUri);
+    }
+  }
+
+  // 连续性强化：若存在同场景下一镜头关键帧，作为首尾关键帧一并传入（Agnes keyframes 插值模式）
+  if (enableI2V && options.allShots && shot.index < options.allShots.length - 1) {
+    const nextShot = options.allShots[shot.index + 1];
+    const isSameScene = (nextShot.sceneId && shot.sceneId && nextShot.sceneId === shot.sceneId)
+      || (nextShot.location && shot.location && nextShot.location === shot.location);
+    if (isSameScene && nextShot.keyframeImage) {
+      const nextDataUri = await readAsDataUri(nextShot.keyframeImage);
+      if (nextDataUri) {
+        referenceImages.push(nextDataUri);
+      }
     }
   }
 
@@ -287,7 +302,7 @@ function buildEnhancedVideoPrompt(
     .filter((c): c is CharacterAnchor => !!c);
 
   const charDna = presentChars.length > 0
-    ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese)
+    ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`)
     : '';
 
   // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)

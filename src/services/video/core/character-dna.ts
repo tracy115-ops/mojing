@@ -34,12 +34,35 @@ export function buildCharacterDnaTokens(
 }
 
 /**
+ * 智能自动识别角色变装/专属服装 (当 costumeVariantRefs 未手动指定时，自动从分镜提示词和正文中匹配)
+ */
+export function autoResolveCostumeVariant(
+  character: CharacterAnchor,
+  contextText: string,
+): { id: string; description: string } | undefined {
+  if (!character.costumeVariants || character.costumeVariants.length === 0) return undefined;
+  const normalized = (contextText || '').toLowerCase().replace(/[\s·・._-]/g, '');
+  if (!normalized) return undefined;
+
+  for (const variant of character.costumeVariants) {
+    if (variant.id === 'default') continue;
+    const vId = (variant.id || '').toLowerCase().replace(/[\s·・._-]/g, '');
+    const vDesc = (variant.description || '').toLowerCase().replace(/[\s·・._-]/g, '');
+    if ((vId.length >= 2 && normalized.includes(vId)) || (vDesc.length >= 2 && normalized.includes(vDesc))) {
+      return variant;
+    }
+  }
+  return undefined;
+}
+
+/**
  * 为多个在场角色生成联合 DNA 锁定词
  */
 export function buildMultiCharacterDnaTokens(
   characters: CharacterAnchor[],
   costumeVariantRefs?: Record<string, string>,
   isChinese = true,
+  contextText = '',
 ): string {
   if (!characters || characters.length === 0) {
     return isChinese ? '空景画面，无人物' : 'empty scene, no people';
@@ -47,8 +70,11 @@ export function buildMultiCharacterDnaTokens(
 
   if (characters.length === 1) {
     const c = characters[0];
-    const variantId = costumeVariantRefs?.[c.id];
-    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+    const explicitId = costumeVariantRefs?.[c.id];
+    let variant = explicitId ? c.costumeVariants?.find((v) => v.id === explicitId) : undefined;
+    if (!variant) {
+      variant = autoResolveCostumeVariant(c, contextText);
+    }
     const dna = buildCharacterDnaTokens(c, variant?.description);
     return isChinese ? dna.zh : dna.en;
   }
@@ -58,8 +84,11 @@ export function buildMultiCharacterDnaTokens(
   const positionsEn = ['left side of frame', 'right side of frame', 'center of frame', 'foreground', 'midground'];
 
   const parts = characters.map((c, idx) => {
-    const variantId = costumeVariantRefs?.[c.id];
-    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+    const explicitId = costumeVariantRefs?.[c.id];
+    let variant = explicitId ? c.costumeVariants?.find((v) => v.id === explicitId) : undefined;
+    if (!variant) {
+      variant = autoResolveCostumeVariant(c, contextText);
+    }
     const dna = buildCharacterDnaTokens(c, variant?.description);
     const posZh = positionsZh[idx % positionsZh.length];
     const posEn = positionsEn[idx % positionsEn.length];

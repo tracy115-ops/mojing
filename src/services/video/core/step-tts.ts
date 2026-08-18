@@ -127,13 +127,25 @@ export async function runTTS(
 
 function cleanNarrationForTTS(raw: string): string {
   if (!raw) return '';
-  return raw
+  const text = raw.trim();
+
+  // 优先提取引号内的纯对白台词，保证配音只读角色台词，不念旁白镜头指令
+  const quoteMatches = text.match(/["“「『]([^"”」』]+)["”」』]/g);
+  if (quoteMatches && quoteMatches.length > 0) {
+    return quoteMatches
+      .map((m) => m.replace(/["“”「」『』]/g, '').trim())
+      .filter(Boolean)
+      .join('，');
+  }
+
+  return text
+    .replace(/^.*?(?:镜头\s*\d+|分镜\s*\d+|第\s*\d+\s*镜|Shot\s*\d+|Scene\s*\d+)[:：\s]*/i, '') // 去除 "镜头1：" 前缀
     .replace(/\[.*?\]/g, '') // 去除 [动作/神态] 提示
     .replace(/【.*?】/g, '')
     .replace(/（.*?）/g, '') // 去除 (括号) 提示
     .replace(/\(.*?\)/g, '')
     .replace(/^.*?(?:台词|对白)[:：]\s*/g, '') // 去除 "女生台词：" 或 "猫咪台词："
-    .replace(/^.*?[：:]\s*/g, '')  // 去除 "角色名:" 或 "角色名：" 前缀
-    .replace(/[“”"「」]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
+    .replace(/^([一-龥A-Za-z0-9_]{1,8})(?:（[^）]+）|\([^)]+\))?[:：]\s*/g, '')  // 去除开头的 "角色名:" 或 "角色名：" 前缀
+    .replace(/[“”"「」『』]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
     .trim();
 }

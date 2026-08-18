@@ -785,22 +785,48 @@ fn merge_audio_blocking(req: &MergeAudioRequest) -> Result<MergeAudioResult, Str
         return Err(format!("merge_audio: audio file does not exist: {}", audio_path));
     }
 
-    // 彻底解决「重音/双音轨干涉」问题：
-    // AI 视频生成模型（如 Kling/Vidu/MiniMax）返回的原视频可能自带嘈杂人声/杂音。
-    // 强制使用 -map 0:v:0（仅取原视频画面）与 -map 1:a:0（只取 TTS 配音），
-    // 抹除原视频自带杂音，保证配音纯净清晰，且使用 -c:v copy 实现毫秒级无损合并。
+    // 彻底解决「重音/双音轨干涉」与「台词被截断/视频被腰斩」问题：
+    // 1. 使用 -map 0:v:0 与 -map 1:a:0 抹除原视频自带杂音，保证 TTS 配音纯净。
+    // 2. 移除粗暴的 -shortest 参数：
+    //    - 若 TTS 配音时长长于视频：采用 tpad 保持尾帧画面，确保台词完整读完，绝不截断发音！
+    //    - 若视频时长长于配音：视频无损 stream copy，音频末尾静音补齐 (apad)，确保画面完整呈现。
+    let v_dur = probe_duration(Path::new(&video_path));
+    let a_dur = probe_duration(Path::new(&audio_path));
+
     let mut cmd = FfmpegCommand::new();
     cmd.arg("-y")
         .arg("-err_detect").arg("ignore_err")
-        .input(video_path)
-        .input(audio_path)
-        .arg("-c:v").arg("copy")
-        .arg("-c:a").arg("aac")
-        .arg("-b:a").arg("192k")
-        .arg("-shortest")
-        .arg("-map").arg("0:v:0")
-        .arg("-map").arg("1:a:0")
-        .output(out_path.to_string_lossy().to_string());
+        .input(video_path.clone())
+        .input(audio_path.clone());
+
+    if let (Some(vd), Some(ad)) = (v_dur, a_dur) {
+        if ad > vd + 0.15 {
+            // 配音比视频长：扩充视频尾帧
+            let extra_sec = (ad - vd).max(0.1);
+            let pad_filter = format!("tpad=stop_mode=clone:stop_duration={:.2}", extra_sec);
+            cmd.arg("-vf").arg(pad_filter)
+                .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20")
+                .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
+                .arg("-t").arg(format!("{:.2}", ad))
+                .arg("-map").arg("0:v:0")
+                .arg("-map").arg("1:a:0");
+        } else {
+            // 视频比配音长或对齐：无损拷贝画面，音频静音补齐
+            cmd.arg("-c:v").arg("copy")
+                .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
+                .arg("-af").arg("apad")
+                .arg("-t").arg(format!("{:.2}", vd))
+                .arg("-map").arg("0:v:0")
+                .arg("-map").arg("1:a:0");
+        }
+    } else {
+        cmd.arg("-c:v").arg("copy")
+            .arg("-c:a").arg("aac").arg("-b:a").arg("192k")
+            .arg("-map").arg("0:v:0")
+            .arg("-map").arg("1:a:0");
+    }
+
+    cmd.output(out_path.to_string_lossy().to_string());
 
     run_to_completion(cmd, "ffmpeg merge_audio")?;
 

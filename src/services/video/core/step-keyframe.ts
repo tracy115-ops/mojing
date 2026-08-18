@@ -71,10 +71,15 @@ export async function runKeyframe(
       const c = charById.get(charId);
       if (!c) continue;
       const variantId = shot.costumeVariantRefs?.[charId];
-      const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+      let variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
+      if (!variant && c.costumeVariants?.length) {
+        variant = autoResolveCostumeVariant(c, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`);
+      }
       if (variant) {
         if (variant.portraitImage) {
           charRefs.push({ url: variant.portraitImage });
+        } else if (c.portraitImage) {
+          charRefs.push({ url: c.portraitImage });
         }
       } else if (c.portraitImage) {
         // 100% 独占锁定高清单图立绘！彻底封杀三视图对关键帧人物颜值的污染！
@@ -238,7 +243,7 @@ export async function generateSingleKeyframe(
   );
 }
 
-import { buildMultiCharacterDnaTokens } from './character-dna';
+import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant } from './character-dna';
 
 function buildKeyframePrompt(
   shot: ShotSpec,
@@ -252,11 +257,12 @@ function buildKeyframePrompt(
     .map((id) => charById.get(id))
     .filter((c): c is CharacterAnchor => !!c);
 
-  // 1. 角色 DNA 核心锁定 (置顶最高权重)
+  // 1. 角色 DNA 核心锁定 (置顶最高权重，支持变装自动识别)
   const charDnaText = buildMultiCharacterDnaTokens(
     presentChars,
     shot.costumeVariantRefs,
     isChinese,
+    `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
   );
 
   // 2. 前后分镜接戏与空间连续性
