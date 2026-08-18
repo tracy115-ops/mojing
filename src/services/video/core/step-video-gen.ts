@@ -178,7 +178,7 @@ async function generateOne(
 
   const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);
   const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
-  const negativePrompt = 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, poorly drawn face';
+  const negativePrompt = 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, poorly drawn face, camera shake, erratic camera movement, rapid spinning, motion sickness, dizzying rotation, chaotic motion, extreme shake';
   const seed = (shot as any).seed ?? (Math.abs((shot.index + 1) * 31337 + Date.now()) % 2147483647);
 
   let response;
@@ -321,9 +321,7 @@ function buildEnhancedVideoPrompt(
     ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`)
     : '';
 
-  const camera = shot.cameraMovement
-    ? (isChinese ? `${shot.cameraMovement}运镜` : `${shot.cameraMovement} camera movement`)
-    : '';
+  const camera = formatCameraMovement(shot.cameraMovement, isChinese);
   const mood = shot.mood
     ? (isChinese ? `${shot.mood}氛围` : `${shot.mood} atmosphere`)
     : '';
@@ -337,6 +335,44 @@ function buildEnhancedVideoPrompt(
     camera,
     mood,
     style,
-    isChinese ? '高清流畅，自然动作，无画面闪烁' : 'high quality, smooth natural motion, no flicker',
+    isChinese ? '高清流畅，自然微动，画面平稳舒适，无剧烈晃动，无眩晕感' : 'high quality, smooth natural motion, steady tripod shot, no camera shake, no rapid rotation',
   ].filter(Boolean).join(delimiter);
+}
+
+function formatCameraMovement(cam?: string, isChinese = true): string {
+  if (!cam) return isChinese ? '平稳镜头，自然微动' : 'steady camera, subtle gentle motion';
+  const c = cam.toLowerCase().trim();
+  switch (c) {
+    case 'static':
+    case '静止':
+    case '固定':
+      return isChinese ? '固定机位，画面平稳' : 'static locked-off camera, steady shot';
+    case 'dolly_in':
+    case 'zoom_in':
+    case '推进':
+    case '拉近':
+      return isChinese ? '缓慢平稳微推' : 'slow gentle camera push in';
+    case 'dolly_out':
+    case 'zoom_out':
+    case '拉远':
+    case '后退':
+      return isChinese ? '平缓缓慢拉远' : 'slow gentle camera pull out';
+    case 'pan_left':
+    case '左摇':
+      return isChinese ? '平缓平稳左摇' : 'slow smooth pan left';
+    case 'pan_right':
+    case '右摇':
+      return isChinese ? '平缓平稳右摇' : 'slow smooth pan right';
+    case 'tilt_up':
+    case '上摇':
+      return isChinese ? '平稳缓慢上移' : 'slow smooth tilt up';
+    case 'tilt_down':
+    case '下摇':
+      return isChinese ? '平稳缓慢下移' : 'slow smooth tilt down';
+    case 'tracking':
+    case '跟拍':
+      return isChinese ? '平稳跟镜头，无剧烈颠簸' : 'smooth steady tracking shot';
+    default:
+      return isChinese ? '平稳镜头，自然微动' : 'steady camera, subtle gentle motion';
+  }
 }
