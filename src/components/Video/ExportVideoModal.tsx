@@ -5,9 +5,10 @@
 // 直接降级到 <a download>,只支持远程 URL 或 data URI。
 
 import React, { useState } from 'react';
-import { Modal, Radio, Space, Typography, message, Progress, Alert } from 'antd';
+import { Modal, Radio, Space, Typography, message, Progress } from 'antd';
 import { useTranslation } from '@/i18n';
-import { exportVideo, probeFFmpeg } from '@/services/video/ffmpeg-bridge';
+import { exportVideo, probeFFmpeg, writeDataUri } from '@/services/video/ffmpeg-bridge';
+import { resolveLocalPath, isRemoteUrl } from '@/services/video/asset-store';
 
 const { Text } = Typography;
 
@@ -16,7 +17,7 @@ type Resolution = 'original' | '720' | '1080' | '1440';
 export interface ExportVideoModalProps {
   open: boolean;
   onClose: () => void;
-  /** 成片本地路径或远程 URL;远程 URL 不支持转码导出。 */
+  /** 成片本地路径或远程 URL。 */
   sourcePath: string;
   /** 建议文件名(不含扩展名)。 */
   suggestedName: string;
@@ -33,9 +34,6 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const isRemote = /^https?:\/\//.test(sourcePath);
-  const isDataUri = sourcePath.startsWith('data:');
-
   const handleCancel = () => {
     if (busy) return;
     setBusy(false);
@@ -44,21 +42,9 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   };
 
   const handleOk = async () => {
-    if (isRemote || isDataUri) {
-      message.warning(t('video.export.remoteOnly'));
-      return;
-    }
     setBusy(true);
     setProgress(10);
     try {
-      const probe = await probeFFmpeg().catch(() => null);
-      if (!probe?.available) {
-        message.error(t('video.export.ffmpegMissing'));
-        setBusy(false);
-        setProgress(0);
-        return;
-      }
-
       const { save } = await import('@tauri-apps/plugin-dialog');
       setProgress(30);
       const filePath = await save({
@@ -80,19 +66,42 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       }
 
       setProgress(50);
-      const targetHeight = resolution === 'original' ? 0 : parseInt(resolution, 10);
-      const result = await exportVideo({
-        sourcePath,
-        outputPath: filePath,
-        targetHeight,
-      });
-      setProgress(100);
+      const localPath = resolveLocalPath(sourcePath);
+      const isDataUri = sourcePath.startsWith('data:');
+      const isRemote = isRemoteUrl(sourcePath);
 
-      const sizeMb = result.sizeBytes ? (result.sizeBytes / 1024 / 1024).toFixed(1) : '?';
-      const durStr = result.durationSeconds ? `${result.durationSeconds.toFixed(1)}s` : '';
-      message.success(
-        t('video.export.success', { size: sizeMb, duration: durStr }),
-      );
+      if (isDataUri) {
+        // Base64 Data URI 直接写入目标文件
+        await writeDataUri({ dataUri: sourcePath, outputPath: filePath });
+      } else if (isRemote) {
+        // 远程 URL 走下载或复制
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('ffmpeg_download_clip', { url: sourcePath, destDir: '', filename: filePath }).catch(async () => {
+          // 兜底浏览器拉取
+          const resp = await fetch(sourcePath);
+          const buf = await resp.arrayBuffer();
+          const bytes = Array.from(new Uint8Array(buf));
+          await invoke('write_export_file', { path: filePath, content: bytes });
+        });
+      } else {
+        // 本地文件 (包含 asset.localhost webview URL 解码后的磁盘绝对路径) 走 FFmpeg 高速无损导出/转码
+        const targetHeight = resolution === 'original' ? 0 : parseInt(resolution, 10);
+        const probe = await probeFFmpeg().catch(() => null);
+        if (probe?.available) {
+          await exportVideo({
+            sourcePath: localPath,
+            outputPath: filePath,
+            targetHeight,
+          });
+        } else {
+          // 若无 FFmpeg 直接调用 Rust 复制文件
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('write_export_file', { path: filePath, content: localPath });
+        }
+      }
+
+      setProgress(100);
+      message.success('成片视频已成功导出！');
       onClose();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -132,20 +141,12 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       onCancel={handleCancel}
       okText={t('video.export.ok')}
       cancelText={t('common.cancel')}
-      okButtonProps={{ loading: busy, disabled: isRemote || isDataUri }}
+      okButtonProps={{ loading: busy }}
       cancelButtonProps={{ disabled: busy }}
       maskClosable={!busy}
       destroyOnClose
     >
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        {(isRemote || isDataUri) && (
-          <Alert
-            type="warning"
-            showIcon
-            message={t('video.export.remoteOnlyTitle')}
-            description={t('video.export.remoteOnly')}
-          />
-        )}
 
         <div>
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
