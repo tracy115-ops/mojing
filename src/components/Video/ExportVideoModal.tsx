@@ -113,6 +113,7 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   };
 
   const [subtitleStyle, setSubtitleStyle] = useState<'yellow' | 'gold_stroke' | 'cinema' | 'minimal'>('yellow');
+  const [transitionStyle, setTransitionStyle] = useState<'smooth' | 'fadeblack' | 'direct'>('smooth');
   const [bgmSource, setBgmSource] = useState<'preset' | 'custom'>('preset');
   const [customBgmFile, setCustomBgmFile] = useState<string | null>(null);
 
@@ -170,6 +171,19 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
               <Radio value="gold_stroke">🔥 综艺极光描边金字 (金灿描边+高亮)</Radio>
               <Radio value="cinema">🎬 电影原声双语字幕 (底部暗影高质感)</Radio>
               <Radio value="minimal">🌸 二次元漫剧白字 (极简圆润边框)</Radio>
+            </Space>
+          </Radio.Group>
+        </div>
+
+        <div style={{ padding: '10px 12px', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', borderRadius: 8 }}>
+          <Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>
+            🎞️ 分镜转场衔接模式 (Transition Style)
+          </Text>
+          <Radio.Group value={transitionStyle} onChange={(e) => setTransitionStyle(e.target.value)}>
+            <Space direction="vertical" size={4}>
+              <Radio value="smooth">✨ 智能电影微过渡 (Smooth Cut - 推荐，消除跳帧与音频爆音)</Radio>
+              <Radio value="fadeblack">🌑 电影黑场淡出淡入 (Fade to Black - 适合大章节转换)</Radio>
+              <Radio value="direct">⚡ 经典无损硬切 (Direct Cut - 极速拼接)</Radio>
             </Space>
           </Radio.Group>
         </div>
