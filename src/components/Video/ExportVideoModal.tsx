@@ -36,6 +36,13 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   const isRemote = /^https?:\/\//.test(sourcePath);
   const isDataUri = sourcePath.startsWith('data:');
 
+  const handleCancel = () => {
+    if (busy) return;
+    setBusy(false);
+    setProgress(0);
+    onClose();
+  };
+
   const handleOk = async () => {
     if (isRemote || isDataUri) {
       message.warning(t('video.export.remoteOnly'));
@@ -47,6 +54,8 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       const probe = await probeFFmpeg().catch(() => null);
       if (!probe?.available) {
         message.error(t('video.export.ffmpegMissing'));
+        setBusy(false);
+        setProgress(0);
         return;
       }
 
@@ -56,6 +65,14 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
         defaultPath: `${suggestedName}.mp4`,
         filters: [{ name: 'MP4', extensions: ['mp4'] }],
       });
+
+      // 重新激活窗口焦点，防止 Windows 原生保存对话框关闭后 WebView 失去焦点
+      try {
+        window.focus();
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        await (getCurrentWindow() as any).setFocus?.();
+      } catch {}
+
       if (!filePath) {
         setBusy(false);
         setProgress(0);
@@ -112,10 +129,13 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       open={open}
       title={t('video.export.title')}
       onOk={handleOk}
-      onCancel={onClose}
+      onCancel={handleCancel}
       okText={t('video.export.ok')}
       cancelText={t('common.cancel')}
       okButtonProps={{ loading: busy, disabled: isRemote || isDataUri }}
+      cancelButtonProps={{ disabled: busy }}
+      maskClosable={!busy}
+      destroyOnClose
     >
       <Space direction="vertical" style={{ width: '100%' }} size="middle">
         {(isRemote || isDataUri) && (

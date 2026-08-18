@@ -75,6 +75,13 @@ export class ExportService {
         filters: [{ name: format.toUpperCase(), extensions: [extension] }],
       });
 
+      // 重新激活窗口焦点
+      try {
+        window.focus();
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        await (getCurrentWindow() as any).setFocus?.();
+      } catch {}
+
       if (!filePath) {
         return { success: false, error: 'Export cancelled', wordCount: totalWords, chapterCount: filteredChapters.length };
       }
