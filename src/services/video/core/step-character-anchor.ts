@@ -76,7 +76,7 @@ export async function runCharacterAnchor(
     const customPrompt = ctx.characterPrompts?.[c.id] || ctx.characterPrompts?.[c.name];
     const portraitPrompt = customPrompt && customPrompt.trim()
       ? customPrompt
-      : await enrichCharacterPromptWithLLM(c, ctx.style);
+      : buildPortraitPrompt(c, limited, ctx.style);
     let portraitOk = !!result[i].portraitImage;
     if (!portraitOk) {
       try {
@@ -248,39 +248,33 @@ function buildPortraitPrompt(
 ): string {
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
   const isChinese = detectInputLanguage(fullText) === 'zh';
-  const styleEnhancer = getStyleEnhancers(fullText, style);
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const aestheticTag = getCharacterAestheticTag(fullText);
 
   if (isChinese) {
     const artTypeTag = isCartoonOrAnime
-      ? '高清2D二次元单人角色立绘，精细动漫画作'
-      : '写实人像摄影，高品质电影角色照，超高清精细特征';
+      ? '2D动漫单人角色立绘'
+      : (style ? `${style}风格` : '高清写实角色立绘');
 
     const parts = [
-      `【角色主体与服装】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}`,
-      '单人居中全身立绘，从头到脚完整可见',
-      '纯色干净简洁背景，专业工作室光照',
-      aestheticTag,
+      `${c.name}：${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
+      '单人全身立绘，单人居中，从头到脚完整可见',
+      '纯色干净简洁背景',
       artTypeTag,
-      styleEnhancer,
-      '高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图',
+      '超高清，极致细节，无文字，无水印，无多余人物，无三视图',
     ].filter(Boolean);
     return parts.join('，');
   }
 
   const artTypeTag = isCartoonOrAnime
-    ? 'high quality 2D anime single character portrait, detailed anime artwork'
-    : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
+    ? '2D anime character portrait'
+    : (style ? `${style} style` : 'realistic character portrait');
 
   const parts = [
-    `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
+    `${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
     'single centered full-body character portrait, fully visible from head to toe',
-    'plain solid clean background, professional studio lighting',
-    aestheticTag,
+    'plain solid clean background',
     artTypeTag,
-    styleEnhancer,
-    'masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
+    'masterpiece quality, sharp focus, no text, no watermark, no extra people, no turnaround sheet',
   ].filter(Boolean);
   return parts.join(', ');
 }

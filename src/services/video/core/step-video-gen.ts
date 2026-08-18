@@ -305,37 +305,22 @@ function buildEnhancedVideoPrompt(
     ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`)
     : '';
 
-  // 对白/旁白镜头: 显式注入说话口型与面部动效提示词 (解决说话与配音对不上的问题)
-  const lipSyncPrompt = shot.narration && shot.narration.trim().length > 0
-    ? (isChinese
-        ? '角色自然说话，唇形与嘴唇动作同步，面部表情生动'
-        : 'character speaking naturally, realistic lip movement synced to dialogue, expressive mouth animation')
-    : '';
-
-  // 多角色同框镜头: 显式注入独立肢体与空间分隔提示词 (解决肢体相互污染粘连的问题)
-  const multiCharIsolation = shot.characterIds && shot.characterIds.length > 1
-    ? (isChinese
-        ? '主体清晰分明，独立人物动作，无肢体融合，无肢体重叠，边界清晰'
-        : 'distinct separate figures, no body fusion, no overlapping limbs, clean character boundaries, independent character movement')
-    : '';
-
-  const delimiter = isChinese ? '，' : ', ';
-
   const camera = shot.cameraMovement
     ? (isChinese ? `${shot.cameraMovement}运镜` : `${shot.cameraMovement} camera movement`)
     : '';
   const mood = shot.mood
     ? (isChinese ? `${shot.mood}氛围` : `${shot.mood} atmosphere`)
     : '';
-  const styleEnhancers = getStyleEnhancers(basePrompt + ' ' + (shot.mood || ''), stylePreset);
+  const style = stylePreset ? (isChinese ? `${stylePreset}风格` : `${stylePreset} style`) : '';
+
+  const delimiter = isChinese ? '，' : ', ';
 
   return [
     charDna,
     basePrompt,
     camera,
     mood,
-    lipSyncPrompt,
-    multiCharIsolation,
-    styleEnhancers,
+    style,
+    isChinese ? '高清流畅，自然动作，无画面闪烁' : 'high quality, smooth natural motion, no flicker',
   ].filter(Boolean).join(delimiter);
 }

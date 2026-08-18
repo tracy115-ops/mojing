@@ -249,7 +249,7 @@ function buildKeyframePrompt(
   shot: ShotSpec,
   characters: CharacterAnchor[],
   style?: string,
-  prevShot?: ShotSpec,
+  _prevShot?: ShotSpec,
 ): string {
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
   const charById = new Map(characters.map((c) => [c.id, c]));
@@ -257,7 +257,7 @@ function buildKeyframePrompt(
     .map((id) => charById.get(id))
     .filter((c): c is CharacterAnchor => !!c);
 
-  // 1. 角色 DNA 核心锁定 (置顶最高权重，支持变装自动识别)
+  // 1. 角色外貌特征（忠实保留原貌与变装）
   const charDnaText = buildMultiCharacterDnaTokens(
     presentChars,
     shot.costumeVariantRefs,
@@ -265,46 +265,27 @@ function buildKeyframePrompt(
     `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
   );
 
-  // 2. 前后分镜接戏与空间连续性
-  let continuityText = '';
-  if (prevShot) {
-    const isSameScene = prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId;
-    if (isSameScene || (prevShot.location && shot.location && prevShot.location === shot.location)) {
-      continuityText = isChinese
-        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、主光源角度与角色动作走向'
-        : '[Shot Continuity] seamlessly inherits spatial position, primary light direction, and motion trajectory from previous shot';
-    }
-  }
-
-  const qualityTag = getStyleEnhancers(shot.videoPrompt + ' ' + (shot.mood || ''), style);
-
   if (isChinese) {
     const parts = [
-      '电影级分镜关键帧',
       charDnaText,
       shot.videoPrompt,
-      continuityText,
-      shot.location ? `场景位置：${shot.location}` : '',
-      shot.mood ? `画面氛围：${shot.mood}` : '',
-      shot.cameraMovement ? `镜头视角：${shot.cameraMovement}` : '',
-      style ? `${style}风格` : '电影级风格',
-      qualityTag,
-      '无文字，无水印，无签名，无人体残缺，无多余手臂，无肢体粘连，无三视图，无分屏',
+      shot.location ? `场景：${shot.location}` : '',
+      shot.cameraMovement ? `镜头：${shot.cameraMovement}` : '',
+      shot.mood ? `氛围：${shot.mood}` : '',
+      style ? `${style}风格` : '电影写实风格',
+      '超高清画面，精致细节，无文字，无水印，无三视图，无分屏',
     ].filter(Boolean);
     return parts.join('，');
   }
 
   const parts = [
-    'cinematic movie keyframe storyboard',
     charDnaText,
     shot.videoPrompt,
-    continuityText,
     shot.location ? `location: ${shot.location}` : '',
+    shot.cameraMovement ? `camera: ${shot.cameraMovement}` : '',
     shot.mood ? `mood: ${shot.mood}` : '',
-    shot.cameraMovement ? `camera angle: ${shot.cameraMovement}` : '',
     style ? `${style} style` : 'cinematic style',
-    qualityTag,
-    'no text, no watermark, no signature, no bad anatomy, no extra arms, no fused limbs, no turnaround sheet, no split screen, no multiple views of same person',
+    'high quality, sharp focus, no text, no watermark, no split screen, no character sheet',
   ].filter(Boolean);
 
   return parts.join(', ');
