@@ -83,18 +83,12 @@ export async function runKeyframe(
     }
 
     // 顺序优化(核心关键):
-    // 1. 角色立绘必须排在最前面(Index 0)！因为多数 AI 绘图/多图参考 API(FLUX / DALL-E / Kolors)
-    //    优先使用 referenceImages[0] 锁定人物人脸与服饰细节。之前把场景图插在 [0]，导致人脸参考图被直接忽略！
-    // 2. 前一镜头关键帧(若存在且同一场景)跟在后面，确保前后镜头连贯性。
-    // 3. 场景背景图跟在末尾提供环境调性。
-    const prevKeyframeRef: CollectedRef[] = (i > 0 && result[i - 1]?.keyframeImage)
-      ? [{ url: result[i - 1].keyframeImage! }]
-      : [];
-
+    // 1. 角色立绘必须排在最前面(Index 0)！直接锚定高清原画立绘，绝不使用上一镜头的衍生图，彻底杜绝多镜头面部漂移与突变！
+    // 2. 场景背景图跟在末尾提供环境色调。
     const episodeOpeningRef: CollectedRef[] = i === 0 && ctx.openingReferenceImage
       ? [{ url: ctx.openingReferenceImage }]
       : [];
-    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
+    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...sceneRefs];
 
     // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
     // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。
