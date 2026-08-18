@@ -161,6 +161,19 @@ async function generateOne(
         }
       }
     }
+
+    // 3. 连续性强化：若存在同场景下一镜头关键帧，作为首尾关键帧一并传入（Agnes keyframes 插值模式）
+    if (options.allShots && shot.index < options.allShots.length - 1) {
+      const nextShot = options.allShots[shot.index + 1];
+      const isSameScene = (nextShot.sceneId && shot.sceneId && nextShot.sceneId === shot.sceneId)
+        || (nextShot.location && shot.location && nextShot.location === shot.location);
+      if (isSameScene && nextShot.keyframeImage) {
+        const nextDataUri = await readAsDataUri(nextShot.keyframeImage);
+        if (nextDataUri) {
+          referenceImages.push(nextDataUri);
+        }
+      }
+    }
   }
 
   const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);

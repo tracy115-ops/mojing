@@ -83,12 +83,17 @@ export async function runKeyframe(
     }
 
     // 顺序优化(核心关键):
-    // 1. 角色立绘必须排在最前面(Index 0)！直接锚定高清原画立绘，绝不使用上一镜头的衍生图，彻底杜绝多镜头面部漂移与突变！
-    // 2. 场景背景图跟在末尾提供环境色调。
+    // 1. 角色立绘必须排在最前面(Index 0)！锁定人物人脸与服饰细节。
+    // 2. 前一镜头关键帧(若存在且同一场景)跟在后面，确保空间光源与动作接戏连贯。
+    // 3. 场景背景图跟在末尾提供环境调性。
+    const prevKeyframeRef: CollectedRef[] = (i > 0 && result[i - 1]?.keyframeImage)
+      ? [{ url: result[i - 1].keyframeImage! }]
+      : [];
+
     const episodeOpeningRef: CollectedRef[] = i === 0 && ctx.openingReferenceImage
       ? [{ url: ctx.openingReferenceImage }]
       : [];
-    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...sceneRefs];
+    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
 
     // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
     // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。
@@ -232,7 +237,7 @@ function buildKeyframePrompt(
   shot: ShotSpec,
   characters: CharacterAnchor[],
   style?: string,
-  _prevShot?: ShotSpec,
+  prevShot?: ShotSpec,
 ): string {
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
   const presentChars = findMatchingCharacters(shot, characters);
@@ -245,10 +250,23 @@ function buildKeyframePrompt(
     `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
   );
 
+  // 2. 前后分镜接戏与空间连续性
+  let continuityText = '';
+  if (prevShot) {
+    const isSameScene = (prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId)
+      || (prevShot.location && shot.location && prevShot.location === shot.location);
+    if (isSameScene) {
+      continuityText = isChinese
+        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、主光源角度与动作走向'
+        : '[Shot Continuity] seamlessly inherits spatial position, primary light direction, and motion trajectory from previous shot';
+    }
+  }
+
   if (isChinese) {
     const parts = [
       charDnaText,
       shot.videoPrompt,
+      continuityText,
       shot.location ? `场景：${shot.location}` : '',
       shot.cameraMovement ? `镜头：${shot.cameraMovement}` : '',
       shot.mood ? `氛围：${shot.mood}` : '',
@@ -261,6 +279,7 @@ function buildKeyframePrompt(
   const parts = [
     charDnaText,
     shot.videoPrompt,
+    continuityText,
     shot.location ? `location: ${shot.location}` : '',
     shot.cameraMovement ? `camera: ${shot.cameraMovement}` : '',
     shot.mood ? `mood: ${shot.mood}` : '',
