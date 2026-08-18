@@ -118,7 +118,11 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
   }
 
   if (isChinese) {
-    return `你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型（Kling / Hunyuan / MiniMax / Doubao）能直接生成的精确纯中文 prompt。
+    return `你是资深影视分镜导演 + AI 视频提示词工程师，把小说章节段落重写成 AI 视频模型（Kling / Hunyuan / MiniMax / Doubao / Agnes）能直接生成的精确纯中文分镜。
+
+【核心原则：100% 忠实还原小说/剧本原著，严禁随意精简或篡改关键剧情】
+- 必须完整展现原文中发生的核心事件、人物互动、肢体动作、道具与环境变化，严禁删减核心细节！
+- 角色对白与关键台词必须 100% 忠实保留原文字句，严禁改写或遗漏！
 
 【项目背景】
 - 小说标题：${ctx.novelTitle}
@@ -127,19 +131,18 @@ function buildSystemPrompt(batch: RawShot[], ctx: StoryboardContext): string {
 - 单镜头时长：${ctx.defaultShotDuration} 秒
 
 【输出规范】严格 JSON 数组，每个元素对应一个镜头，字段：
-- "videoPrompt": 纯中文 prompt，60-150 字。必须使用纯中文！必须包含：(1) 场景环境描写 (2) 角色具体外貌与服饰 (3) 具体动作与肢体变化 (4) 镜头视角与运动 (5) 光影与氛围。不要写 "一个视频" 之类元描述。
-- "imagePrompt": 纯中文 prompt，30-80 字，描述这个镜头的关键帧画面（必须纯中文）
-- "narration": 用于 TTS 配音的对白/旁白文本。如果原文包含角色台词/对白（例如“女生台词：...”、“猫咪台词：...”或引号对白），必须 100% 严格保留原版台词（如“大师，我有一事相求！”），严禁擅自改写成第三人称旁白解说！只有在纯景物或无对白镜头下，才提取简要解说旁白。
+- "videoPrompt": 纯中文 prompt，80-180 字。必须使用纯中文！必须忠实完整包含：(1) 场景环境与光影氛围 (2) 原文中该段出场的所有角色具体外貌、服饰与神态 (3) 角色正在执行的具体动作与事件交互 (4) 镜头视角与运动运镜。严禁写 "一个视频" 等泛泛空洞词汇。
+- "imagePrompt": 纯中文 prompt，40-80 字，描述这个镜头的关键帧核心画面。
+- "narration": 用于 TTS 配音的对白/旁白文本。如果原文包含角色台词/对白，必须 100% 严格保留原版台词字句（如“大师，我有一事相求！”），严禁擅自改写或精简！无台词时保留原文描述。
 - "dialogue": 角色对白列表，格式 [{"speaker": "角色名", "text": "台词内容"}]
 - "cameraMovement": one of [static, dolly_in, dolly_out, pan_left, pan_right, tilt_up, tilt_down, tracking, aerial, handheld]
-- "durationSeconds": one of [3, 5, 10, 18] (默认 ${ctx.defaultShotDuration},动作戏或长镜头可用 10 或 18)
+- "durationSeconds": one of [3, 5, 10, 18] (默认 ${ctx.defaultShotDuration})
 - "mood": one of [intense, warm, melancholic, mysterious, hopeful, neutral]
 
 【质量要求】
-- videoPrompt 必须是**纯中文的视觉化具体描写**，禁止英文单词，禁止抽象词（"美丽", "戏剧性" 不算描写）
-- 角色外貌用 "身穿黄僧袍，戴黑色圆墨镜，胡须明显" 这种具体形式
-- 动作用 "主角缓缓走向庭院", "伸手指向对方" 这种具体动词主导句
-- 【台词绝对保留】对白是剧集核心灵魂，必须忠实保留原文字句，不得随意篡改！`;
+- videoPrompt 必须是**纯中文的具体视觉化描写**，严禁抽象词
+- 角色动作必须具体清晰，与原文情节严密对齐
+- 【原著情节绝对尊重】保留故事原汁原味与戏剧张力！`;
   }
 
   return `You are a film storyboard director and AI video prompt engineer. Rewrite novel excerpts into detailed English video prompts.

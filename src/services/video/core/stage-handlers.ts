@@ -682,6 +682,23 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
     const globalProj = pStore.projects.find((p) => p.id === pid);
     const meta = globalProj?.metadata as any;
 
+    // 1. 获取真实的章节正文或剧本文本
+    let rawText = '';
+    const chapters = meta?.chapters || [];
+    if (chapters.length > 0) {
+      rawText = chapters.map((c: any) => c.content || '').join('\n\n');
+    } else if (meta?.scriptText) {
+      rawText = meta.scriptText;
+    } else if (globalProj?.description) {
+      rawText = globalProj.description;
+    } else if (workingSpec.shots && workingSpec.shots.length > 0) {
+      rawText = workingSpec.shots.map((s) => s.sourceText || s.videoPrompt || s.narration || '').filter(Boolean).join('\n\n');
+    }
+
+    if (!rawText.trim()) {
+      rawText = '镜头1: 场景初现。主角登场。\n镜头2: 剧情推进。';
+    }
+
     // 检查分镜是否被污染为全部一模一样的内容
     const areShotsIdentical = (shots: any[] | undefined) => {
       if (!shots || shots.length <= 1) return false;
@@ -689,14 +706,15 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
       return !!first && shots.every((s) => (s.videoPrompt || s.sourceText || '').trim() === first);
     };
 
-    // 1. 如果当前项目有初始独立分镜（例如 Demo 预置的 6 个分镜）或有效的多镜头，坚决使用独立分镜
-    const initialShots = meta?.initialSceneSpec?.shots && meta.initialSceneSpec.shots.length > 1
+    // 仅在没有章节文本的纯 Demo 预置项目下使用 initialSceneSpec
+    const hasCustomSource = !!(meta?.chapters?.length || meta?.scriptText);
+    const initialShots = (!hasCustomSource && meta?.initialSceneSpec?.shots && meta.initialSceneSpec.shots.length > 1)
       ? meta.initialSceneSpec.shots
       : null;
 
     const existingShots = initialShots
       ? initialShots
-      : (workingSpec.shots && workingSpec.shots.length > 1 && !areShotsIdentical(workingSpec.shots))
+      : (!hasCustomSource && workingSpec.shots && workingSpec.shots.length > 1 && !areShotsIdentical(workingSpec.shots))
         ? workingSpec.shots
         : null;
 
@@ -711,7 +729,7 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
         characters: (s as any).characters || s.characterIds || [],
         location: s.location,
         mood: s.mood,
-        narration: s.narration || (s.dialogue?.[0]?.text) || s.sourceText?.slice(0, 100) || '',
+        narration: s.narration || (s.dialogue?.[0]?.text) || s.sourceText || '',
         dialogue: s.dialogue,
       }));
 
@@ -728,21 +746,6 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
       store.setStageStatus(pid, 'script_slicing', 'completed', { progress: 1 });
       callbacks?.onStageProgress?.('script_slicing', 1);
       return { spec: updatedSpec };
-    }
-
-    // 2. 从剧本文本或章节切分
-    let rawText = '';
-    const chapters = meta?.chapters || [];
-    if (chapters.length > 0) {
-      rawText = chapters.map((c: any) => c.content || '').join('\n\n');
-    } else if (globalProj?.description) {
-      rawText = globalProj.description;
-    } else if (workingSpec.shots && workingSpec.shots.length > 0) {
-      rawText = workingSpec.shots.map((s) => s.sourceText || s.videoPrompt || s.narration || '').filter(Boolean).join('\n\n');
-    }
-
-    if (!rawText.trim()) {
-      rawText = '镜头1: 场景初现。主角登场。\n镜头2: 剧情推进。';
     }
 
     // 优先使用结构化分镜解析 (分镜1/镜头1/Shot 1/【镜头一】等)
@@ -808,7 +811,7 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
       characters: raw.characters,
       location: raw.location,
       mood: raw.mood,
-      narration: raw.rawText.slice(0, 100),
+      narration: raw.rawText,
     }));
 
     store.setShots(pid, storyboardShots);
