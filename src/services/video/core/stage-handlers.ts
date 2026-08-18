@@ -919,9 +919,20 @@ export async function executeExtraction(ctx: StageContext): Promise<StageResult 
   store.setStageStatus(pid, 'extraction', 'running');
 
   try {
-    const fullText = (workingSpec.shots || [])
-      .map((s) => `${s.sourceText || ''} ${s.videoPrompt || ''} ${s.narration || ''} ${s.dialogue || ''}`)
+    const pStore = useProjectStore.getState();
+    const globalProj = pStore.projects.find((p) => p.id === pid);
+    const meta = globalProj?.metadata as any;
+
+    const sourceContexts: string[] = [];
+    if (meta?.scriptText) sourceContexts.push(meta.scriptText);
+    if (meta?.chapters?.length) sourceContexts.push(meta.chapters.map((c: any) => c.content).join('\n\n'));
+    if (globalProj?.description) sourceContexts.push(globalProj.description);
+
+    const shotsText = (workingSpec.shots || [])
+      .map((s, idx) => `镜头 ${idx + 1}: ${s.sourceText || ''} ${s.videoPrompt || ''} ${s.narration || ''}`)
       .join('\n\n');
+
+    const fullText = [sourceContexts.join('\n\n'), shotsText].filter(Boolean).join('\n\n【分镜详情】\n');
 
     const extractResult = await stepExtract({
       text: fullText || '分镜角色与场景',
@@ -942,9 +953,6 @@ export async function executeExtraction(ctx: StageContext): Promise<StageResult 
         .filter((id, idx, arr) => knownCharIds.has(id) && arr.indexOf(id) === idx);
     }
 
-    const pStore = useProjectStore.getState();
-    const globalProj = pStore.projects.find((p) => p.id === pid);
-    const meta = globalProj?.metadata as any;
     const seriesChars = (pStore as any).getSeriesCharacterLibrary?.(meta?.seriesId) || meta?.characters;
 
     let updatedSpec: SceneSpec = {
