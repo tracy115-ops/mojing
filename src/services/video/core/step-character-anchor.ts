@@ -149,7 +149,7 @@ export async function runCharacterAnchor(
         const img = await providerRouter.generateImage({
           taskType: 'character',
           prompt: turnaroundPrompt,
-          width: 1536,
+          width: 2048,
           height: 1024,
           style: ctx.style,
           referenceImages: [turnaroundRef],
@@ -257,10 +257,10 @@ function buildPortraitPrompt(
 
     const parts = [
       `${c.name}：${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
-      '单人全身立绘，单人居中，从头到脚完整可见',
-      '纯色干净简洁背景',
+      '修长高挑九头身比例，身材挺拔匀称，修长双腿，单人全身立绘，单人居中，从头到脚完整可见',
+      '纯色干净简洁浅色背景',
       artTypeTag,
-      '超高清，极致细节，无文字，无水印，无多余人物，无三视图',
+      '超高清画面，精致五官细节，无文字，无水印，无多余人物，无三视图，无矮胖变形',
     ].filter(Boolean);
     return parts.join('，');
   }
@@ -271,10 +271,10 @@ function buildPortraitPrompt(
 
   const parts = [
     `${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
-    'single centered full-body character portrait, fully visible from head to toe',
+    'slender tall 8-head body proportions, elegant full-body standing pose, single centered character portrait, fully visible from head to toe',
     'plain solid clean background',
     artTypeTag,
-    'masterpiece quality, sharp focus, no text, no watermark, no extra people, no turnaround sheet',
+    'masterpiece quality, sharp focus, perfectly proportioned limbs, no text, no watermark, no extra people, no turnaround sheet, no squashed body, no dwarf',
   ].filter(Boolean);
   return parts.join(', ');
 }
@@ -319,15 +319,15 @@ function buildTurnaroundPrompt(
       : '写实角色三视图摄影图，3全身摄影视角';
 
     const parts = [
-      `三视图角色模型板，三屏并列展现3个全身姿态（左侧正面视图，中间侧面视图，右侧背面视图）：${c.name}，100%保持与参考图0的角色外观一致`,
+      `宽幅三视图角色模型板（正面、侧面、背面并排站立）：${c.name}，100%保持与参考图0的角色外观一致`,
       aestheticTag,
       `角色外貌、发型、服饰与身材细节：${appearance}`,
-      '并排站立，3个独立视角，从头到脚全身完整可见',
+      '3个独立站姿均保持修长高挑九头身比例，身材挺拔优雅，修长双腿，标准人体比例，从头到脚全身完整可见',
       '纯色简洁浅色背景，工作室光照',
       artTypeTag,
       styleEnhancer,
       '100%保持正面、侧面、背面面部五官与服饰完全一致',
-      '高细节大作，最高品质',
+      '高细节大作，严禁横向压缩变形，严禁矮胖变形，严禁大头短身Q版',
       '无文字，无数字，无标签，无水印，无标志，无多余肢体',
     ].filter(Boolean);
     return parts.join('，');
@@ -338,15 +338,15 @@ function buildTurnaroundPrompt(
     : 'photorealistic character turnaround photo sheet, 3 full body photography views';
 
   const parts = [
-    `3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
+    `ultra-wide 3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
     aestheticTag,
     `character appearance, hair, costume, outfit, and body shape: ${appearance}`,
-    'standing side-by-side, 3 separate angles, full body visible from head to toe',
+    'standing side-by-side, 3 separate angles, tall slender 8-head proportions, long legs, full body visible from head to toe',
     'simple plain solid light background, studio lighting',
     artTypeTag,
     styleEnhancer,
     '100% identical face and facial features, consistent outfit across all 3 views',
-    'high quality, highly detailed, masterwork',
+    'high quality, highly detailed, masterwork, no squashed body, no short chubby dwarf, no wide torso, no chibi',
     'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
   ].filter(Boolean);
   return parts.join(', ');

@@ -128,9 +128,9 @@ export function populateStageInput(pid: string, stage: VideoStage, workingSpec: 
       if (existing.style === undefined) {
         patch.style = style || 'cinematic';
       }
-      // anchorMode 默认 turnaround(单图+三视图都生成),用户可手动切到 single 只生成单图
+      // anchorMode 默认 single(高清全身单图立绘，身材修长高挑，人脸最精致)；用户也可手动切换到三视图
       if (existing.anchorMode === undefined) {
-        patch.anchorMode = 'turnaround';
+        patch.anchorMode = 'single';
       }
       // prompt 只控制单图立绘(三视图是附加产物,内部用固定 prompt 不暴露给用户改)
       if (existing.prompt === undefined && firstChar) {
