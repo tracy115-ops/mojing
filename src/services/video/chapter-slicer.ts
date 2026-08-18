@@ -8,6 +8,10 @@
 //
 // 输出：RawShot[] —— 尚未生成 videoPrompt，等待 storyboard-prompt.ts 优化。
 
+import type { LLMGenerateRequest } from '@/types/providers';
+import { providerRouter } from '@/services/providers';
+import { parseLLMJson } from '@/services/novel/llm-json';
+
 export interface RawShot {
   id: string;
   index: number;
@@ -22,7 +26,7 @@ export interface RawShot {
 }
 
 export interface SliceOptions {
-  /** 单镜头目标字数（默认 800，剧本模式默认 100） */
+  /** 单镜头目标字数（默认 80，剧本模式默认 60） */
   targetWordsPerShot?: number;
   /** 最小字数（小于此值合并到上一段） */
   minWordsPerShot?: number;
@@ -39,14 +43,91 @@ const DEFAULT_OPTS: Required<SliceOptions> = {
   isScript: false,
 };
 
-interface ChapterInput {
+export interface ChapterInput {
   id: string;
   number: number;
   content: string;
 }
 
 /**
- * 将多章节正文切成 RawShot 序列。
+ * 使用 LLM 大模型进行智能语义分镜切片，确保 100% 完整覆盖原著情节与对话。
+ */
+export async function sliceChaptersWithLLM(
+  chapters: ChapterInput[],
+  opts: SliceOptions = {},
+): Promise<RawShot[]> {
+  const fullText = chapters.map((c) => c.content || '').join('\n\n').trim();
+  if (!fullText) return [];
+
+  const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));
+
+  const systemPrompt = `你是专业影视导演与资深分镜师。你的任务是将输入的小说章节/剧本智能切分成一系列连续独立、节奏适中的视频分镜镜头（Raw Shots）。
+
+【核心原则：100% 完整覆盖原著情节，严禁随意删减、遗漏或跳过任何情节与对话】
+1. 完整保留原文字句：每个分镜的 "sourceText" 必须是原文对应的真实段落/句子，保留完整的人物对白（如“大师，我有一事相求！”）与叙事细节，严禁随意精简或改写！
+2. 镜头切分粒度：
+   - 包含明确的人物动作、情绪转折、场景转换或对话交锋的节点切为一个独立镜头。
+   - 每个镜头字数适中（通常 20-100 字左右）。
+3. 输出格式：严格 JSON 数组，每个镜头包含：
+   - "index": 镜头序号 (从 0 开始递增: 0, 1, 2...)
+   - "sourceText": 该镜头对应的原文完整内容（必须与原文严密对齐，包含完整台词）
+   - "characters": 该镜头出场的角色名称数组，例如 ["林墨", "苏清雪"]
+   - "location": 发生的具体场景/地点，例如 "青云门大殿"
+   - "mood": 情绪/氛围，例如 "紧张" / "温馨" / "神秘" / "热血"
+   - "hasDialogue": boolean，是否包含人物台词对白
+   - "hasAction": boolean，是否包含明显动作`;
+
+  const userPrompt = `请对以下内容进行智能分镜切片，输出严格 JSON 数组：\n\n${fullText}`;
+
+  const request: LLMGenerateRequest = {
+    taskType: 'planning',
+    systemPrompt,
+    userPrompt,
+    responseFormat: 'json',
+    temperature: 0.3,
+    maxTokens: 4096,
+  };
+
+  try {
+    const resp = await providerRouter.generate(request);
+    let parsed: any = parseLLMJson<any>(resp.content);
+
+    if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+      if (Array.isArray(parsed.shots)) parsed = parsed.shots;
+      else if (Array.isArray(parsed.items)) parsed = parsed.items;
+      else if (Array.isArray(parsed.data)) parsed = parsed.data;
+      else if (Array.isArray(parsed.storyboard)) parsed = parsed.storyboard;
+      else if (Array.isArray(parsed.scenes)) parsed = parsed.scenes;
+      else if (Array.isArray(parsed.result)) parsed = parsed.result;
+    }
+
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.map((item: any, idx: number) => {
+        const text = String(item.sourceText || item.rawText || item.text || item.videoPrompt || `镜头 ${idx + 1}`).trim();
+        return {
+          id: `shot_1_${idx}`,
+          index: typeof item.index === 'number' ? item.index : idx,
+          sourceChapterId: chapters[0]?.id || 'ch_1',
+          sourceChapterNumber: chapters[0]?.number || 1,
+          rawText: text,
+          characters: Array.isArray(item.characters) ? item.characters : detectCharacters(text),
+          location: item.location || detectLocation(text),
+          mood: item.mood || detectMood(text),
+          hasDialogue: typeof item.hasDialogue === 'boolean' ? item.hasDialogue : /["「『":：]/.test(text),
+          hasAction: typeof item.hasAction === 'boolean' ? item.hasAction : true,
+        };
+      });
+    }
+  } catch (err) {
+    console.warn('[chapter-slicer] LLM slicing failed, falling back to local heuristic', err);
+  }
+
+  // 兜底：使用本地规则切片
+  return sliceChapters(chapters, opts);
+}
+
+/**
+ * 将多章节正文切成 RawShot 序列（本地启发式）。
  */
 export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {}): RawShot[] {
   const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));

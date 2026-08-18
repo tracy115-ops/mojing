@@ -28,7 +28,7 @@ import { runKeyframe } from './step-keyframe';
 import { runVideoGen, type VideoGenOptions } from './step-video-gen';
 import { runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
-import { sliceChapters, type RawShot } from '../chapter-slicer';
+import { sliceChapters, sliceChaptersWithLLM, type RawShot } from '../chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from '../storyboard-prompt';
 import { stepExtract } from './step-extract';
 import { parseStructuredPromptShots } from '../direct-scene-builder';
@@ -770,13 +770,13 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
       }));
     } else {
       const isScript = /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(rawText);
-      rawShots = sliceChapters(
+      rawShots = await sliceChaptersWithLLM(
         [{ id: 'ch_1', number: 1, content: rawText }],
         {
           isScript,
-          targetWordsPerShot: isScript ? 50 : 200,
+          targetWordsPerShot: isScript ? 50 : 80,
           minWordsPerShot: 10,
-          maxWordsPerShot: isScript ? 200 : 500,
+          maxWordsPerShot: isScript ? 200 : 250,
         },
       );
     }
