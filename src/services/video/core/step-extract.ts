@@ -171,9 +171,10 @@ const SYSTEM_PROMPT_ZH = `你是剧本分析师。从给定文本中提取结构
 5. 服饰(必须严格包含原文指定服装，如 JK制服/黄色僧袍)
 6. 年龄感(如:20 岁出头/近 40 岁/少年)
 
-【拟人化 / 动物 / 特殊造型角色 — 必须完整保留物理形态】
-若角色是动物拟人化、神兽或特殊造型（例如：胖橘猫佩戴黑色圆墨镜身穿黄色僧袍、狐仙、机器人、妖怪等）：
-appearance 字段必须严格写出其真实的物种形态（如: 胖橘猫佩戴黑色圆墨镜身穿黄色古风僧袍，神态慵懒），绝不能简写作普通人类！
+【动物 / 拟人化角色 / 灵兽 / 宠物 — 必须 100% 作为独立角色（character）提取】
+- 剧本中的任何动物角色（例如：胖橘猫、猫大师、大黄狗、灵狐、宠物、神兽、妖怪等），只要有动作、台词、交互或神态，**必须 100% 提取到 characters 数组中作为独立角色！绝对严禁遗漏！绝对严禁误放入道具（props）或场景中！**
+- 角色名称：忠实保留原文称谓（例如 "胖橘猫" 或 "猫大师"）。
+- appearance 字段：必须详尽描述其物理生物形态（如：一只体型圆滚微胖的橘色斑纹猫咪，白肚皮）以及服饰道具（如：佩戴一副精致的黑色圆墨镜，身穿黄色古风僧袍，神态沉稳老成）。
 
 如果原文没明确给出某些细节,请根据角色名字、性格、剧情定位主动补充合理的区分性特征,
 保证两个角色站在一起时,观众能一眼分辨谁是谁。
@@ -207,7 +208,7 @@ const SYSTEM_PROMPT_EN = `You are a script analyzer. Extract structured characte
 
 [Rules]
 - Merge characters with the same name.
-- Non-human / animal / unique characters MUST preserve physical species features (e.g., an anthropomorphic chubby orange cat wearing round black sunglasses and yellow monk robes).
+- Non-human / animal / unique characters (like anthropomorphic chubby orange cat wearing sunglasses and monk robes) MUST be extracted as characters, NEVER omit them or classify as props!
 - Keep descriptions clear and distinct.`;
 
 function buildUserPrompt(input: ExtractInput): string {
@@ -215,11 +216,19 @@ function buildUserPrompt(input: ExtractInput): string {
     ? `\n\n【已切分的镜头(含占位 id)】\n${input.shots
         .map(
           (s, i) =>
-            `- 镜头${i}: id=${s.id} prompt=${s.videoPrompt.slice(0, 100)} characters=${s.characterIds.join(',')} scene=${s.sceneId ?? '-'}`,
+            `- 镜头${i}: id=${s.id} prompt=${(s.videoPrompt || s.sourceText || '').slice(0, 100)} characters=${s.characterIds.join(',')} scene=${s.sceneId ?? '-'}`,
         )
         .join('\n')}`
     : '';
-  return `请从下面的文本中提取角色/场景/道具。${shotsHint}\n\n【文本】\n${input.text.slice(0, 4000)}`;
+  return `请从下面的文本中提取所有角色（包含所有人类角色、动物/拟人化角色如胖橘猫/灵兽等，严禁遗漏动物角色！）、场景与道具。
+
+【重要约束】
+1. 绝对不要遗漏任何出场角色（包括人类、宠物、动物大师、灵兽等，如胖橘猫必须作为角色提取）！
+2. 角色服饰（如 JK裙、黄色僧袍等）必须严格遵循原文，绝不可篡改！
+${shotsHint}
+
+【正文与分镜文本】
+${input.text.slice(0, 6000)}`;
 }
 
 function normalizeCharacters(arr: NonNullable<LLMExtract['characters']>): CharacterAnchor[] {
