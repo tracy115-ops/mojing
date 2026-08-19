@@ -59,10 +59,14 @@ interface EpisodeContinuityFormValues {
 interface VideoSeriesWorkspaceProps {
   series: CreativeProject;
   episodes: CreativeProject[];
+  onUpdateSeriesInfo?: (title: string, description: string) => void;
+  onDeleteSeries?: (seriesId: string) => void;
   onUpdateCharacters: (characters: CharacterAnchor[]) => void;
   onUpdateScenes: (scenes: SceneAnchor[]) => void;
   onUpdateStyleGuide: (styleGuide: string) => void;
   onUpdateEpisodeContinuity: (episodeId: string, values: EpisodeContinuityFormValues) => void;
+  onUpdateEpisodeInfo?: (episodeId: string, title: string, description: string) => void;
+  onDeleteEpisode?: (episodeId: string) => void;
   onSyncEpisodeAssets: (episodeId: string) => Promise<boolean>;
   onCreateEpisode: () => void;
   onOpenEpisode: (id: string) => void;
@@ -84,10 +88,14 @@ function readFileAsDataUri(file: File): Promise<string> {
 const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   series,
   episodes,
+  onUpdateSeriesInfo,
+  onDeleteSeries,
   onUpdateCharacters,
   onUpdateScenes,
   onUpdateStyleGuide,
   onUpdateEpisodeContinuity,
+  onUpdateEpisodeInfo,
+  onDeleteEpisode,
   onSyncEpisodeAssets,
   onCreateEpisode,
   onOpenEpisode,
@@ -97,6 +105,11 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   const [sceneForm] = Form.useForm<SceneFormValues>();
   const [costumeForm] = Form.useForm<CostumeFormValues>();
   const [episodeContinuityForm] = Form.useForm<EpisodeContinuityFormValues>();
+  const [editSeriesForm] = Form.useForm<{ title: string; description?: string }>();
+  const [editEpisodeForm] = Form.useForm<{ title: string; description?: string }>();
+  const [editSeriesModalOpen, setEditSeriesModalOpen] = useState(false);
+  const [editEpisodeModalOpen, setEditEpisodeModalOpen] = useState(false);
+  const [editingEpisodeForInfo, setEditingEpisodeForInfo] = useState<CreativeProject | undefined>();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CharacterAnchor | undefined>();
   const [portraitImage, setPortraitImage] = useState<string | undefined>();
@@ -367,6 +380,36 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     }
   };
 
+  const openEditSeriesModal = () => {
+    editSeriesForm.setFieldsValue({
+      title: series.title,
+      description: series.description || '',
+    });
+    setEditSeriesModalOpen(true);
+  };
+
+  const handleSaveSeriesInfo = async () => {
+    const values = await editSeriesForm.validateFields();
+    onUpdateSeriesInfo?.(values.title.trim(), values.description?.trim() || '');
+    setEditSeriesModalOpen(false);
+  };
+
+  const openEditEpisodeModal = (episode: CreativeProject) => {
+    setEditingEpisodeForInfo(episode);
+    editEpisodeForm.setFieldsValue({
+      title: episode.title,
+      description: episode.description || '',
+    });
+    setEditEpisodeModalOpen(true);
+  };
+
+  const handleSaveEpisodeInfo = async () => {
+    if (!editingEpisodeForInfo) return;
+    const values = await editEpisodeForm.validateFields();
+    onUpdateEpisodeInfo?.(editingEpisodeForInfo.id, values.title.trim(), values.description?.trim() || '');
+    setEditEpisodeModalOpen(false);
+  };
+
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: 20, background: 'var(--bg-layout)' }}>
       <div style={{ maxWidth: 1180, margin: '0 auto' }}>
@@ -377,9 +420,26 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
               {series.description || t('video.series.descriptionFallback')}
             </Paragraph>
           </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreateEpisode}>
-            {t('video.series.newEpisode')}
-          </Button>
+          <Space wrap>
+            <Button icon={<EditOutlined />} onClick={openEditSeriesModal}>
+              {t('common.edit')}系列
+            </Button>
+            <Popconfirm
+              title="确定要删除此系列吗？"
+              description="删除系列将同时删除该系列下的所有分集，此操作不可撤销。"
+              onConfirm={() => onDeleteSeries?.(series.id)}
+              okText={t('common.delete')}
+              cancelText={t('common.cancel')}
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger icon={<DeleteOutlined />}>
+                {t('common.delete')}系列
+              </Button>
+            </Popconfirm>
+            <Button type="primary" icon={<PlusOutlined />} onClick={onCreateEpisode}>
+              {t('video.series.newEpisode')}
+            </Button>
+          </Space>
         </div>
 
         <Alert
@@ -495,6 +555,17 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
                       <Text strong ellipsis>{episode.title}</Text>
                       {episode.description && <Text type="secondary" ellipsis style={{ display: 'block', fontSize: 12 }}>{episode.description}</Text>}
                     </div>
+                    <Tooltip title="编辑分集名称与剧情梗概">
+                      <Button
+                        size="small"
+                        type="text"
+                        icon={<EditOutlined />}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openEditEpisodeModal(episode);
+                        }}
+                      />
+                    </Tooltip>
                     <Button size="small" type="text" onClick={(event) => { event.stopPropagation(); openEpisodeContinuityModal(episode); }}>{t('video.series.episodeContinuity')}</Button>
                     <Popconfirm
                       title={t('video.series.syncAssetsConfirm')}
@@ -504,6 +575,24 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
                       onConfirm={() => void syncEpisodeAssets(episode.id)}
                     >
                       <Button size="small" type="text" loading={syncingEpisodeId === episode.id} onClick={(event) => event.stopPropagation()}>{t('video.series.syncAssets')}</Button>
+                    </Popconfirm>
+                    <Popconfirm
+                      title="确定要删除该分集吗？"
+                      description={`确定删除 "${episode.title}"？此操作不可撤销。`}
+                      okText={t('common.delete')}
+                      cancelText={t('common.cancel')}
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => onDeleteEpisode?.(episode.id)}
+                    >
+                      <Tooltip title="删除该集">
+                        <Button
+                          size="small"
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </Tooltip>
                     </Popconfirm>
                     <Button size="small" type="text" icon={<PlayCircleOutlined />}>{t('video.series.openEpisode')}</Button>
                   </div>
@@ -515,6 +604,48 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
           )}
         </Card>
       </div>
+
+      {/* 编辑系列基本信息 Modal */}
+      <Modal
+        title="编辑系列信息"
+        open={editSeriesModalOpen}
+        onCancel={() => setEditSeriesModalOpen(false)}
+        onOk={() => void handleSaveSeriesInfo()}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+        getContainer={() => document.getElementById('root')!}
+      >
+        <Form form={editSeriesForm} layout="vertical">
+          <Form.Item name="title" label={t('video.series.name')} rules={[{ required: true, message: t('video.series.nameRequired') }]}>
+            <Input placeholder={t('video.series.namePlaceholder')} />
+          </Form.Item>
+          <Form.Item name="description" label={t('video.series.description')}>
+            <Input.TextArea rows={4} placeholder={t('video.series.descriptionPlaceholder')} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 编辑分集基本信息 Modal */}
+      <Modal
+        title="编辑分集信息"
+        open={editEpisodeModalOpen}
+        onCancel={() => setEditEpisodeModalOpen(false)}
+        onOk={() => void handleSaveEpisodeInfo()}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+        destroyOnClose
+        getContainer={() => document.getElementById('root')!}
+      >
+        <Form form={editEpisodeForm} layout="vertical">
+          <Form.Item name="title" label="分集名称" rules={[{ required: true, message: '请输入分集名称' }]}>
+            <Input placeholder="例如: 第 1 集 · 降临" />
+          </Form.Item>
+          <Form.Item name="description" label="剧情梗概 / 章节文本">
+            <Input.TextArea rows={5} placeholder="分集故事梗概或原剧本文本..." />
+          </Form.Item>
+        </Form>
+      </Modal>
 
       <Modal
         title={t('video.series.episodeContinuity')}

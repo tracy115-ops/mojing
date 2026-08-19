@@ -10,6 +10,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   Typography, Tag, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu,
   Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal, Image,
+  Form, InputNumber,
 } from 'antd';
 import {
   VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
@@ -37,7 +38,7 @@ import { reviewSeriesEpisode } from '@/services/video/series-episode-review';
 import { reviewSeriesEpisodeVisuals, type SeriesVisualReview } from '@/services/video/series-visual-review';
 import { reviewSeriesStoryContinuity, type SeriesStoryReview } from '@/services/video/series-story-review';
 
-const { Text, Title } = Typography;
+const { Text, Title, Paragraph } = Typography;
 
 function getShotStatus(
   clips: { shotId: string }[],
@@ -60,8 +61,12 @@ const ShotRow: React.FC<{
 }> = ({ pid, shot, specShot, clip, seriesCharacters, status }) => {
   const { t } = useTranslation();
   const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
-  const [editing, setEditing] = useState(false);
-  const [promptText, setPromptText] = useState(shot.videoPrompt || shot.sourceText);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editVideoPrompt, setEditVideoPrompt] = useState(shot.videoPrompt || '');
+  const [editSourceText, setEditSourceText] = useState(shot.sourceText || '');
+  const [editCamera, setEditCamera] = useState(shot.cameraMovement || 'static');
+  const [editDuration, setEditDuration] = useState(shot.durationSeconds || 5);
+  const [editLocation, setEditLocation] = useState(shot.location || specShot?.sceneId || '');
   const [rerunning, setRerunning] = useState(false);
   const [rerunningKeyframe, setRerunningKeyframe] = useState(false);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
@@ -71,10 +76,25 @@ const ShotRow: React.FC<{
     return character?.costumeVariants?.length ? [{ character, characterId }] : [];
   }), [specShot?.characterIds, seriesCharacters]);
 
-  const handleSavePrompt = () => {
-    updateSceneSpecShot(pid, shot.id, { videoPrompt: promptText.trim() });
-    setEditing(false);
-    message.success(t('common.saved'));
+  const openEditModal = () => {
+    setEditVideoPrompt(shot.videoPrompt || '');
+    setEditSourceText(shot.sourceText || '');
+    setEditCamera(shot.cameraMovement || 'static');
+    setEditDuration(shot.durationSeconds || 5);
+    setEditLocation(shot.location || specShot?.sceneId || '');
+    setEditModalOpen(true);
+  };
+
+  const handleSaveShot = () => {
+    updateSceneSpecShot(pid, shot.id, {
+      videoPrompt: editVideoPrompt.trim(),
+      sourceText: editSourceText.trim() || undefined,
+      cameraMovement: editCamera || undefined,
+      durationSeconds: editDuration || 5,
+      location: editLocation.trim() || undefined,
+    });
+    setEditModalOpen(false);
+    message.success('分镜信息已更新！');
   };
 
   const handleRerun = async () => {
@@ -119,18 +139,18 @@ const ShotRow: React.FC<{
   };
 
   return (
-    <Card size="small" style={{ marginBottom: 6 }} bodyStyle={{ padding: '8px 12px' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : status === 'error' ? 'error' : 'default'}>
+    <Card size="small" style={{ marginBottom: 8 }} styles={{ body: { padding: '10px 14px' } }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : status === 'error' ? 'error' : 'default'} style={{ marginTop: 2 }}>
           {t('video.gen.shot')} {shot.index + 1}
         </Tag>
 
         {specShot?.keyframeImage && (
-          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', marginTop: 2 }}>
             <Image
               src={specShot.keyframeImage}
-              width={38}
-              height={38}
+              width={46}
+              height={46}
               style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border-secondary)' }}
               preview={{ mask: '🔍' }}
             />
@@ -145,7 +165,7 @@ const ShotRow: React.FC<{
               ghost
               icon={<PlayCircleOutlined />}
               onClick={() => setVideoModalOpen(true)}
-              style={{ fontSize: 11, padding: '0 6px', height: 24 }}
+              style={{ fontSize: 11, padding: '0 6px', height: 24, marginTop: 2 }}
             >
               片段
             </Button>
@@ -176,115 +196,172 @@ const ShotRow: React.FC<{
           </Modal>
         )}
 
-        {editing ? (
-          <div style={{ flex: 1, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-            <Input
-              size="small"
-              value={promptText}
-              onChange={(e) => setPromptText(e.target.value)}
-              onPressEnter={handleSavePrompt}
-              style={{ flex: 1, minWidth: 200 }}
-            />
-            <Select
-              size="small"
-              placeholder="运镜"
-              style={{ width: 120 }}
-              allowClear
-              onChange={(moveVal) => {
-                if (!moveVal) return;
-                import('@/types/video').then(({ CAMERA_MOVEMENTS }) => {
-                  const item = CAMERA_MOVEMENTS.find((m) => m.value === moveVal);
-                  if (item) {
-                    setPromptText((prev) => `${prev.trim()}, ${item.prompt}`);
-                  }
-                });
-              }}
-              options={[
-                { value: 'zoom_in', label: '缓慢推进' },
-                { value: 'zoom_out', label: '缓慢拉远' },
-                { value: 'pan_left', label: '左摇镜头' },
-                { value: 'pan_right', label: '右摇镜头' },
-                { value: 'orbit', label: '360° 环绕' },
-                { value: 'crane_up', label: '摇臂升起' },
-                { value: 'tracking', label: '跟随镜头' },
-              ]}
-            />
-            <Button size="small" type="primary" onClick={handleSavePrompt}>{t('common.save')}</Button>
-            <Button size="small" onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* 画面提示词完整展示 */}
+          <div style={{ marginBottom: 4 }}>
+            <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>🎬 画面提示词:</Text>
+            <Paragraph
+              style={{ margin: 0, fontSize: 13, color: 'var(--text-primary)', display: 'inline', lineHeight: '1.6' }}
+              ellipsis={{ rows: 2, expandable: true, symbol: '【展开查看全文】' }}
+            >
+              {shot.videoPrompt || shot.sourceText || '无提示词'}
+            </Paragraph>
           </div>
-        ) : (
-          <>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ fontSize: 12, color: 'var(--text-secondary)' }} ellipsis>
-                {shot.videoPrompt || shot.sourceText.slice(0, 100)}
-              </Text>
-              {(specShot?.characterIds?.length || specShot?.sceneId || shot.location) ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, alignItems: 'center' }}>
-                  {specShot?.characterIds?.map((charId) => {
-                    const char = seriesCharacters?.find((c) => c.id === charId);
-                    const isSeries = !!char;
-                    return (
-                      <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                        <UserOutlined style={{ fontSize: 10 }} />
-                        {char?.name || charId} {isSeries ? '(系列)' : ''}
-                      </Tag>
-                    );
-                  })}
-                  {(specShot?.sceneId || shot.location) && (
-                    <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                      <EnvironmentOutlined style={{ fontSize: 10 }} />
-                      {shot.location || specShot?.sceneId}
-                    </Tag>
-                  )}
-                </div>
-              ) : null}
-            </div>
-            <Space size={4}>
-              <Tooltip title={t('video.direct.editPrompt')}>
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<EditOutlined />}
-                  onClick={() => setEditing(true)}
-                  style={{ fontSize: 11 }}
-                />
-              </Tooltip>
-              <Tooltip title="单独重生成此镜关键帧画面 (保持角色与光影参考)">
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<PictureOutlined />}
-                  loading={rerunningKeyframe}
-                  disabled={rerunningKeyframe}
-                  onClick={handleRerunKeyframe}
-                  style={{ fontSize: 11 }}
-                />
-              </Tooltip>
-              <Tooltip title="单独重生成此镜动态视频 (基于关键帧与提示词)">
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<VideoCameraOutlined />}
-                  loading={rerunning}
-                  disabled={rerunning}
-                  onClick={handleRerun}
-                  style={{ fontSize: 11 }}
-                />
-              </Tooltip>
-              <Popconfirm
-                title="确定删除此镜头分镜？"
-                onConfirm={() => useVideoStore.getState().deleteSceneSpecShot(pid, shot.id)}
-                okText="确定"
-                cancelText="取消"
+
+          {/* 原剧本台词展示(若与提示词不同) */}
+          {shot.sourceText && shot.videoPrompt && shot.sourceText !== shot.videoPrompt && (
+            <div style={{ marginBottom: 4 }}>
+              <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>📜 剧本台词/动作:</Text>
+              <Paragraph
+                style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', display: 'inline', lineHeight: '1.5' }}
+                ellipsis={{ rows: 1, expandable: true, symbol: '【展开】' }}
               >
-                <Tooltip title="删除分镜">
-                  <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 11 }} />
-                </Tooltip>
-              </Popconfirm>
-            </Space>
-          </>
-        )}
+                {shot.sourceText}
+              </Paragraph>
+            </div>
+          )}
+
+          {/* 镜头元数据标签 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, alignItems: 'center' }}>
+            {shot.durationSeconds && (
+              <Tag style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
+                ⏱️ {shot.durationSeconds}s
+              </Tag>
+            )}
+            {shot.cameraMovement && (
+              <Tag color="geekblue" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
+                🎥 {shot.cameraMovement}
+              </Tag>
+            )}
+            {specShot?.characterIds?.map((charId) => {
+              const char = seriesCharacters?.find((c) => c.id === charId);
+              const isSeries = !!char;
+              return (
+                <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                  <UserOutlined style={{ fontSize: 10 }} />
+                  {char?.name || charId} {isSeries ? '(系列)' : ''}
+                </Tag>
+              );
+            })}
+            {(specShot?.sceneId || shot.location) && (
+              <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <EnvironmentOutlined style={{ fontSize: 10 }} />
+                {shot.location || specShot?.sceneId}
+              </Tag>
+            )}
+          </div>
+        </div>
+
+        <Space size={4} style={{ marginTop: 2 }}>
+          <Tooltip title="编辑分镜完整内容 (提示词/台词/运镜/时长)">
+            <Button
+              size="small"
+              type="text"
+              icon={<EditOutlined />}
+              onClick={openEditModal}
+              style={{ fontSize: 12 }}
+            />
+          </Tooltip>
+          <Tooltip title="单独重生成此镜关键帧画面 (保持角色与光影参考)">
+            <Button
+              size="small"
+              type="text"
+              icon={<PictureOutlined />}
+              loading={rerunningKeyframe}
+              disabled={rerunningKeyframe}
+              onClick={handleRerunKeyframe}
+              style={{ fontSize: 12 }}
+            />
+          </Tooltip>
+          <Tooltip title="单独重生成此镜动态视频 (基于关键帧与提示词)">
+            <Button
+              size="small"
+              type="text"
+              icon={<VideoCameraOutlined />}
+              loading={rerunning}
+              disabled={rerunning}
+              onClick={handleRerun}
+              style={{ fontSize: 12 }}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="确定删除此镜头分镜？"
+            onConfirm={() => useVideoStore.getState().deleteSceneSpecShot(pid, shot.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Tooltip title="删除分镜">
+              <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }} />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
       </div>
+
+      {/* 专属镜头分镜修改弹窗 */}
+      <Modal
+        title={`🎬 编辑第 ${shot.index + 1} 镜头分镜信息`}
+        open={editModalOpen}
+        onCancel={() => setEditModalOpen(false)}
+        onOk={handleSaveShot}
+        okText="保存分镜"
+        cancelText="取消"
+        width={640}
+        destroyOnClose
+        getContainer={() => document.getElementById('root')!}
+      >
+        <Form layout="vertical" style={{ marginTop: 8 }}>
+          <Form.Item label="画面生成提示词 (Video Prompt)" tooltip="用于 AI 画面生成和视频运镜的模型提示词">
+            <Input.TextArea
+              rows={4}
+              value={editVideoPrompt}
+              onChange={(e) => setEditVideoPrompt(e.target.value)}
+              placeholder="输入镜头画面视觉描述、光影、构图与动作..."
+            />
+          </Form.Item>
+          <Form.Item label="原剧本对白与动作 (Script / Source Text)" tooltip="小说/剧本原始对白，用于 TTS 配音与字幕生成">
+            <Input.TextArea
+              rows={3}
+              value={editSourceText}
+              onChange={(e) => setEditSourceText(e.target.value)}
+              placeholder="角色台词对白或动作描写..."
+            />
+          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Form.Item label="运镜模式 (Camera Movement)">
+              <Select
+                value={editCamera}
+                allowClear
+                placeholder="选择运镜方式"
+                onChange={(val) => setEditCamera(val)}
+                options={[
+                  { value: 'static', label: '📷 固定镜头 (画面平稳微动)' },
+                  { value: 'dolly_in', label: '🔍 缓慢推进 (特写聚焦)' },
+                  { value: 'dolly_out', label: '🔍 平稳拉远 (展现全景)' },
+                  { value: 'pan_left', label: '👈 平缓左摇 (滑轨平移)' },
+                  { value: 'pan_right', label: '👉 平缓右摇 (滑轨平移)' },
+                  { value: 'tracking', label: '🏃 平稳跟随 (人物跟拍)' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="镜头时长 (秒)">
+              <InputNumber
+                min={2}
+                max={15}
+                style={{ width: '100%' }}
+                value={editDuration}
+                onChange={(val) => setEditDuration(val || 5)}
+              />
+            </Form.Item>
+          </div>
+          <Form.Item label="场景 / 拍摄地点">
+            <Input
+              value={editLocation}
+              onChange={(e) => setEditLocation(e.target.value)}
+              placeholder="例如: 破庙内、雨夜小巷、凌霄大殿..."
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
       {costumeChoices.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-secondary)' }}>
           {costumeChoices.map(({ character, characterId }) => (
@@ -1148,10 +1225,10 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             )}
           </div>
 
-          {/* Shots 列表(底部固定高度,可折叠) */}
+          {/* Shots 列表(底部高度自适应滚动) */}
           {shots.length > 0 && (
             <div style={{
-              maxHeight: 260, minHeight: 140, flexShrink: 0,
+              maxHeight: 380, minHeight: 180, flexShrink: 0,
               borderTop: '1px solid var(--border-secondary)',
               display: 'flex', flexDirection: 'column',
               background: 'var(--bg-secondary, rgba(0,0,0,0.02))',

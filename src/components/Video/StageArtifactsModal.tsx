@@ -211,7 +211,7 @@ export function renderStageContent(
                     <Space>
                       <Tag color="blue">{t('video.gen.shot')} {s.index + 1}</Tag>
                     </Space>
-                    <Paragraph style={{ margin: 0, fontSize: 12 }} ellipsis={{ rows: 3 }}>
+                    <Paragraph style={{ margin: 0, fontSize: 12, lineHeight: '1.6' }} ellipsis={{ rows: 4, expandable: true, symbol: '【展开查看全文】' }}>
                       {s.sourceText || s.videoPrompt}
                     </Paragraph>
                   </Space>
@@ -234,7 +234,9 @@ export function renderStageContent(
                   <Tag color="blue">{t('video.gen.shot')} {s.index + 1}</Tag>
                   <Text type="secondary">{s.durationSeconds}s</Text>
                 </Space>
-                <Paragraph style={{ margin: 0, fontSize: 12 }}>{s.videoPrompt || s.sourceText}</Paragraph>
+                <Paragraph style={{ margin: 0, fontSize: 12, lineHeight: '1.6', wordBreak: 'break-word' }}>
+                  {s.videoPrompt || s.sourceText}
+                </Paragraph>
               </Space>
             </Card>
           ))}

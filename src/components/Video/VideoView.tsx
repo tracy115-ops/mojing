@@ -315,6 +315,19 @@ const VideoView: React.FC = () => {
             <VideoSeriesWorkspace
               series={activeSeries}
               episodes={seriesEpisodes}
+              onUpdateSeriesInfo={(title, description) => {
+                useProjectStore.getState().updateProject(activeSeries.id, { title, description });
+                message.success('系列信息已更新！');
+              }}
+              onDeleteSeries={(seriesId) => {
+                const epList = projects.filter((p) => (p.metadata as VideoMetadata)?.seriesId === seriesId);
+                for (const ep of epList) {
+                  useProjectStore.getState().deleteProject(ep.id);
+                }
+                useProjectStore.getState().deleteProject(seriesId);
+                useProjectStore.getState().setActiveProject(null);
+                message.success('系列及旗下剧集已成功删除！');
+              }}
               onUpdateCharacters={(characters: CharacterAnchor[]) => {
                 useProjectStore.getState().updateProjectMetadata(activeSeries.id, { seriesCharacters: characters });
               }}
@@ -326,6 +339,14 @@ const VideoView: React.FC = () => {
               }}
               onUpdateEpisodeContinuity={(episodeId, values) => {
                 useProjectStore.getState().updateProjectMetadata(episodeId, values as unknown as Record<string, unknown>);
+              }}
+              onUpdateEpisodeInfo={(episodeId, title, description) => {
+                useProjectStore.getState().updateProject(episodeId, { title, description });
+                message.success('分集信息已更新！');
+              }}
+              onDeleteEpisode={(episodeId) => {
+                useProjectStore.getState().deleteProject(episodeId);
+                message.success('分集已成功删除！');
               }}
               onSyncEpisodeAssets={async (episodeId) => {
                 const pipelineProject = useVideoStore.getState().getProject(episodeId);
