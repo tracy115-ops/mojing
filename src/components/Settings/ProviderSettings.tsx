@@ -127,7 +127,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   siliconflow: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct'],
   qwen: ['qwen-max', 'qwen-plus', 'qwen-turbo'],
   doubao: ['doubao-1.5-pro-32k', 'doubao-1.5-lite-32k'],
-  glm: ['glm-4-plus', 'glm-4-flash', 'glm-4-air'],
+  glm: ['glm-5.2', 'glm-4-plus', 'glm-4-flash', 'glm-4-air'],
   // Image
   dalle: ['dall-e-3', 'dall-e-2'],
   'kling-image': ['kling-v2', 'kling-v1-5', 'kling-v1'],
