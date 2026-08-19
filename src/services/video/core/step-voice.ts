@@ -54,19 +54,19 @@ const REAL_VOICES: Record<string, {
     female: { child: 'claire', young: 'anna', middle: 'bella', elder: 'diana' },
     male: { child: 'benjamin', young: 'alex', middle: 'david', elder: 'charles' },
   },
-  // Edge TTS 中文音色(微软官方,免费)
+  // Edge TTS 中文音色(微软官方,免费且全部经过可用性验证)
   'edge-tts': {
     female: {
       child: 'zh-CN-XiaoyiNeural',
       young: 'zh-CN-XiaoxiaoNeural',
-      middle: 'zh-CN-XiaomoNeural',
-      elder: 'zh-CN-XiaomengNeural',
+      middle: 'zh-CN-XiaoxiaoNeural',
+      elder: 'zh-CN-XiaoxiaoNeural',
     },
     male: {
       child: 'zh-CN-YunjianNeural',
       young: 'zh-CN-YunxiNeural',
       middle: 'zh-CN-YunyangNeural',
-      elder: 'zh-CN-YunyeNeural',
+      elder: 'zh-CN-YunyangNeural',
     },
   },
   'doubao-tts': {
