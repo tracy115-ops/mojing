@@ -740,21 +740,48 @@ const ProviderSettings: React.FC = () => {
             ),
             children: (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <Card size="small" title="📝 文本工序细分模型">
-                  {LLM_TASK_MODELS.map((task) => (
-                    <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
-                      <AutoComplete
-                        style={{ flex: 1 }}
-                        value={(config.llm.models as Record<string, string>)[task.key] || undefined}
-                        onChange={(v) => setLLMModel(task.key, v)}
-                        placeholder={`留空默认使用: ${config.llm.defaultModel || '主力模型'}`}
-                        size="small"
-                        allowClear
-                        options={(PROVIDER_MODEL_SUGGESTIONS[config.llm.primary] ?? []).map((m) => ({ value: m, label: m }))}
-                      />
-                    </div>
-                  ))}
+                <Card
+                  size="small"
+                  title="📝 文本工序细分模型"
+                  extra={
+                    <Button
+                      size="small"
+                      type="link"
+                      style={{ padding: 0 }}
+                      onClick={() => {
+                        for (const task of LLM_TASK_MODELS) {
+                          setLLMModel(task.key, '');
+                        }
+                        message.success('已清空所有文本工序自定义设置，全部继承主力模型！');
+                      }}
+                    >
+                      一键清空（全部继承主力）
+                    </Button>
+                  }
+                >
+                  {LLM_TASK_MODELS.map((task) => {
+                    const activeEp = endpoints.find((e) => e.id === config.llm.endpointId);
+                    const modelOpts = (
+                      activeEp?.models && activeEp.models.length > 0
+                        ? activeEp.models
+                        : (PROVIDER_MODEL_SUGGESTIONS[config.llm.primary] ?? [])
+                    ).map((m) => ({ value: m, label: m }));
+
+                    return (
+                      <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
+                        <AutoComplete
+                          style={{ flex: 1 }}
+                          value={(config.llm.models as Record<string, string>)[task.key] || undefined}
+                          onChange={(v) => setLLMModel(task.key, v)}
+                          placeholder={`留空默认使用: ${config.llm.defaultModel || '主力模型'}`}
+                          size="small"
+                          allowClear
+                          options={modelOpts}
+                        />
+                      </div>
+                    );
+                  })}
                 </Card>
 
                 <Card size="small" title="🎨 生图工序细分模型">

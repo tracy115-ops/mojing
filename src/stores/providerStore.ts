@@ -66,16 +66,16 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
 
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   llm: {
-    primary: 'openai',
+    primary: 'glm',
     models: {
-      planning: 'gpt-4o',
-      generation: 'gpt-4o',
-      review: 'gpt-4o-mini',
-      extraction: 'gpt-4o-mini',
-      translation: 'gpt-4o',
-      embedding: 'text-embedding-3-small',
+      planning: '',
+      generation: '',
+      review: '',
+      extraction: '',
+      translation: '',
+      embedding: '',
     },
-    defaultModel: 'gpt-4o',
+    defaultModel: 'glm-5.2',
   },
   image: {
     primary: 'dalle',
@@ -569,6 +569,23 @@ export const useProviderStore = create<ProviderState>()(
           video: { ...current.config.video, ...(saved?.config?.video ?? {}) },
           tts: { ...current.config.tts, ...(saved?.config?.tts ?? {}) },
         } as typeof current.config;
+
+        // 彻底清理历史残留的无效/过期工序细分模型缓存，防止旧模型名称覆盖当前端点
+        if (mergedConfig.llm?.models) {
+          const endpointsList = saved?.endpoints ?? current.endpoints;
+          const activeEp = endpointsList.find((e) => e.id === mergedConfig.llm.endpointId);
+          if (activeEp) {
+            const allowedModels = activeEp.models && activeEp.models.length > 0 ? activeEp.models : [];
+            if (allowedModels.length > 0) {
+              for (const [key, val] of Object.entries(mergedConfig.llm.models)) {
+                if (val && !allowedModels.includes(val)) {
+                  (mergedConfig.llm.models as Record<string, string>)[key] = '';
+                }
+              }
+            }
+          }
+        }
+
         return {
           ...current,
           config: mergedConfig,
