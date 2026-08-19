@@ -185,7 +185,8 @@ export const useProviderStore = create<ProviderState>()(
       getEndpoint: (id) => get().endpoints.find((ep) => ep.id === id),
 
       setLLMProvider: (provider, model, endpointId) => {
-        let validModel = model ?? get().config.llm.defaultModel;
+        const endpoint = endpointId ? get().endpoints.find((ep) => ep.id === endpointId) : undefined;
+        let validModel = model ?? endpoint?.models?.[0] ?? get().config.llm.defaultModel;
         if (provider === 'deepseek' && (!validModel || validModel.includes('gpt') || validModel.includes('claude'))) {
           validModel = 'deepseek-chat';
         }
@@ -197,6 +198,8 @@ export const useProviderStore = create<ProviderState>()(
               primary: provider,
               defaultModel: validModel,
               endpointId,
+              // 清空残留的工序细分模型，防止旧模型的残余名称发送给新端点
+              models: {},
             },
           },
         }));

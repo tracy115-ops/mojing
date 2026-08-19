@@ -317,6 +317,13 @@ const ProviderSettings: React.FC = () => {
           models,
           category: addCategory,
         });
+        if (addCategory === 'llm' && config.llm.endpointId === editingEndpoint.id) {
+          setLLMProvider(provider as LLMProviderId, models[0], editingEndpoint.id);
+        } else if (addCategory === 'image' && config.image.endpointId === editingEndpoint.id) {
+          setImageProvider(provider as ImageProviderId, models[0], editingEndpoint.id);
+        } else if (addCategory === 'video' && config.video.endpointId === editingEndpoint.id) {
+          setVideoProvider(provider as VideoProviderId, models[0], editingEndpoint.id);
+        }
       } else {
         const newId = addEndpoint({
           name: values.name,

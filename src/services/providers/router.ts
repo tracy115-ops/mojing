@@ -246,12 +246,22 @@ class ProviderRouter {
       throw new Error('No LLM endpoint configured. Please add an API endpoint in Settings → Providers.');
     }
 
-    let effectiveModel = (config.models as Record<string, string> | undefined)?.[request.taskType] ?? config.defaultModel;
-    
-    // 自愈修复：当用户选用 DeepSeek 服务商时，若当前任务类型的配置模型包含了 gpt-4o 或 claude 等非 DeepSeek 模型，
-    // 自动纠正回 deepseek-chat 或 endpoint 设置的可用模型，防止接口抛出 400 错误。
-    if (config.primary === 'deepseek' && (effectiveModel.startsWith('gpt-') || effectiveModel.startsWith('claude-'))) {
-      effectiveModel = endpoint.models?.[0] || 'deepseek-chat';
+    let taskModel = (config.models as Record<string, string> | undefined)?.[request.taskType];
+    let effectiveModel = config.defaultModel || endpoint.models?.[0] || 'glm-5.2';
+
+    // 针对中转站 / 自定义代理（如 OneAPI / NewAPI / 私有中转）：
+    // 若端点配置了支持的模型列表（例如 ["glm-5.2"]），确保发送的模型必须在该端点支持的列表中，
+    // 彻底杜绝因残留旧服务商模型名称（如 deepseek-chat）导致中转站抛出 503 "无可用渠道支持模型"！
+    if (endpoint.models && endpoint.models.length > 0) {
+      if (taskModel && endpoint.models.includes(taskModel)) {
+        effectiveModel = taskModel;
+      } else if (config.defaultModel && endpoint.models.includes(config.defaultModel)) {
+        effectiveModel = config.defaultModel;
+      } else {
+        effectiveModel = endpoint.models[0];
+      }
+    } else if (taskModel) {
+      effectiveModel = taskModel;
     }
 
     const requestWithModel = { ...request, model: request.model || effectiveModel };
