@@ -43,7 +43,19 @@ async function loadPluginFetch(): Promise<typeof fetch | null> {
 export async function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const pluginFetch = await loadPluginFetch();
   if (pluginFetch) {
-    return pluginFetch(input as RequestInfo, init);
+    try {
+      return await pluginFetch(input as RequestInfo, init);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        msg.includes('not allowed on the configured scope') ||
+        msg.includes('scope') ||
+        msg.includes('url not allowed')
+      ) {
+        return globalThis.fetch(input, init);
+      }
+      throw err;
+    }
   }
   return globalThis.fetch(input, init);
 }
