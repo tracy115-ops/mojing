@@ -725,7 +725,7 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
         sourceChapterId: s.sourceChapterId || 'ch_1',
         sourceText: s.sourceText || s.videoPrompt || s.narration || `镜头 ${idx + 1}`,
         videoPrompt: s.videoPrompt || s.sourceText || '',
-        durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as any) ? s.durationSeconds : 5) as any,
+        durationSeconds: (typeof s.durationSeconds === 'number' && s.durationSeconds > 0 ? s.durationSeconds : 4) as any,
         characters: (s as any).characters || s.characterIds || [],
         location: s.location,
         mood: s.mood,
@@ -891,7 +891,7 @@ export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageR
         location: s.location,
         mood: s.mood,
         cameraMovement: s.cameraMovement,
-        durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as number) ? s.durationSeconds : 5) as 3 | 5 | 10 | 18,
+        durationSeconds: (typeof s.durationSeconds === 'number' && s.durationSeconds > 0 ? s.durationSeconds : 4) as any,
       })),
     };
     store.setSceneSpec(pid, updatedSpec);

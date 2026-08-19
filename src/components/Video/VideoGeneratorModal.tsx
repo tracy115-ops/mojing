@@ -372,6 +372,7 @@ const ConfigPane: React.FC<ConfigPaneProps> = ({
               onChange={(v) => onSpecChange({ ...spec, shotDurationSeconds: v })}
               style={{ width: '100%', marginTop: 4 }}
               options={[
+                { value: 0, label: '✨ 智能动态时长 (推荐)' },
                 { value: 5, label: t('video.gen.shotDuration.5') },
                 { value: 10, label: t('video.gen.shotDuration.10') },
               ]}

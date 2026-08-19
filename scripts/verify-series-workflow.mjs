@@ -223,6 +223,65 @@ assert(voiceCat === 'zh-CN-YunyangNeural', '胖橘猫台词准确识别并分配
 const voiceMasterAlias = resolveSpeakerVoice('大师：“我的意思是，你接着编！”', testCharacters);
 assert(voiceMasterAlias === 'zh-CN-YunyangNeural', '别名 "大师" 台词准确识别并分配胖橘猫音色');
 
+// -----------------------------------------------------------------------------
+// 6. 验证智能动态分镜时长算法 (Dynamic Shot Duration Pacing)
+// -----------------------------------------------------------------------------
+console.log('\n--- 6. 验证智能动态分镜时长算法 (不固定秒数) ---');
+
+function estimateSmartShotDurationTest({ text = '', narration = '', dialogue, cameraMovement = '' }) {
+  let allDialogueText = '';
+  if (dialogue && dialogue.length > 0) {
+    allDialogueText = dialogue.map((d) => d.text).join('');
+  } else if (narration && narration.trim()) {
+    allDialogueText = narration.trim();
+  } else {
+    const quotes = text.match(/["“「『]([^"”」』]+)["”」』]/g);
+    if (quotes) {
+      allDialogueText = quotes.map((q) => q.replace(/["“”「」『』]/g, '')).join('');
+    }
+  }
+
+  const pureCharCount = allDialogueText.replace(/[\s\p{P}\p{S}]/gu, '').length;
+  if (pureCharCount > 0) {
+    const speechSeconds = pureCharCount / 3.8;
+    const totalWithBuffer = speechSeconds + 0.6;
+    return Math.max(3.0, Math.min(12.0, Math.ceil(totalWithBuffer * 2) / 2));
+  }
+
+  const combinedText = `${text} ${narration}`.toLowerCase();
+  const isFastAction =
+    ['tracking', 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'handheld'].includes(cameraMovement) ||
+    /(拔剑|出鞘|斩|踢|出拳|飞身|瞬移|闪避|爆炸|击中|撞击|挥刀|刺出|暴退|怒吼|眼神特写|侧脸特写|动作|slash|attack|punch|kick|fight|dodge)/i.test(combinedText);
+
+  if (isFastAction) return 3.0;
+
+  const isWideAtmosphere =
+    ['aerial', 'dolly_out'].includes(cameraMovement) ||
+    /(全景|大远景|远景|宗门|皇城|大殿|夜景|群山|黄昏|落日|清晨|苍穹|俯瞰|星空|浩瀚|空镜|aerial|landscape|panorama|wide shot)/i.test(combinedText);
+
+  if (isWideAtmosphere) return 6.0;
+
+  return 4.0;
+}
+
+const actionDuration = estimateSmartShotDurationTest({
+  text: '林墨眼神一凛，反手拔剑斩出，剑气如虹！',
+  cameraMovement: 'tracking',
+});
+assert(actionDuration === 3.0, '动作打斗特写自动分配快节奏时长 3.0s (非生硬 5s)');
+
+const longDialogueDuration = estimateSmartShotDurationTest({
+  text: '大师叹了口气',
+  dialogue: [{ speaker: '大师', text: '天下大势合久必分分久必合，你此去青云山，万万不可锋芒太露！' }],
+});
+assert(longDialogueDuration >= 7.0, `长台词对白根据真实语速自适应延长 (${longDialogueDuration}s >= 7.0s)`);
+
+const wideLandscapeDuration = estimateSmartShotDurationTest({
+  text: '大远景，夕阳落日余晖洒在巍峨的青云门千重殿宇之上，云海翻腾。',
+  cameraMovement: 'aerial',
+});
+assert(wideLandscapeDuration === 6.0, '宏大远景/氛围空镜自动分配沉浸时长 6.0s');
+
 console.log('\n================================================================');
 console.log(`🎉 验证完成: ${passCount} 项测试通过，${failCount} 项失败。`);
 console.log('================================================================');

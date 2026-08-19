@@ -101,6 +101,14 @@ export async function runTTS(
         response.audioData,
         `tts_shot_${i + 1}`,
       );
+
+      // 音画自适应对齐：若配音实际长度 + 0.5s 停顿留白大于原定分镜时长，自动动态微调分镜时长
+      if (response.durationSeconds && response.durationSeconds > 0) {
+        const neededDuration = Math.ceil((response.durationSeconds + 0.5) * 2) / 2;
+        if (neededDuration > (result[i].durationSeconds || 0)) {
+          result[i].durationSeconds = neededDuration as any;
+        }
+      }
       okCount++;
     } catch (err) {
       console.warn(`tts: failed for shot ${shot.id}`, err);

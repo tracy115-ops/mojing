@@ -46,18 +46,29 @@ function stripDataUriPrefix(s: string | undefined | null): string | null {
  */
 function pickAgnesFramesTier(durationSeconds?: number): { numFrames: number; frameRate: number } {
   const TIERS = [
-    { numFrames: 81, frameRate: 24, seconds: 81 / 24 }, // 3.375
-    { numFrames: 121, frameRate: 24, seconds: 121 / 24 }, // 5.042
-    { numFrames: 241, frameRate: 24, seconds: 241 / 24 }, // 10.042
-    { numFrames: 441, frameRate: 24, seconds: 441 / 24 }, // 18.375
+    { numFrames: 49, frameRate: 24, seconds: 49 / 24 }, // ~2.0s (极速特写/暴击)
+    { numFrames: 65, frameRate: 24, seconds: 65 / 24 }, // ~2.7s (动作打斗)
+    { numFrames: 81, frameRate: 24, seconds: 81 / 24 }, // ~3.4s (短对白/神态)
+    { numFrames: 97, frameRate: 24, seconds: 97 / 24 }, // ~4.0s (标准叙事)
+    { numFrames: 121, frameRate: 24, seconds: 121 / 24 }, // ~5.0s (标准镜头)
+    { numFrames: 145, frameRate: 24, seconds: 145 / 24 }, // ~6.0s (大场景/长台词)
+    { numFrames: 169, frameRate: 24, seconds: 169 / 24 }, // ~7.0s (氛围空镜)
+    { numFrames: 241, frameRate: 24, seconds: 241 / 24 }, // ~10.0s (长镜头)
+    { numFrames: 441, frameRate: 24, seconds: 441 / 24 }, // ~18.4s (特长镜头)
   ];
-  if (!durationSeconds || durationSeconds <= 0) return TIERS[1]; // 默认 5s
-  // 找"时长不超过用户请求"的最大档位(向下取整)
-  let picked = TIERS[0];
+  if (!durationSeconds || durationSeconds <= 0) return TIERS[4]; // 默认 5s
+
+  // 匹配最接近的档位
+  let closest = TIERS[0];
+  let minDiff = Math.abs(TIERS[0].seconds - durationSeconds);
   for (const t of TIERS) {
-    if (t.seconds <= durationSeconds + 0.5) picked = t;
+    const diff = Math.abs(t.seconds - durationSeconds);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = t;
+    }
   }
-  return picked;
+  return closest;
 }
 
 /** 递归扫描任意 JSON 响应对象，精确提取合法的 HTTP/HTTPS 视频文件 URL */

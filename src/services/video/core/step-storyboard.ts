@@ -140,45 +140,53 @@ function buildSystemPrompt(rawPrompt: string, ctx: StoryboardContext): string {
 - Inherit global visual styles and character appearance details across all shot videoPrompts.`;
 }
 
+import { estimateSmartShotDuration } from './duration-estimator';
+
 function normalizeShot(item: LLMShot, index: number, ctx: StoryboardContext): ShotSpec {
   const dialogue = Array.isArray(item?.dialogue) && item.dialogue.length > 0 ? item.dialogue : undefined;
   const narration = dialogue?.[0]?.text?.trim() || (item?.narration ? String(item.narration).trim() : undefined);
+  const videoPrompt = String(item?.videoPrompt ?? '').trim();
+  const cameraMovement = item?.cameraMovement;
+
+  const durationSeconds = estimateSmartShotDuration({
+    text: videoPrompt,
+    narration,
+    dialogue,
+    cameraMovement,
+    explicitDuration: typeof item?.durationSeconds === 'number' ? item.durationSeconds : undefined,
+    defaultShotDuration: ctx.defaultShotDuration,
+  });
 
   return {
     id: `shot_${Date.now()}_${index}`,
     index,
-    videoPrompt: String(item?.videoPrompt ?? '').trim(),
+    videoPrompt,
     narration,
     dialogue,
     location: item?.location ? String(item.location) : undefined,
     mood: item?.mood,
-    cameraMovement: item?.cameraMovement,
-    durationSeconds: clampDuration(item?.durationSeconds, ctx.defaultShotDuration),
+    cameraMovement,
+    durationSeconds: durationSeconds as any,
     characterIds: Array.isArray(item?.characterIds) ? item.characterIds!.map(String) : [],
     sceneId: item?.sceneId,
   };
 }
 
 function fallbackStoryboard(rawPrompt: string, ctx: StoryboardContext): StoryboardResult {
+  const durationSeconds = estimateSmartShotDuration({
+    text: rawPrompt,
+    defaultShotDuration: ctx.defaultShotDuration,
+  });
+
   return {
     shots: [
       {
         id: `shot_${Date.now()}_0`,
         index: 0,
         videoPrompt: rawPrompt,
-        durationSeconds: ctx.defaultShotDuration,
+        durationSeconds: durationSeconds as any,
         characterIds: [],
       },
     ],
   };
-}
-
-function clampDuration(v: unknown, def: 3 | 5 | 10 | 15 | 18): 3 | 5 | 10 | 15 | 18 {
-  const n = Number(v);
-  if (n >= 17) return 18;
-  if (n >= 13) return 15;
-  if (n >= 8) return 10;
-  if (n >= 4) return 5;
-  if (n >= 1) return 3;
-  return def;
 }

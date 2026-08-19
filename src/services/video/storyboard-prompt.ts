@@ -16,6 +16,7 @@ import { parseLLMJson } from '@/services/novel/llm-json';
 import type { StoryboardShot } from '@/types/video';
 import type { RawShot } from './chapter-slicer';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { estimateSmartShotDuration } from './core/duration-estimator';
 
 const MAX_SHOTS_PER_CALL = 6;
 
@@ -201,6 +202,18 @@ function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext, fall
   const shotId = obj.id ? String(obj.id) : (raw.id && raw.id !== 'shot_1' ? raw.id : `shot_${shotIndex + 1}`);
   const shotSourceText = String(obj.sourceText || raw.rawText || obj.videoPrompt || `镜头 ${shotIndex + 1}`).trim();
   const shotVideoPrompt = String(obj.videoPrompt || obj.sourceText || raw.rawText || '').trim() || fallbackVideoPrompt(raw, shotIndex);
+  const cameraMovement = validateCamera(obj.cameraMovement) ?? defaultCamera(raw);
+
+  const durationSeconds = estimateSmartShotDuration({
+    text: shotVideoPrompt,
+    narration,
+    dialogue,
+    cameraMovement,
+    hasAction: raw.hasAction,
+    hasDialogue: raw.hasDialogue,
+    explicitDuration: typeof obj.durationSeconds === 'number' ? obj.durationSeconds : undefined,
+    defaultShotDuration: ctx.defaultShotDuration,
+  });
 
   return {
     id: shotId,
@@ -210,11 +223,11 @@ function normalizeShot(item: unknown, raw: RawShot, ctx: StoryboardContext, fall
     videoPrompt: shotVideoPrompt,
     imagePrompt: String(obj.imagePrompt ?? '').trim() || undefined,
     narration,
-    durationSeconds: clampDuration(obj.durationSeconds, ctx.defaultShotDuration),
+    durationSeconds,
     characters: (Array.isArray(obj.characters) && obj.characters.length ? obj.characters : raw.characters) as string[],
     location: (obj.location as string) || raw.location,
     mood: validateMood(obj.mood) ?? raw.mood,
-    cameraMovement: validateCamera(obj.cameraMovement) ?? defaultCamera(raw),
+    cameraMovement,
     dialogue,
   };
 }
@@ -223,6 +236,17 @@ function fallbackShot(raw: RawShot, ctx: StoryboardContext, index = 0): Storyboa
   const dialogue = extractDialogue(raw.rawText);
   const narration = dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80);
   const videoPrompt = raw.rawText && raw.rawText.trim() ? raw.rawText.trim() : fallbackVideoPrompt(raw, index);
+  const cameraMovement = defaultCamera(raw);
+  const durationSeconds = estimateSmartShotDuration({
+    text: videoPrompt,
+    narration,
+    dialogue,
+    cameraMovement,
+    hasAction: raw.hasAction,
+    hasDialogue: raw.hasDialogue,
+    defaultShotDuration: ctx.defaultShotDuration,
+  });
+
   return {
     id: raw.id || `shot_${index + 1}`,
     index: raw.index !== undefined ? raw.index : index,
@@ -230,11 +254,11 @@ function fallbackShot(raw: RawShot, ctx: StoryboardContext, index = 0): Storyboa
     sourceText: raw.rawText || `镜头 ${index + 1}`,
     videoPrompt,
     narration,
-    durationSeconds: ctx.defaultShotDuration,
+    durationSeconds,
     characters: raw.characters,
     location: raw.location,
     mood: raw.mood,
-    cameraMovement: defaultCamera(raw),
+    cameraMovement,
     dialogue,
   };
 }
@@ -251,16 +275,6 @@ function defaultCamera(raw: RawShot): string {
   if (raw.hasAction) return 'tracking';
   if (raw.hasDialogue) return 'static';
   return 'dolly_in';
-}
-
-function clampDuration(v: unknown, def: 3 | 5 | 10 | 18): 3 | 5 | 10 | 18 {
-  const n = Number(v);
-  // 落到 3 / 5 / 10 / 18 四个标准档位(Agnes V2.0 num_frames 81/121/241/441)
-  if (n >= 15) return 18;
-  if (n >= 8) return 10;
-  if (n >= 4) return 5;
-  if (n >= 1) return 3;
-  return def;
 }
 
 function validateMood(v: unknown): string | undefined {

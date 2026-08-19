@@ -399,7 +399,7 @@ export class VideoPipeline {
       location: s.location,
       mood: s.mood,
       cameraMovement: s.cameraMovement,
-      durationSeconds: ([3, 5, 10, 18].includes(s.durationSeconds as number) ? s.durationSeconds : 5) as 3 | 5 | 10 | 18,
+      durationSeconds: (typeof s.durationSeconds === 'number' && s.durationSeconds > 0 ? s.durationSeconds : 4) as any,
     }));
 
     // 步 3 提取:LLM 解析大文本,产出结构化角色/场景/道具

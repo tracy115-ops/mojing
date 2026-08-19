@@ -13,6 +13,7 @@ import type {
 import { stepRewrite } from './core/step-rewrite';
 import { stepStoryboard } from './core/step-storyboard';
 import { stepExtract } from './core/step-extract';
+import { estimateSmartShotDuration } from './core/duration-estimator';
 
 export interface DirectBuildContext {
   aspectRatio: AspectRatio;
@@ -152,6 +153,12 @@ export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildConte
     }
 
     const narration = dialogue[0]?.text?.trim() || undefined;
+    const durationSeconds = estimateSmartShotDuration({
+      text: block,
+      narration,
+      dialogue,
+      defaultShotDuration: ctx.defaultShotDuration,
+    });
 
     return {
       id: `shot_${Date.now()}_${index}`,
@@ -159,18 +166,23 @@ export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildConte
       videoPrompt: block,
       narration,
       dialogue: dialogue.length > 0 ? dialogue : undefined,
-      durationSeconds: ctx.defaultShotDuration,
+      durationSeconds: durationSeconds as any,
       characterIds: [],
     };
   });
 }
 
 function makePureShot(prompt: string, ctx: DirectBuildContext): ShotSpec {
+  const durationSeconds = estimateSmartShotDuration({
+    text: prompt,
+    defaultShotDuration: ctx.defaultShotDuration,
+  });
+
   return {
     id: `shot_${Date.now()}_0`,
     index: 0,
     videoPrompt: prompt,
-    durationSeconds: ctx.defaultShotDuration,
+    durationSeconds: durationSeconds as any,
     characterIds: [],
   };
 }

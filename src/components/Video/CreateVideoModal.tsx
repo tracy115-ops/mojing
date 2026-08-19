@@ -15,7 +15,7 @@ export interface CreateVideoFormValues {
   resolution: string;
   aspectRatio: string;
   fps: number;
-  shotDurationSeconds: 3 | 5 | 10 | 15 | 18;
+  shotDurationSeconds: 0 | 3 | 5 | 10 | 15 | 18;
   targetDurationSeconds?: 5 | 15 | 30 | 60;
 }
 
@@ -76,7 +76,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
           resolution: '1920x1080',
           aspectRatio: '16:9',
           fps: 24,
-          shotDurationSeconds: 5,
+          shotDurationSeconds: 0,
           targetDurationSeconds: 15,
         }}
       >
@@ -118,6 +118,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
           <Form.Item name="shotDurationSeconds" label="单镜头时长" style={{ flex: 1 }}>
             <Select
               options={[
+                { value: 0, label: '✨ 智能动态时长 (按台词与景别自动调节, 推荐)' },
                 { value: 3, label: '3 秒 (快节奏)' },
                 { value: 5, label: '5 秒 (标准镜头)' },
                 { value: 10, label: '10 秒 (长镜头)' },
