@@ -84,7 +84,7 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
   try {
     const resp = await providerRouter.generate(request);
     let parsed: any = parseLLMJson<any>(resp.content);
-    if (!parsed) return emptyResult(input);
+    if (!parsed) return fallbackHeuristicExtract(input);
 
     if (parsed.result && typeof parsed.result === 'object') parsed = parsed.result;
     else if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) parsed = parsed.data;
@@ -119,8 +119,8 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
 
     return { characters, scenes, props, resolvedShots };
   } catch (err) {
-    console.warn('stepExtract: LLM failed, returning empty', err);
-    return emptyResult(input);
+    console.warn('stepExtract: LLM failed, using heuristic rule fallback', err);
+    return fallbackHeuristicExtract(input);
   }
 }
 
@@ -290,12 +290,103 @@ function mergeCharacters(
   return Array.from(merged.values());
 }
 
-function emptyResult(input: ExtractInput): ExtractResult {
+function fallbackHeuristicExtract(input: ExtractInput): ExtractResult {
+  const characters: CharacterAnchor[] = [...(input.existingCharacters ?? [])];
+  const charNames = new Set(characters.map((c) => c.name));
+
+  // 1. 从 shots 的 dialogue 和 sourceText/videoPrompt 中提取角色
+  if (input.shots && input.shots.length > 0) {
+    for (const shot of input.shots) {
+      if (shot.dialogue && shot.dialogue.length > 0) {
+        for (const d of shot.dialogue) {
+          const name = d.speaker?.trim();
+          if (name && name !== '未知' && name !== '旁白' && !charNames.has(name)) {
+            charNames.add(name);
+            const isFemale = /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹|清雪/i.test(name);
+            const isMale = /男|哥|弟|汉|僧|师兄|大师|宗主|尊者|父|林墨|张小凡|凡/i.test(name);
+            characters.push({
+              id: `char_${Date.now()}_${characters.length}`,
+              name,
+              gender: isFemale ? 'female' : isMale ? 'male' : 'unknown',
+              ageGroup: 'young',
+              appearance: `${name}，生动传神的形象外貌，服饰细节完整，高清电影级质感。`,
+              firstAppearShotIndex: shot.index ?? 0,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 2. 从 input.text 中通过正则匹配 "角色名：" 或 "【角色名】"
+  const speakerRegex = /(?:^|\n)(?:【([^】\n]+)】|([^\s:：\n"“]{2,8}))[：:]/g;
+  let match: RegExpExecArray | null;
+  while ((match = speakerRegex.exec(input.text)) !== null) {
+    const name = (match[1] || match[2])?.trim();
+    if (name && name !== '未知' && name !== '旁白' && !charNames.has(name) && name.length <= 8) {
+      charNames.add(name);
+      const isFemale = /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹|清雪/i.test(name);
+      const isMale = /男|哥|弟|汉|僧|师兄|大师|宗主|尊者|父|林墨|张小凡|凡/i.test(name);
+      characters.push({
+        id: `char_${Date.now()}_${characters.length}`,
+        name,
+        gender: isFemale ? 'female' : isMale ? 'male' : 'unknown',
+        ageGroup: 'young',
+        appearance: `${name}，生动传神的形象外貌，服饰细节完整，高清电影级质感。`,
+        firstAppearShotIndex: 0,
+      });
+    }
+  }
+
+  // 3. 若依然没有提取到任何角色，构造一个默认主角
+  if (characters.length === 0) {
+    characters.push({
+      id: `char_${Date.now()}_0`,
+      name: '故事主角',
+      gender: 'unknown',
+      ageGroup: 'young',
+      appearance: '故事核心主角，五官生动传神，服饰细节精致，高清电影级质感。',
+      firstAppearShotIndex: 0,
+    });
+  }
+
+  // 4. 构造默认场景
+  const scenes: SceneAnchor[] = [
+    {
+      id: `scene_${Date.now()}_0`,
+      name: '故事主场景',
+      description: '电影级故事环境背景，光影流动，环境细节丰富。',
+      firstAppearShotIndex: 0,
+    },
+  ];
+
+  // 5. 回填 shots 的 characterIds
+  const nameToId = new Map(characters.map((c) => [c.name, c.id]));
+  const resolvedShots = input.shots?.map((sh) => {
+    const matchedIds = new Set<string>();
+    if (sh.dialogue) {
+      for (const d of sh.dialogue) {
+        const id = nameToId.get(d.speaker);
+        if (id) matchedIds.add(id);
+      }
+    }
+    for (const c of characters) {
+      if (sh.videoPrompt?.includes(c.name) || sh.sourceText?.includes(c.name)) {
+        matchedIds.add(c.id);
+      }
+    }
+    return {
+      ...sh,
+      characterIds: matchedIds.size > 0 ? Array.from(matchedIds) : (characters[0] ? [characters[0].id] : []),
+      sceneId: scenes[0].id,
+    };
+  });
+
   return {
-    characters: input.existingCharacters ?? [],
-    scenes: [],
+    characters,
+    scenes,
     props: [],
-    resolvedShots: input.shots,
+    resolvedShots: resolvedShots || input.shots,
   };
 }
 
