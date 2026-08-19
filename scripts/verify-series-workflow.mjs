@@ -282,6 +282,125 @@ const wideLandscapeDuration = estimateSmartShotDurationTest({
 });
 assert(wideLandscapeDuration === 6.0, '宏大远景/氛围空镜自动分配沉浸时长 6.0s');
 
+// -----------------------------------------------------------------------------
+// 7. 验证 Agnes Video 2.5 全新协议构造与官方网关连通性
+// -----------------------------------------------------------------------------
+console.log('\n--- 7. 验证 Agnes Video 2.5 全新协议构造与官方网关连通性 ---');
+
+function buildAgnesVideoPayload(request) {
+  const model = request.model?.trim() || 'agnes-video-v2.0';
+  const isV25 = model === 'agnes-video-2.5' || model.includes('2.5');
+
+  if (isV25) {
+    const seconds = Math.max(4, Math.min(12, Math.round(request.durationSeconds || 5)));
+    let aspect_ratio = '16:9';
+    if (request.aspectRatio) {
+      if (['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].includes(request.aspectRatio)) {
+        aspect_ratio = request.aspectRatio;
+      }
+    } else if (request.width && request.height) {
+      const aspect = request.width / request.height;
+      if (Math.abs(aspect - 9 / 16) < 0.1) aspect_ratio = '9:16';
+      else if (Math.abs(aspect - 1) < 0.1) aspect_ratio = '1:1';
+      else if (Math.abs(aspect - 4 / 3) < 0.1) aspect_ratio = '4:3';
+      else if (Math.abs(aspect - 3 / 4) < 0.1) aspect_ratio = '3:4';
+      else if (Math.abs(aspect - 21 / 9) < 0.1) aspect_ratio = '21:9';
+    }
+
+    const body = {
+      model: 'agnes-video-2.5',
+      prompt: request.prompt,
+      size: '720P',
+      aspect_ratio,
+      seconds,
+    };
+
+    if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
+      body.seed = request.seed;
+    }
+
+    if (request.referenceImages && request.referenceImages.length > 0) {
+      const cleanedImages = request.referenceImages.filter(Boolean);
+      if (cleanedImages.length === 1) {
+        body.mode = 'keyframe';
+        body.first_frame = cleanedImages[0];
+      } else {
+        body.mode = 'reference';
+        body.images = cleanedImages;
+      }
+    } else {
+      body.mode = 'text';
+    }
+
+    return body;
+  }
+
+  return {
+    model,
+    prompt: request.prompt,
+    width: request.width || 1152,
+    height: request.height || 768,
+    num_frames: 121,
+    frame_rate: 24,
+  };
+}
+
+// 7.1 验证纯文生视频
+const textPayload = buildAgnesVideoPayload({
+  model: 'agnes-video-2.5',
+  prompt: '夜晚古风庭院，樱花缓缓飘落，电影级光影',
+  durationSeconds: 6,
+  aspectRatio: '16:9',
+});
+assert(textPayload.model === 'agnes-video-2.5', '2.5 纯文生视频模型识别为 agnes-video-2.5');
+assert(textPayload.mode === 'text', '无图输入自动设为 mode: text');
+assert(textPayload.size === '720P', '分辨率档位严格按官方规范固定为 720P');
+assert(textPayload.aspect_ratio === '16:9', '画幅比例正确输出为 16:9');
+assert(textPayload.seconds === 6, '时长正确映射为 6 秒');
+assert(textPayload.width === undefined && textPayload.num_frames === undefined, '成功剥离 2.0 旧版 width/num_frames 违规字段');
+
+// 7.2 验证首帧图生视频
+const keyframePayload = buildAgnesVideoPayload({
+  model: 'agnes-video-2.5',
+  prompt: '人物从首帧姿态缓缓拔剑',
+  durationSeconds: 3,
+  referenceImages: ['https://example.com/first_frame.png'],
+});
+assert(keyframePayload.mode === 'keyframe', '单张参考图自动设为 mode: keyframe');
+assert(keyframePayload.first_frame === 'https://example.com/first_frame.png', '首帧 URL 正确填入 first_frame 字段');
+assert(keyframePayload.image === undefined, '成功剥离旧版的 image 违规字段');
+assert(keyframePayload.seconds === 4, '小于4秒的时长自动约束在官方合法下限 4 秒');
+
+// 7.3 验证多图参考模式
+const refPayload = buildAgnesVideoPayload({
+  model: 'agnes-video-2.5',
+  prompt: '以 <Picture 1> 与 <Picture 2> 角色和背景风格为参考生成打斗',
+  durationSeconds: 15,
+  referenceImages: ['https://example.com/char.png', 'https://example.com/scene.png'],
+});
+assert(refPayload.mode === 'reference', '多张图自动设为 mode: reference');
+assert(Array.isArray(refPayload.images) && refPayload.images.length === 2, '多图参考数组 images 正确注入');
+assert(refPayload.seconds === 12, '超过12秒的时长自动约束在官方合法上限 12 秒');
+
+// 7.4 验证官方 API 网关网络连通性
+try {
+  const probeResp = await fetch('https://apihub.agnes-ai.com/v1/videos', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.AGNES_API_KEY || 'test_probe_token'}`,
+    },
+    body: JSON.stringify(textPayload),
+  });
+  const probeText = await probeResp.text();
+  assert(
+    probeResp.status === 200 || probeResp.status === 201 || probeResp.status === 401,
+    `官方 API 网关 https://apihub.agnes-ai.com 在线联通成功 (HTTP ${probeResp.status})`
+  );
+} catch (err) {
+  assert(false, `无法连接官方 API: ${err.message}`);
+}
+
 console.log('\n================================================================');
 console.log(`🎉 验证完成: ${passCount} 项测试通过，${failCount} 项失败。`);
 console.log('================================================================');
