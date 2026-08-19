@@ -330,7 +330,21 @@ class ProviderRouter {
       throw new Error('No image endpoint configured. Please add one in Settings → Providers.');
     }
 
-    const effectiveModel = (config.models as Record<string, string> | undefined)?.[request.taskType] ?? config.defaultModel;
+    let taskModel = (config.models as Record<string, string> | undefined)?.[request.taskType];
+    let effectiveModel = config.defaultModel || endpoint.models?.[0] || 'agnes-image-2.1-flash';
+
+    if (endpoint.models && endpoint.models.length > 0) {
+      if (taskModel && endpoint.models.includes(taskModel)) {
+        effectiveModel = taskModel;
+      } else if (config.defaultModel && endpoint.models.includes(config.defaultModel)) {
+        effectiveModel = config.defaultModel;
+      } else {
+        effectiveModel = endpoint.models[0];
+      }
+    } else if (taskModel) {
+      effectiveModel = taskModel;
+    }
+
     const requestWithModel = { ...request, model: request.model || effectiveModel };
 
     return runWithInvocation(
@@ -390,7 +404,21 @@ class ProviderRouter {
     }
 
     const endpointProvider = endpoint.provider as VideoProviderId;
-    const effectiveModel = (config.models as Record<string, string> | undefined)?.[request.taskType] ?? config.defaultModel;
+    let taskModel = (config.models as Record<string, string> | undefined)?.[request.taskType];
+    let effectiveModel = config.defaultModel || endpoint.models?.[0] || 'agnes-video-2.5';
+
+    if (endpoint.models && endpoint.models.length > 0) {
+      if (taskModel && endpoint.models.includes(taskModel)) {
+        effectiveModel = taskModel;
+      } else if (config.defaultModel && endpoint.models.includes(config.defaultModel)) {
+        effectiveModel = config.defaultModel;
+      } else {
+        effectiveModel = endpoint.models[0];
+      }
+    } else if (taskModel) {
+      effectiveModel = taskModel;
+    }
+
     const requestWithModel = { ...request, model: request.model || effectiveModel };
 
     return runWithInvocation(
