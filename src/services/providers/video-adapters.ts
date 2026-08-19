@@ -459,73 +459,121 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       ? `${baseUrl}/videos`
       : `${baseUrl}/v1/videos`;
 
-    const body: Record<string, unknown> = {
-      model,
-      prompt: request.prompt,
-    };
+    const isV25 = model === 'agnes-video-2.5' || model.includes('2.5');
 
-    // 1. 分辨率计算 (width / height): 优先适配 16:9 / 9:16 / 1:1 标准规格 (默认 1152x768)
-    let w = request.width || 1152;
-    let h = request.height || 768;
-    if (w > 0 && h > 0) {
-      const aspect = w / h;
-      if (Math.abs(aspect - 16 / 9) < 0.1) {
-        w = 1152;
-        h = 768;
-      } else if (Math.abs(aspect - 9 / 16) < 0.1) {
-        w = 768;
-        h = 1152;
-      } else if (Math.abs(aspect - 1) < 0.1) {
-        w = 896;
-        h = 896;
+    let body: Record<string, unknown>;
+
+    if (isV25) {
+      // ===== Agnes Video 2.5 OpenAPI 规范 =====
+      const seconds = Math.max(4, Math.min(12, Math.round(request.durationSeconds || 5)));
+      let aspect_ratio = '16:9';
+      if (request.aspectRatio) {
+        if (['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].includes(request.aspectRatio)) {
+          aspect_ratio = request.aspectRatio;
+        }
+      } else if (request.width && request.height) {
+        const aspect = request.width / request.height;
+        if (Math.abs(aspect - 9 / 16) < 0.1) aspect_ratio = '9:16';
+        else if (Math.abs(aspect - 1) < 0.1) aspect_ratio = '1:1';
+        else if (Math.abs(aspect - 4 / 3) < 0.1) aspect_ratio = '4:3';
+        else if (Math.abs(aspect - 3 / 4) < 0.1) aspect_ratio = '3:4';
+        else if (Math.abs(aspect - 21 / 9) < 0.1) aspect_ratio = '21:9';
+      }
+
+      body = {
+        model: 'agnes-video-2.5',
+        prompt: request.prompt,
+        size: '720P',
+        aspect_ratio,
+        seconds,
+      };
+
+      if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
+        body.seed = request.seed;
+      }
+
+      if (request.referenceImages && request.referenceImages.length > 0) {
+        const cleanedImages = request.referenceImages.filter(Boolean);
+        if (cleanedImages.length === 1) {
+          body.mode = 'keyframe';
+          body.first_frame = cleanedImages[0];
+        } else {
+          body.mode = 'reference';
+          body.images = cleanedImages;
+        }
       } else {
-        w = Math.round(w / 32) * 32;
-        h = Math.round(h / 32) * 32;
+        body.mode = 'text';
       }
     } else {
-      w = 1152;
-      h = 768;
-    }
-    body.width = w;
-    body.height = h;
+      // ===== Agnes Video 2.0 规范 =====
+      body = {
+        model,
+        prompt: request.prompt,
+      };
 
-    // 2. 帧数 (num_frames) & 帧率 (frame_rate): 遵循 8n + 1 规则且 <= 441
-    const tier = pickAgnesFramesTier(request.durationSeconds);
-    body.num_frames = tier.numFrames;
-    body.frame_rate = request.fps && request.fps >= 1 && request.fps <= 60 ? request.fps : tier.frameRate;
-
-    // 3. 推理步数 (num_inference_steps)
-    if (request.numInferenceSteps && request.numInferenceSteps > 0) {
-      body.num_inference_steps = request.numInferenceSteps;
-    }
-
-    // 4. 随机种子 (seed): 增强画面连贯性与可复现性
-    if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
-      body.seed = request.seed;
-    }
-
-    // 5. 反向提示词 (negative_prompt): 过滤模糊、畸变与杂质
-    body.negative_prompt = request.negativePrompt || 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch';
-
-    // 6. 模式 (mode) & 图生视频 (image) / 多关键帧模式 (extra_body)
-    if (request.referenceImages && request.referenceImages.length > 0) {
-      const cleanedImages = request.referenceImages
-        .map((img) => stripDataUriPrefix(img))
-        .filter((img): img is string => !!img);
-
-      if (cleanedImages.length === 1) {
-        body.image = cleanedImages[0];
-        body.mode = request.mode || 'ti2vid';
-      } else if (cleanedImages.length > 1) {
-        body.image = cleanedImages[0];
-        body.mode = 'keyframes';
-        body.extra_body = {
-          image: cleanedImages,
-          mode: 'keyframes',
-        };
+      // 1. 分辨率计算 (width / height): 优先适配 16:9 / 9:16 / 1:1 标准规格 (默认 1152x768)
+      let w = request.width || 1152;
+      let h = request.height || 768;
+      if (w > 0 && h > 0) {
+        const aspect = w / h;
+        if (Math.abs(aspect - 16 / 9) < 0.1) {
+          w = 1152;
+          h = 768;
+        } else if (Math.abs(aspect - 9 / 16) < 0.1) {
+          w = 768;
+          h = 1152;
+        } else if (Math.abs(aspect - 1) < 0.1) {
+          w = 896;
+          h = 896;
+        } else {
+          w = Math.round(w / 32) * 32;
+          h = Math.round(h / 32) * 32;
+        }
+      } else {
+        w = 1152;
+        h = 768;
       }
-    } else if (request.mode) {
-      body.mode = request.mode;
+      body.width = w;
+      body.height = h;
+
+      // 2. 帧数 (num_frames) & 帧率 (frame_rate): 遵循 8n + 1 规则且 <= 441
+      const tier = pickAgnesFramesTier(request.durationSeconds);
+      body.num_frames = tier.numFrames;
+      body.frame_rate = request.fps && request.fps >= 1 && request.fps <= 60 ? request.fps : tier.frameRate;
+
+      // 3. 推理步数 (num_inference_steps)
+      if (request.numInferenceSteps && request.numInferenceSteps > 0) {
+        body.num_inference_steps = request.numInferenceSteps;
+      }
+
+      // 4. 随机种子 (seed): 增强画面连贯性与可复现性
+      if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
+        body.seed = request.seed;
+      }
+
+      // 5. 反向提示词 (negative_prompt): 过滤模糊、畸变与杂质
+      body.negative_prompt = request.negativePrompt || 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch';
+
+      // 6. 模式 (mode) & 图生视频 (image) / 多关键帧模式 (extra_body)
+      if (request.referenceImages && request.referenceImages.length > 0) {
+        const cleanedImages = request.referenceImages
+          .map((img) => stripDataUriPrefix(img))
+          .filter((img): img is string => !!img);
+
+        if (cleanedImages.length === 1) {
+          body.image = cleanedImages[0];
+          body.mode = request.mode || 'ti2vid';
+        } else if (cleanedImages.length > 1) {
+          body.image = cleanedImages[0];
+          body.mode = 'keyframes';
+          body.extra_body = {
+            image: cleanedImages,
+            mode: 'keyframes',
+          };
+        }
+      } else if (request.mode) {
+        body.mode = request.mode;
+      }
     }
 
     const submitResp = await httpFetch(submitUrl, {

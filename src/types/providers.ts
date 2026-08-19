@@ -242,6 +242,7 @@ export interface VideoGenerateRequest {
   model?: string;
   width?: number;
   height?: number;
+  aspectRatio?: string;
   durationSeconds?: number;
   fps?: number;
   referenceImages?: string[];
