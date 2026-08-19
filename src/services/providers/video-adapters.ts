@@ -144,8 +144,11 @@ export class KlingVideoProvider extends BaseVideoProvider {
     };
 
     if (isI2V) {
-      // image2video 用 image 字段
+      // 首尾帧双图控制 (First-Last Frame Continuity)
       body.image = request.referenceImages![0];
+      if (request.referenceImages!.length > 1) {
+        body.image_tail = request.referenceImages![1];
+      }
     }
 
     const submitUrl = `${this.klingBase()}/v1/videos/${this.lastSubmitPath}`;
@@ -265,7 +268,14 @@ export class RunwayProvider extends BaseVideoProvider {
     };
 
     if (request.referenceImages?.length) {
-      body.promptImage = request.referenceImages[0];
+      if (request.referenceImages.length > 1) {
+        body.promptImage = [
+          { uri: request.referenceImages[0], position: 'first' },
+          { uri: request.referenceImages[1], position: 'last' },
+        ];
+      } else {
+        body.promptImage = request.referenceImages[0];
+      }
     }
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/v1/image_to_video`, {
@@ -355,7 +365,12 @@ export class ViduProvider extends BaseVideoProvider {
     };
 
     if (request.referenceImages?.length) {
-      body.image = request.referenceImages[0];
+      if (request.referenceImages.length > 1) {
+        body.start_image = request.referenceImages[0];
+        body.end_image = request.referenceImages[1];
+      } else {
+        body.image = request.referenceImages[0];
+      }
       body.img_boost = true;
     }
 
@@ -497,6 +512,10 @@ export class AgnesVideoProvider extends BaseVideoProvider {
         if (cleanedImages.length === 1) {
           body.mode = 'keyframe';
           body.first_frame = cleanedImages[0];
+        } else if (cleanedImages.length === 2) {
+          body.mode = 'keyframe';
+          body.first_frame = cleanedImages[0];
+          body.last_frame = cleanedImages[1];
         } else {
           body.mode = 'reference';
           body.images = cleanedImages;
