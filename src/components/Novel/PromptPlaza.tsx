@@ -2,7 +2,7 @@
 // Prompt Plaza — Prompt template marketplace with categories, search, import/export
 // ============================================================================
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Typography, Card, Input, Tag, List, Space, Empty, Button,
   Tabs, message, Tooltip, Badge, Drawer, Form, Select, Modal,

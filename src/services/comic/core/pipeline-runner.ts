@@ -16,7 +16,7 @@ import {
   type StageContext,
   type PipelineCallbacks,
 } from './stage-handlers';
-import type { ComicStage, ComicTrackedStage, ComicSceneSpec } from '@/types/comic';
+import type { ComicTrackedStage, ComicSceneSpec } from '@/types/comic';
 
 /** 从 store 重建 StageContext。null = 项目不存在。 */
 function buildContextFromStore(

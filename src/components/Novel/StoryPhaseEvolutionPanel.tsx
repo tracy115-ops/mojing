@@ -4,14 +4,14 @@
 // ============================================================================
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { Card, Tag, Space, Typography, Progress, Timeline, List, Badge, Tooltip, Empty, Tabs, Button } from 'antd';
+import { Card, Tag, Space, Typography, Progress, Timeline, Badge, Empty, Tabs, Button } from 'antd';
 import {
   DashboardOutlined, ThunderboltOutlined, WarningOutlined,
   CheckCircleOutlined, ClockCircleOutlined, FlagOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { ContextBudgetAllocator } from '@/services/novel/context-budget';
-import { EvolutionEngine, type EvolutionEvent, type ContinuityViolation } from '@/services/novel/evolution-engine';
+import { EvolutionEngine } from '@/services/novel/evolution-engine';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { panelHeader } from './PanelStyles';
 import type { StoryPhase, Foreshadowing } from '@/types/narrative';

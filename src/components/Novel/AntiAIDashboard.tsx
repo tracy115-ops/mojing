@@ -4,7 +4,7 @@
 // ============================================================================
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Typography, Tag, List, Button, Space, Tooltip, Empty, Badge } from 'antd';
+import { Typography, Tag, List, Tooltip, Empty, Badge } from 'antd';
 import {
   SafetyCertificateOutlined,
   CheckCircleOutlined,
@@ -15,7 +15,7 @@ import {
   ExperimentOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
-import { AntiAIAuditor, ClicheScanner, type AuditReport, type PatternHit } from '@/services/novel/cliche-scanner';
+import { AntiAIAuditor, type AuditReport, type PatternHit } from '@/services/novel/cliche-scanner';
 
 const { Text } = Typography;
 

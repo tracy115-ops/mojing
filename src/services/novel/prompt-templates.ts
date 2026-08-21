@@ -8,7 +8,6 @@
 // - YAML/JSON override support for prompt customization
 // - Version tracking for each template
 
-import type { StoryPhaseState } from '@/types/narrative';
 
 export interface PromptTemplate {
   id: string;

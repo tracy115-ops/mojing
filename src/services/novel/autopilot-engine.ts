@@ -4,7 +4,7 @@ import type {
   NovelStage,
   CircuitBreakerState,
 } from '@/types/pipeline';
-import type { StoryPhaseState, Foreshadowing, ChapterAftermathResult, Beat, GlobalPlan, StoryNode } from '@/types/narrative';
+import type { StoryPhaseState, ChapterAftermathResult, Beat, GlobalPlan, StoryNode } from '@/types/narrative';
 import type { NovelChapter, NovelMetadata } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
@@ -27,7 +27,6 @@ import { ChapterSummarizer } from './chapter-summarizer';
 import { AutoBibleGenerator } from './auto-bible-generator';
 import { ConflictDetector } from './conflict-detector';
 import { QualityGateService } from './quality-gate';
-import type { QualityGateResult } from './quality-gate';
 import {
   magnifyOutlineToBeats,
   getConductorSignal,

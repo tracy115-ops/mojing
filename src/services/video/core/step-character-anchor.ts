@@ -13,7 +13,6 @@
 import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, ModelTier } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
-import { enrichCharacterPromptWithLLM } from './prompt-enricher';
 import { detectInputLanguage } from './lang-detector';
 import { useSettingsStore } from '@/stores/settingsStore';
 

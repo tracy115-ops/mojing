@@ -4,14 +4,14 @@
 // ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { Collapse, Input, Button, Space, Tag, Progress, message, Typography } from 'antd';
+import { Collapse, Input, Button, Space, Tag, Progress, message } from 'antd';
 import {
   ThunderboltOutlined, GlobalOutlined, TeamOutlined, ReloadOutlined,
   ReadOutlined, CoffeeOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import type { Worldbuilding, WorldbuildingDimension } from '@/types/narrative';
+import type { Worldbuilding } from '@/types/narrative';
 
 const { TextArea } = Input;
 

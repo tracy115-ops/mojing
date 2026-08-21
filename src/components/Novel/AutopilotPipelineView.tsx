@@ -4,7 +4,7 @@
 // ============================================================================
 
 import React, { useMemo, useRef } from 'react';
-import { Typography, Tag, Space, Empty, Badge, Tooltip, Button } from 'antd';
+import { Tag, Space, Empty, Badge } from 'antd';
 import {
   RocketOutlined, GlobalOutlined, FileTextOutlined, EditOutlined,
   CheckCircleOutlined, SyncOutlined, ThunderboltOutlined,
@@ -13,7 +13,6 @@ import {
 import ReactECharts from 'echarts-for-react';
 import { useTranslation } from '@/i18n';
 import { useAutopilotStore } from '@/stores/autopilotStore';
-import type { AutopilotState } from '@/types/pipeline';
 import { useChartTheme } from '@/hooks/useChartTheme';
 import { useEchartsReady } from '@/hooks/useEchartsReady';
 

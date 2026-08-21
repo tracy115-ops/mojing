@@ -4,14 +4,14 @@
 // ============================================================================
 
 import React, { useState, useMemo, useCallback } from 'react';
-import { Card, Tag, Button, Space, Modal, Form, Input, Select, List, Typography, Tooltip, Badge, Empty, message } from 'antd';
+import { Tag, Button, Space, Modal, Form, Input, Select, List, Typography, Tooltip, Empty, message } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, CheckCircleOutlined,
   ExclamationCircleOutlined, PushpinOutlined, AimOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import { panelHeader, statsRow, statItem, statusChip, accentBar, urgencyColor } from './PanelStyles';
+import { panelHeader, statsRow, statItem } from './PanelStyles';
 import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
 
 const { TextArea } = Input;

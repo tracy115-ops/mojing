@@ -3,14 +3,13 @@
 // ============================================================================
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Typography, Card, Tag, List, Space, Badge, Tooltip, Empty, Row, Col, Button } from 'antd';
+import { Typography, Tag, List, Tooltip, Empty, Row, Col, Button } from 'antd';
 import {
   ControlOutlined, ReloadOutlined, CheckCircleOutlined, WarningOutlined,
   CloseCircleOutlined, ExperimentOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import { ClicheScanner } from '@/services/novel/cliche-scanner';
 
 const { Text } = Typography;
 

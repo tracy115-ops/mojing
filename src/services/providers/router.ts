@@ -14,7 +14,7 @@ import type {
   TTSProviderId,
   ApiEndpoint,
 } from '@/types/providers';
-import { BaseLLMProvider, BaseImageProvider, BaseVideoProvider, BaseTTSProvider } from './base';
+import { BaseLLMProvider } from './base';
 import { OpenAICompatibleProvider, ClaudeProvider } from './llm-adapters';
 import { createImageProvider } from './image-adapters';
 import { createVideoProvider } from './video-adapters';

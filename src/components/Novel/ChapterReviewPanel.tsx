@@ -3,7 +3,7 @@
 // ============================================================================
 
 import React, { useMemo, useState } from 'react';
-import { Typography, Card, Tag, Space, Empty, Button, Progress, List } from 'antd';
+import { Typography, Card, Space, Empty, Button, Progress } from 'antd';
 import {
   AuditOutlined, CheckCircleOutlined, WarningOutlined,
 } from '@ant-design/icons';

@@ -4,15 +4,15 @@
 // ============================================================================
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { Typography, Card, Tag, List, Space, Empty, Badge, Button, Tooltip } from 'antd';
+import { Typography, Card, Tag, Space, Empty, Badge, Button } from 'antd';
 import {
   HistoryOutlined, ClockCircleOutlined, PlayCircleOutlined,
   CheckCircleOutlined, ThunderboltOutlined, FlagOutlined,
   SaveOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
-import { CheckpointManager, type CheckpointSummary } from '@/services/novel/checkpoint-manager';
-import { NarrativeRepository, type AutopilotCheckpoint } from '@/services/novel/narrative-repository';
+import { CheckpointManager } from '@/services/novel/checkpoint-manager';
+import { NarrativeRepository } from '@/services/novel/narrative-repository';
 
 const { Text } = Typography;
 

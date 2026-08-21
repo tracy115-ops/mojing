@@ -8,7 +8,7 @@ import { Typography, Input, InputNumber, Button, Space, Popconfirm, Alert, messa
 import { ReloadOutlined, ForwardOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
-import { STAGE_INPUT_FIELDS, VIDEO_PIPELINE_STAGES } from '@/types/video';
+import { STAGE_INPUT_FIELDS } from '@/types/video';
 import type { VideoStage, StageInput, VideoProjectState } from '@/types/video';
 import { runSingleStage, runFromStage } from '@/services/video/core/pipeline-runner';
 import { populateStageInput } from '@/services/video/core/stage-handlers';

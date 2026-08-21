@@ -11,7 +11,7 @@
 //   - extract: 跑步 2/3/5/6/9/10/14(视觉一致性链路)
 //   - multishot: 跑完整 14 步
 
-import type { VideoProviderId, ImageProviderId } from './providers';
+import type { VideoProviderId } from './providers';
 
 // --- Aspect Ratio ---
 

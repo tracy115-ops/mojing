@@ -15,7 +15,7 @@ import { TensionScoringService, type TensionTrend } from '@/services/novel/tensi
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';
-import type { TensionPoint, TensionDimensions } from '@/types/narrative';
+import type { TensionPoint } from '@/types/narrative';
 import { useChartTheme } from '@/hooks/useChartTheme';
 import { useEchartsReady } from '@/hooks/useEchartsReady';
 

@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Divider, Space, message, Alert } from 'antd';
+import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Space, message, Alert } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AppSettings } from '@/types';

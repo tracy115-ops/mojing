@@ -2,7 +2,7 @@
 // DAG Pipeline Types — Execution engine & cross-module SharedContext
 // ============================================================================
 
-import type { PriorityTier, StoryPhase } from './narrative';
+import type { StoryPhase } from './narrative';
 
 // --- DAG Node Types ---
 

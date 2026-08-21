@@ -3,12 +3,12 @@
 // ============================================================================
 
 import React, { useMemo, useState } from 'react';
-import { Typography, Card, Tag, Space, Empty, Button, Progress, Spin, List } from 'antd';
+import { Typography, Card, Tag, Space, Empty, Button, Progress, List } from 'antd';
 import {
   UserOutlined, SmileOutlined, FireOutlined, BugOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
-import { ReaderSimulator, READER_PERSONAS, type ReaderSimulationResult, type ReaderScore } from '@/services/novel/reader-simulator';
+import { ReaderSimulator, type ReaderSimulationResult, type ReaderScore } from '@/services/novel/reader-simulator';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';

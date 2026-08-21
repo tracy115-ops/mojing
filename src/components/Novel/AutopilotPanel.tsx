@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Button, Progress, Tag, Space, Typography, Tooltip, Badge } from 'antd';
+import { Button, Progress, Tag, Space, Typography, Tooltip } from 'antd';
 import {
   PlayCircleOutlined,
   PauseCircleOutlined,

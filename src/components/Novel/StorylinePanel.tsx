@@ -13,7 +13,7 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import type { Storyline, StorylineType, StorylineStatus, StorylineMilestone } from '@/types/narrative';
+import type { Storyline, StorylineType, StorylineStatus } from '@/types/narrative';
 
 interface StorylinePanelProps {
   novelId: string;

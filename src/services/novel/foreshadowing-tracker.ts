@@ -1,4 +1,4 @@
-import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
+import type { Foreshadowing } from '@/types/narrative';
 import type { StoryPhaseState } from '@/types/narrative';
 
 // --- Foreshadowing Tracker (V9 Reform) ---

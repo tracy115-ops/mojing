@@ -28,7 +28,7 @@ import { runKeyframe } from './step-keyframe';
 import { runVideoGen, type VideoGenOptions } from './step-video-gen';
 import { runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
-import { sliceChapters, sliceChaptersWithLLM, type RawShot } from '../chapter-slicer';
+import { sliceChaptersWithLLM, type RawShot } from '../chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from '../storyboard-prompt';
 import { stepExtract } from './step-extract';
 import { parseStructuredPromptShots } from '../direct-scene-builder';

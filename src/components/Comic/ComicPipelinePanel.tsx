@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button, Card, Empty, Tag, Typography, Progress, message, Tooltip, Space, Input } from 'antd';
 import { PlayCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';

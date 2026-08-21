@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-import { Button, List, Typography, Tag, message, Tooltip, Dropdown, Input } from 'antd';
+import { Button, Typography, Tag, message, Tooltip, Dropdown, Input } from 'antd';
 import {
   PlusOutlined,
   CheckCircleOutlined,
@@ -22,8 +22,8 @@ import { useProviderStore } from '@/stores/providerStore';
 import { AutopilotEngine } from '@/services/novel/autopilot-engine';
 import type { AutopilotEvent } from '@/services/novel/autopilot-engine';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import { StoryTreeService, type StoryTreeNode, type CreateNodeParams } from '@/services/novel/story-tree';
-import type { NovelChapter, NovelMetadata, ChapterStatus } from '@/types';
+import { StoryTreeService, type StoryTreeNode } from '@/services/novel/story-tree';
+import type { NovelChapter, NovelMetadata } from '@/types';
 import type { StoryNode, StoryNodeType } from '@/types/narrative';
 import type { AutopilotState } from '@/types/pipeline';
 import type { RelationshipTriple, TimelineAnchor, CompletedBeat, Foreshadowing } from '@/types/narrative';

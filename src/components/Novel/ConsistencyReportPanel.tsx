@@ -4,7 +4,7 @@
 // ============================================================================
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { Typography, Card, Tag, List, Space, Empty, Collapse, Badge, Button } from 'antd';
+import { Typography, Tag, List, Space, Empty, Collapse, Badge, Button } from 'antd';
 import {
   CheckCircleOutlined, WarningOutlined, CloseCircleOutlined,
   AuditOutlined, BulbOutlined, ReloadOutlined,
