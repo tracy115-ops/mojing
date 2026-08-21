@@ -471,45 +471,8 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
     setRetrying(true);
     void logger.info(`[panel] retry-from-failure pid=${pid}`, 'panel');
     try {
-      const pipeline = VideoPipeline.forResume(pid);
-      if (!pipeline) {
-        void logger.warn(`[panel] retry: 找不到 novel project ${pid},降级到空状态`, 'panel');
-        message.warning(t('video.pipeline.retryNotFound'));
-        return;
-      }
-      // 在 resume 之前,先把"失败 stage 及其之后"的状态/产物清掉,
-      // 否则 pipeline-runner 的 isStageLiveCompleted 会跳过它们。
-      const proj = useVideoStore.getState().getProject(pid);
-      if (proj) {
-        // 只扫 runtime stages(从 character_anchor 到 composing)。
-        // 不能扫前 4 步(script_slicing/storyboard_prompt/extraction/voice_assignment),
-        // 因为它们在 Direct 模式下可能一直 error/skipped 但不影响后续 —
-        // 扫到它们会让 reset 从头开始,把已完成的角色立绘/场景图都清掉。
-        const runtimeStages = VIDEO_PIPELINE_STAGES.filter(
-          (s) => !DEFAULT_SKIPPED_STAGES.has(s) &&
-            !['script_slicing', 'storyboard_prompt', 'extraction', 'voice_assignment'].includes(s),
-        );
-        // 找失败的 stage:优先扫 stages 里的 error 状态(取最早一个)
-        let failedStage: VideoStage | undefined = undefined;
-        for (const stage of runtimeStages) {
-          if (proj.stages[stage]?.status === 'error') {
-            failedStage = stage;
-            break;
-          }
-        }
-        if (!failedStage) {
-          // runtime stages 都没 error,可能是整体抛错只写了 proj.error。
-          // 退化为第一个非 completed 的 runtime stage。
-          failedStage = runtimeStages.find(
-            (s) => proj.stages[s]?.status !== 'completed',
-          );
-        }
-        if (failedStage) {
-          void logger.info(`[panel] retry: 重置从 ${failedStage} 起的所有 stage`, 'panel');
-          useVideoStore.getState().resetStagesFrom(pid, failedStage);
-        }
-      }
-      await pipeline.resume();
+      message.loading('正在从失败处智能恢复生成...', 1.5);
+      await runFromFirstFailedStage(pid);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       void logger.error(`[panel] retry threw: ${msg}`, 'panel');
@@ -759,22 +722,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
               </Button>
             </Popconfirm>
           )}
-          {overall !== 'running' && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<PlayCircleOutlined />}
-              onClick={async () => {
-                if (!pipelineId) return;
-                message.loading('正在从第一步启动全流程流水线生成...', 1.5);
-                const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
-                await runFromStage(pipelineId, firstStage);
-              }}
-            >
-              开始全流程生成
-            </Button>
-          )}
-          {overall === 'error' && (
+          {overall === 'error' ? (
             <Button
               type="primary"
               danger
@@ -788,6 +736,29 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             >
               从失败处恢复重试
             </Button>
+          ) : (
+            overall !== 'running' && (
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlayCircleOutlined />}
+                onClick={async () => {
+                  if (!pipelineId) return;
+                  const proj = useVideoStore.getState().getProject(pipelineId);
+                  const hasStarted = proj?.stages && Object.values(proj.stages).some((s) => s.status === 'completed');
+                  if (hasStarted) {
+                    message.loading('正在智能继续未完成的流水线生成...', 1.5);
+                    await runFromFirstFailedStage(pipelineId);
+                  } else {
+                    message.loading('正在从第一步启动全流程流水线生成...', 1.5);
+                    const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
+                    await runFromStage(pipelineId, firstStage);
+                  }
+                }}
+              >
+                {project?.stages && Object.values(project.stages).some((s) => s.status === 'completed') ? '继续流水线生成' : '开始全流程生成'}
+              </Button>
+            )
           )}
           <Popconfirm
             title="确定清空全部产物，一键从第一步重新全流程生成吗？"

@@ -235,24 +235,15 @@ export class VideoPipeline {
       }
 
       // 前 3 步逻辑(Novel 通道):已完成则直接复用,否则跑一遍。
-      // 跳过条件:script_slicing 必须 completed(否则后面两个 stage 没有 rawShots 输入)。
-      // 如果 script_slicing completed 但 storyboard/extraction 失败,则需要重建 rawShots;
-      // 这种情况比较少见,我们就直接从头重跑前三步。
-      const scriptDone = existing.stages.script_slicing?.status === 'completed' && existing.shots.length > 0;
-      const extractionDone = existing.stages.extraction?.status === 'completed' && !!existing.sceneSpec;
-
       let sceneSpec: SceneSpec | null = null;
 
-      if (extractionDone) {
-        // 三步都跑过且 sceneSpec 仍在,直接用
+      if (existing.sceneSpec && existing.sceneSpec.shots && existing.sceneSpec.shots.length > 0) {
+        // 如果 sceneSpec 已经存在且包含镜头列表,直接复用,坚决不重跑前两步
+        sceneSpec = existing.sceneSpec;
+      } else if (existing.stages.extraction?.status === 'completed' && !!existing.sceneSpec) {
         sceneSpec = existing.sceneSpec!;
-      } else if (scriptDone) {
-        // slicing 跑过但 extraction 没完成 — 前三步整体重跑(无法可靠重建 RawShot)
-        const rawShots = await this.runScriptSlicing();
-        const storyboardShots = await this.runStoryboardPrompt(rawShots);
-        sceneSpec = await this.runExtraction(rawShots, storyboardShots);
       } else {
-        // 没跑过,从头跑
+        // 确实无完整分镜产物时才从头跑
         const rawShots = await this.runScriptSlicing();
         const storyboardShots = await this.runStoryboardPrompt(rawShots);
         sceneSpec = await this.runExtraction(rawShots, storyboardShots);

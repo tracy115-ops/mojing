@@ -537,14 +537,30 @@ export async function runFromFirstFailedStage(pid: string): Promise<boolean> {
   const proj = store.getProject(pid);
   if (!proj) return false;
 
-  // 扫描第一个 error 状态的 stage;若无则取 pending 状态的 stage;否则取第一个 stage
-  const failedStage =
-    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'error') ||
-    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'awaiting_review') ||
-    RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'pending') ||
-    RUNTIME_STAGE_ORDER[0];
+  // 1. 优先寻找真实出错的 stage (status === 'error')
+  const errorStage = RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'error');
+  if (errorStage) {
+    void logger.info(`[pipeline] runFromFirstFailedStage: 命中出错步骤 ${errorStage}`, 'pipeline');
+    return runFromStage(pid, errorStage);
+  }
 
-  return runFromStage(pid, failedStage);
+  // 2. 寻找等待人工审核确认的 stage
+  const reviewStage = RUNTIME_STAGE_ORDER.find((s) => proj.stages[s]?.status === 'awaiting_review');
+  if (reviewStage) {
+    void logger.info(`[pipeline] runFromFirstFailedStage: 命中待审核步骤 ${reviewStage}`, 'pipeline');
+    return runFromStage(pid, reviewStage);
+  }
+
+  // 3. 寻找未完成的第一个 stage (跳过已完成 completed 且产物存在的 stage)
+  const incompleteStage = RUNTIME_STAGE_ORDER.find((s) => {
+    const st = proj.stages[s];
+    if (!st || st.status === 'pending' || st.status === 'running') return true;
+    return !isStageLiveCompleted(proj, s);
+  });
+
+  const targetStage = incompleteStage || RUNTIME_STAGE_ORDER[0];
+  void logger.info(`[pipeline] runFromFirstFailedStage: 恢复执行起始步骤 ${targetStage}`, 'pipeline');
+  return runFromStage(pid, targetStage);
 }
 
 function requiresKeyframeReview(projectId: string): boolean {
