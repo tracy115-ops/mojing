@@ -143,7 +143,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   runway: ['gen4_turbo', 'gen3-alpha'],
   vidu: ['vidu-1.5', 'vidu-1.0'],
   pika: ['pika-1.5', 'pika-1.0'],
-  'agnes-video': ['agnes-video-2.5', 'agnes-video-v2.0'],
+  'agnes-video': ['agnes-video-v2.0', 'agnes-video-2.5'],
   'doubao-video': ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128'],
   'minimax-video': ['video-01', 'video-01-live'],
   cogvideo: ['cogvideox_5b', 'cogvideox_flash'],

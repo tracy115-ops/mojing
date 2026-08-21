@@ -326,12 +326,21 @@ function buildEnhancedVideoPrompt(
     ? (isChinese ? `${shot.mood}氛围` : `${shot.mood} atmosphere`)
     : '';
   const style = stylePreset ? (isChinese ? `${stylePreset}风格` : `${stylePreset} style`) : '';
+  // 音频与台词增强线索（为 Agnes 2.0 / Vidu 等支持原生音频的模型注入精准台词与环境声音）
+  let audioCues = '';
+  if (shot.dialogue && shot.dialogue.length > 0) {
+    const lines = shot.dialogue.map((d) => `${d.speaker}：“${d.text}”`).join('；');
+    audioCues = isChinese ? `台词对白声音：${lines}` : `Character voice dialogue: ${lines}`;
+  } else if (shot.narration) {
+    audioCues = isChinese ? `环境音效与旁白：${shot.narration}` : `Ambient sound and narration: ${shot.narration}`;
+  }
 
   const delimiter = isChinese ? '，' : ', ';
 
   return [
     charDna,
     basePrompt,
+    audioCues,
     camera,
     mood,
     style,

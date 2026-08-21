@@ -405,7 +405,7 @@ class ProviderRouter {
 
     const endpointProvider = endpoint.provider as VideoProviderId;
     let taskModel = (config.models as Record<string, string> | undefined)?.[request.taskType];
-    let effectiveModel = config.defaultModel || endpoint.models?.[0] || 'agnes-video-2.5';
+    let effectiveModel = config.defaultModel || endpoint.models?.[0] || 'agnes-video-v2.0';
 
     if (endpoint.models && endpoint.models.length > 0) {
       if (taskModel && endpoint.models.includes(taskModel)) {
