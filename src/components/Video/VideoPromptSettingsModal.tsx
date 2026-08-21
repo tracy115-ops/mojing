@@ -53,7 +53,7 @@ const VideoPromptSettingsModal: React.FC<VideoPromptSettingsModalProps> = ({ ope
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <SettingOutlined style={{ color: 'var(--color-primary, #3b82f6)' }} />
-          <span>🎬 视频工坊 — 提示词预设模板控制中心</span>
+          <span>视频工坊 — 提示词预设模板控制中心</span>
         </div>
       }
       open={open}
@@ -78,7 +78,7 @@ const VideoPromptSettingsModal: React.FC<VideoPromptSettingsModalProps> = ({ ope
         items={[
           {
             key: 'zh',
-            label: '🇨🇳 中文提示词模板',
+            label: '中文提示词模板',
             children: (
               <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
                 <Form.Item label="角色立绘模板 (中文)">
@@ -88,7 +88,7 @@ const VideoPromptSettingsModal: React.FC<VideoPromptSettingsModalProps> = ({ ope
                     onChange={(e) => handleChange('portraitZh', e.target.value)}
                   />
                 </Form.Item>
-                <Form.Item label="三视图模型板模板 (中文)">
+                <Form.Item label="三视图生成模板 (中文)">
                   <Input.TextArea
                     rows={2}
                     value={localTemplates.turnaroundZh ?? ''}
@@ -142,7 +142,7 @@ const VideoPromptSettingsModal: React.FC<VideoPromptSettingsModalProps> = ({ ope
           },
           {
             key: 'en',
-            label: '🇺🇸 English Prompt Presets',
+            label: 'English Prompt Presets',
             children: (
               <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
                 <Form.Item label="Character Portrait Template (English)">

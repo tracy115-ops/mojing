@@ -477,7 +477,7 @@ export function renderStageContent(
 
     case 'video_review':
       return (
-        <Section title="🔍 视频画质与连贯度智能质检 (AI Quality Audit)">
+        <Section title="视频画质与连贯度智能质检 (AI Quality Audit)">
           <Row gutter={16} style={{ marginBottom: 12 }}>
             <Col span={8}>
               <Card size="small">

@@ -328,14 +328,14 @@ export type CameraMovementOption =
   | 'tracking';
 
 export const CAMERA_MOVEMENTS: { value: CameraMovementOption; label: string; prompt: string }[] = [
-  { value: 'static', label: '📷 静止镜头 (Static Shot)', prompt: 'static camera, locked-off shot' },
-  { value: 'zoom_in', label: '🔍 缓慢推进 (Dolly/Zoom In)', prompt: 'slow camera zoom in, pushing in close' },
-  { value: 'zoom_out', label: '🔍 缓慢拉远 (Zoom Out)', prompt: 'camera zooming out, revealing environment' },
-  { value: 'pan_left', label: '⬅️ 左摇镜头 (Pan Left)', prompt: 'smooth camera panning left' },
-  { value: 'pan_right', label: '➡️ 右摇镜头 (Pan Right)', prompt: 'smooth camera panning right' },
-  { value: 'orbit', label: '🔄 360° 环绕 (Orbit Shot)', prompt: 'cinematic 360 degree orbit shot around character' },
-  { value: 'crane_up', label: '⬆️ 摇臂升起 (Crane Up)', prompt: 'crane shot rising up slowly, high angle view' },
-  { value: 'tracking', label: '🏃 跟随镜头 (Tracking Shot)', prompt: 'dynamic tracking shot following the motion' },
+  { value: 'static', label: '静止镜头 (Static Shot)', prompt: 'static camera, locked-off shot' },
+  { value: 'zoom_in', label: '缓慢推进 (Dolly/Zoom In)', prompt: 'slow camera zoom in, pushing in close' },
+  { value: 'zoom_out', label: '缓慢拉远 (Zoom Out)', prompt: 'camera zooming out, revealing environment' },
+  { value: 'pan_left', label: '左摇镜头 (Pan Left)', prompt: 'smooth camera panning left' },
+  { value: 'pan_right', label: '右摇镜头 (Pan Right)', prompt: 'smooth camera panning right' },
+  { value: 'orbit', label: '360° 环绕 (Orbit Shot)', prompt: 'cinematic 360 degree orbit shot around character' },
+  { value: 'crane_up', label: '摇臂升起 (Crane Up)', prompt: 'crane shot rising up slowly, high angle view' },
+  { value: 'tracking', label: '跟随镜头 (Tracking Shot)', prompt: 'dynamic tracking shot following the motion' },
 ];
 
 /**
@@ -613,10 +613,10 @@ export const STAGE_INPUT_FIELDS: Partial<Record<VideoStage, StageInputFieldDef[]
       label: 'video.pipeline.field.bgmStyle',
       type: 'radio',
       options: [
-        { value: 'epic_action', labelKey: '🔥 热血打斗/宏大爆发 (Action)' },
-        { value: 'suspense_thriller', labelKey: '👁️ 悬疑惊悚/阴谋潜行 (Suspense)' },
-        { value: 'warm_emotional', labelKey: '🌸 治愈温馨/日常相伴 (Warm)' },
-        { value: 'cyberpunk', labelKey: '⚡ 赛博朋克/科幻电音 (Cyberpunk)' },
+        { value: 'epic_action', labelKey: '热血打斗/宏大爆发 (Action)' },
+        { value: 'suspense_thriller', labelKey: '悬疑惊悚/阴谋潜行 (Suspense)' },
+        { value: 'warm_emotional', labelKey: '治愈温馨/日常相伴 (Warm)' },
+        { value: 'cyberpunk', labelKey: '赛博朋克/科幻电音 (Cyberpunk)' },
       ],
     },
   ],

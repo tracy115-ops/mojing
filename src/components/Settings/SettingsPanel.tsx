@@ -221,7 +221,7 @@ const SettingsPanel: React.FC = () => {
             items={[
               {
                 key: 'zh',
-                label: '🇨🇳 中文提示词模板',
+                label: '中文提示词模板',
                 children: (
                   <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
                     <Form.Item label="角色立绘模板 (中文)">
@@ -306,7 +306,7 @@ const SettingsPanel: React.FC = () => {
               },
               {
                 key: 'en',
-                label: '🇺🇸 English Prompt Presets',
+                label: 'English Prompt Presets',
                 children: (
                   <Form layout="vertical" size="small" style={{ paddingTop: 12 }}>
                     <Form.Item label="Character Portrait Template (English)">

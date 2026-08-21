@@ -17,7 +17,8 @@ import {
   LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
   DeleteOutlined, SettingOutlined, SafetyCertificateOutlined,
   ForwardOutlined, UserOutlined, EnvironmentOutlined, EditOutlined,
-  PictureOutlined, PlusOutlined, RedoOutlined,
+  PictureOutlined, PlusOutlined, RedoOutlined, FileTextOutlined,
+  ClockCircleOutlined, EyeOutlined, AppstoreOutlined, CloseCircleOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -152,7 +153,7 @@ const ShotRow: React.FC<{
               width={46}
               height={46}
               style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border-secondary)' }}
-              preview={{ mask: '🔍' }}
+              preview={{ mask: <EyeOutlined /> }}
             />
           </div>
         )}
@@ -199,7 +200,9 @@ const ShotRow: React.FC<{
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* 画面提示词完整展示 */}
           <div style={{ marginBottom: 4 }}>
-            <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>🎬 画面提示词:</Text>
+            <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>
+              <PictureOutlined style={{ marginRight: 4 }} />画面提示词:
+            </Text>
             <Paragraph
               style={{ margin: 0, fontSize: 13, color: 'var(--text-primary)', display: 'inline', lineHeight: '1.6' }}
               ellipsis={{ rows: 2, expandable: true, symbol: '【展开查看全文】' }}
@@ -211,7 +214,9 @@ const ShotRow: React.FC<{
           {/* 原剧本台词展示(若与提示词不同) */}
           {shot.sourceText && shot.videoPrompt && shot.sourceText !== shot.videoPrompt && (
             <div style={{ marginBottom: 4 }}>
-              <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>📜 剧本台词/动作:</Text>
+              <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>
+                <FileTextOutlined style={{ marginRight: 4 }} />剧本台词/动作:
+              </Text>
               <Paragraph
                 style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', display: 'inline', lineHeight: '1.5' }}
                 ellipsis={{ rows: 1, expandable: true, symbol: '【展开】' }}
@@ -224,13 +229,15 @@ const ShotRow: React.FC<{
           {/* 镜头元数据标签 */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, alignItems: 'center' }}>
             {shot.durationSeconds && (
-              <Tag style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
-                ⏱️ {shot.durationSeconds}s
+              <Tag style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <ClockCircleOutlined style={{ fontSize: 10 }} />
+                {shot.durationSeconds}s
               </Tag>
             )}
             {shot.cameraMovement && (
-              <Tag color="geekblue" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0 }}>
-                🎥 {shot.cameraMovement}
+              <Tag color="geekblue" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                <VideoCameraOutlined style={{ fontSize: 10 }} />
+                {shot.cameraMovement}
               </Tag>
             )}
             {specShot?.characterIds?.map((charId) => {
@@ -252,36 +259,31 @@ const ShotRow: React.FC<{
           </div>
         </div>
 
-        <Space size={4} style={{ marginTop: 2 }}>
-          <Tooltip title="编辑分镜完整内容 (提示词/台词/运镜/时长)">
+        <Space size={4} style={{ marginLeft: 8 }}>
+          <Tooltip title="编辑分镜描述与运镜">
             <Button
               size="small"
               type="text"
               icon={<EditOutlined />}
               onClick={openEditModal}
-              style={{ fontSize: 12 }}
             />
           </Tooltip>
-          <Tooltip title="单独重生成此镜关键帧画面 (保持角色与光影参考)">
+          <Tooltip title="单独重新生成此镜头关键帧">
             <Button
               size="small"
               type="text"
               icon={<PictureOutlined />}
               loading={rerunningKeyframe}
-              disabled={rerunningKeyframe}
               onClick={handleRerunKeyframe}
-              style={{ fontSize: 12 }}
             />
           </Tooltip>
-          <Tooltip title="单独重生成此镜动态视频 (基于关键帧与提示词)">
+          <Tooltip title="单独重新生成此镜头视频片段">
             <Button
               size="small"
               type="text"
-              icon={<VideoCameraOutlined />}
+              icon={<ReloadOutlined />}
               loading={rerunning}
-              disabled={rerunning}
               onClick={handleRerun}
-              style={{ fontSize: 12 }}
             />
           </Tooltip>
           <Popconfirm
@@ -299,7 +301,7 @@ const ShotRow: React.FC<{
 
       {/* 专属镜头分镜修改弹窗 */}
       <Modal
-        title={`🎬 编辑第 ${shot.index + 1} 镜头分镜信息`}
+        title={`编辑第 ${shot.index + 1} 镜头分镜信息`}
         open={editModalOpen}
         onCancel={() => setEditModalOpen(false)}
         onOk={handleSaveShot}
@@ -334,12 +336,12 @@ const ShotRow: React.FC<{
                 placeholder="选择运镜方式"
                 onChange={(val) => setEditCamera(val)}
                 options={[
-                  { value: 'static', label: '📷 固定镜头 (画面平稳微动)' },
-                  { value: 'dolly_in', label: '🔍 缓慢推进 (特写聚焦)' },
-                  { value: 'dolly_out', label: '🔍 平稳拉远 (展现全景)' },
-                  { value: 'pan_left', label: '👈 平缓左摇 (滑轨平移)' },
-                  { value: 'pan_right', label: '👉 平缓右摇 (滑轨平移)' },
-                  { value: 'tracking', label: '🏃 平稳跟随 (人物跟拍)' },
+                  { value: 'static', label: '固定镜头 (画面平稳微动)' },
+                  { value: 'dolly_in', label: '缓慢推进 (特写聚焦)' },
+                  { value: 'dolly_out', label: '平稳拉远 (展现全景)' },
+                  { value: 'pan_left', label: '平缓左摇 (滑轨平移)' },
+                  { value: 'pan_right', label: '平缓右摇 (滑轨平移)' },
+                  { value: 'tracking', label: '平稳跟随 (人物跟拍)' },
                 ]}
               />
             </Form.Item>
@@ -698,7 +700,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
             onClick={() => setPromptSettingsOpen(true)}
             style={{ borderColor: 'var(--color-primary, #3b82f6)', color: 'var(--color-primary, #3b82f6)' }}
           >
-            🎨 提示词预设配置
+            提示词预设配置
           </Button>
           {overall === 'running' && (
             <Popconfirm
@@ -831,13 +833,13 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
         justifyContent: 'space-between',
       }}>
         <Space size={6} style={{ flex: 1, overflow: 'hidden' }}>
-          <Tag color="purple" style={{ fontWeight: 600 }}>🎬 AI 漫剧 SOP 6 步工作流</Tag>
+          <Tag color="purple" style={{ fontWeight: 600 }}>AI 漫剧 SOP 6 步工作流</Tag>
           <Text type="secondary" style={{ fontSize: 11 }}>
             1.剧本(角色/目标/冲突/行动/结局) ➔ 2.分镜(景别/角度/构图) ➔ 3.角色一致(Seed/参考图) ➔ 4.图生视频 ➔ 5.后期配音 ➔ 6.SOP工具箱
           </Text>
         </Space>
         <Text style={{ fontSize: 11, color: '#722ed1', fontWeight: 600, fontStyle: 'italic', whiteSpace: 'nowrap' }}>
-          ✨ "AI 是副驾驶，不是方向盘。流程越清楚，结果越稳定。"
+          "AI 是副驾驶，不是方向盘。流程越清楚，结果越稳定。"
         </Text>
       </div>
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
@@ -931,7 +933,8 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       display: 'inline-block', maxWidth: 160,
                     }}>
-                      ⚠ {state.error}
+                      <CloseCircleOutlined style={{ marginRight: 2 }} />
+                      {state.error}
                     </span>
                   </Tooltip>
                 );
@@ -1172,7 +1175,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                         await runSingleStage(pipelineId, inlineStage);
                       }}
                     >
-                      ▶️ 立即运行此步
+                      立即运行此步
                     </Button>
                     <Button
                       size="small"
@@ -1184,7 +1187,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                         await runFromStage(pipelineId, inlineStage);
                       }}
                     >
-                      🚀 从此步向下连续生成
+                      从此步向下连续生成
                     </Button>
                   </Space>
                 </div>
@@ -1214,15 +1217,15 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
                   {t('video.gen.shots')} ({clips.length}/{shots.length})
                 </span>
                 <Space size={8}>
-                  <Button size="small" type="primary" onClick={() => setAddShotModalOpen(true)}>
-                    ➕ 添加分镜
+                  <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setAddShotModalOpen(true)}>
+                    添加分镜
                   </Button>
                   {overall === 'running' && <Spin size="small" />}
                 </Space>
               </div>
 
               <Modal
-                title="➕ 手动追加分镜"
+                title="手动追加分镜"
                 open={addShotModalOpen}
                 onOk={handleAddShotConfirm}
                 onCancel={() => setAddShotModalOpen(false)}

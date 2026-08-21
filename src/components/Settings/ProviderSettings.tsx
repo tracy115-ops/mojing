@@ -33,9 +33,11 @@ import {
   SoundOutlined,
   StarFilled,
   StarOutlined,
-  CheckOutlined,
   AppstoreOutlined,
   ControlOutlined,
+  FileTextOutlined,
+  PictureOutlined,
+  VideoCameraOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore, PROVIDER_CATEGORY } from '@/stores/providerStore';
@@ -482,9 +484,11 @@ const ProviderSettings: React.FC = () => {
       const categoryEndpoints = getEndpointsByCategory(category);
       const activeEp = categoryEndpoints.find((e) => isPrimaryEndpoint(e));
       const model = activeEp?.models?.[0] || cfg?.defaultModel || '系统推荐';
+      const voice = (activeEp?.models?.[0]) || '默认';
       return {
         provider: activeEp?.name || cfg?.primary || '未配置',
         model,
+        voice,
         activeId: activeEp?.id,
         endpoints: categoryEndpoints,
       };
@@ -510,7 +514,9 @@ const ProviderSettings: React.FC = () => {
           {/* LLM */}
           <Col xs={24} sm={12} md={6}>
             <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>📝 剧本/分镜/审查 (LLM)</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                <FileTextOutlined style={{ marginRight: 4 }} />剧本/分镜/审查 (LLM)
+              </div>
               {llmSummary.endpoints.length > 1 ? (
                 <Select
                   size="small"
@@ -534,7 +540,9 @@ const ProviderSettings: React.FC = () => {
           {/* Image */}
           <Col xs={24} sm={12} md={6}>
             <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎨 角色/场景/关键帧 (Image)</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                <PictureOutlined style={{ marginRight: 4 }} />角色/场景/关键帧 (Image)
+              </div>
               {imageSummary.endpoints.length > 1 ? (
                 <Select
                   size="small"
@@ -558,7 +566,9 @@ const ProviderSettings: React.FC = () => {
           {/* Video */}
           <Col xs={24} sm={12} md={6}>
             <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎬 视频生成 (Video)</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                <VideoCameraOutlined style={{ marginRight: 4 }} />视频生成 (Video)
+              </div>
               {videoSummary.endpoints.length > 1 ? (
                 <Select
                   size="small"
@@ -582,7 +592,9 @@ const ProviderSettings: React.FC = () => {
           {/* TTS */}
           <Col xs={24} sm={12} md={6}>
             <Card size="small" style={{ borderRadius: 6, border: '1px solid #e8e8e8' }}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>🎙️ AI 角色配音 (TTS)</div>
+              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                <SoundOutlined style={{ marginRight: 4 }} />AI 角色配音 (TTS)
+              </div>
               {ttsSummary.endpoints.length > 1 ? (
                 <Select
                   size="small"
@@ -599,7 +611,7 @@ const ProviderSettings: React.FC = () => {
                   {ttsSummary.provider}
                 </Typography.Text>
               )}
-              <Tag color="green" style={{ fontSize: 11, margin: 0 }}>模型/音色: {ttsSummary.model}</Tag>
+              <Tag color="green" style={{ fontSize: 11, margin: 0 }}>音色: {ttsSummary.voice}</Tag>
             </Card>
           </Col>
         </Row>
@@ -618,7 +630,12 @@ const ProviderSettings: React.FC = () => {
         items={[
           {
             key: 'llm',
-            label: '📝 文本大模型 (LLM)',
+            label: (
+              <Space size={4}>
+                <FileTextOutlined />
+                <span>文本大模型 (LLM)</span>
+              </Space>
+            ),
             children: (
               <div>
                 <Table
@@ -638,7 +655,12 @@ const ProviderSettings: React.FC = () => {
           },
           {
             key: 'image',
-            label: '🎨 画面生图 (Image)',
+            label: (
+              <Space size={4}>
+                <PictureOutlined />
+                <span>画面生图 (Image)</span>
+              </Space>
+            ),
             children: (
               <div>
                 <Table
@@ -658,7 +680,12 @@ const ProviderSettings: React.FC = () => {
           },
           {
             key: 'video',
-            label: '🎬 视频生成 (Video)',
+            label: (
+              <Space size={4}>
+                <VideoCameraOutlined />
+                <span>视频生成 (Video)</span>
+              </Space>
+            ),
             children: (
               <div>
                 <Table
@@ -678,7 +705,12 @@ const ProviderSettings: React.FC = () => {
           },
           {
             key: 'tts',
-            label: '🎙️ 配音合成 (TTS)',
+            label: (
+              <Space size={4}>
+                <SoundOutlined />
+                <span>配音合成 (TTS)</span>
+              </Space>
+            ),
             children: (
               <div>
                 <Table
@@ -697,7 +729,7 @@ const ProviderSettings: React.FC = () => {
                   <Button
                     type="primary"
                     ghost
-                    icon={<SoundOutlined />}
+                    icon={<ThunderboltOutlined />}
                     block
                     onClick={() => {
                       const newId = addEndpoint({
@@ -713,7 +745,7 @@ const ProviderSettings: React.FC = () => {
                       message.success('已一键接入并启用了免费微软 Edge TTS 引擎！');
                     }}
                   >
-                    ⚡ 一键配置并开启免费微软 Edge TTS (免 API Key 高清配音)
+                    一键配置并开启免费微软 Edge TTS (免 API Key 高清配音)
                   </Button>
                 </Space>
               </div>
@@ -734,7 +766,7 @@ const ProviderSettings: React.FC = () => {
               <Space>
                 <ControlOutlined style={{ color: '#1677ff' }} />
                 <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                  ⚙️ 高级微调：针对不同工序指定特定模型（选填，留空则自动继承主力模型）
+                  高级微调：针对不同工序指定特定模型（选填，留空则自动继承主力模型）
                 </Typography.Text>
               </Space>
             ),
@@ -742,7 +774,7 @@ const ProviderSettings: React.FC = () => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <Card
                   size="small"
-                  title="📝 文本工序细分模型"
+                  title="文本工序细分模型"
                   extra={
                     <Button
                       size="small"
@@ -784,7 +816,7 @@ const ProviderSettings: React.FC = () => {
                   })}
                 </Card>
 
-                <Card size="small" title="🎨 生图工序细分模型">
+                <Card size="small" title="生图工序细分模型">
                   {IMAGE_TASK_MODELS.map((task) => (
                     <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>
@@ -801,7 +833,7 @@ const ProviderSettings: React.FC = () => {
                   ))}
                 </Card>
 
-                <Card size="small" title="🎬 视频工序细分模型">
+                <Card size="small" title="视频工序细分模型">
                   {VIDEO_TASK_MODELS.map((task) => (
                     <div key={task.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                       <span style={{ width: 180, fontSize: 12 }}>{task.label}</span>

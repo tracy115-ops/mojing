@@ -516,11 +516,11 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               });
             }}
             options={[
-              { value: 'cinematic', label: '🎬 电影大片 (Cinematic) — 真实质感, 35mm 景深光影' },
-              { value: 'anime', label: '🌸 日漫风 (Anime Shinkai) — 唯美二次元, 细腻色彩' },
-              { value: 'cyberpunk', label: '🏙️ 赛博朋克 (Cyberpunk) — 霓虹灯影, 雨夜街景' },
-              { value: 'ink_wash', label: '🖌️ 国风水墨 (Ink Wash) — 东方水墨留白, 意境山水' },
-              { value: 'vintage', label: '🎞️ 胶片复古 (80s Vintage) — 暖调胶片颗粒, 怀旧氛围' },
+              { value: 'cinematic', label: '电影大片 (Cinematic) — 真实质感, 35mm 景深光影' },
+              { value: 'anime', label: '日漫风 (Anime Shinkai) — 唯美二次元, 细腻色彩' },
+              { value: 'cyberpunk', label: '赛博朋克 (Cyberpunk) — 霓虹灯影, 雨夜街景' },
+              { value: 'ink_wash', label: '国风水墨 (Ink Wash) — 东方水墨留白, 意境山水' },
+              { value: 'vintage', label: '胶片复古 (80s Vintage) — 暖调胶片颗粒, 怀旧氛围' },
             ]}
           />
         </Form.Item>
@@ -690,16 +690,16 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               ]}
             />
           </Form.Item>
-          <Form.Item label="🎬 成片目标总时长" style={{ marginBottom: 0 }}>
+          <Form.Item label="成片目标总时长" style={{ marginBottom: 0 }}>
             <Select
               defaultValue={15}
               disabled={generating}
               style={{ width: '100%' }}
               options={[
-                { value: 5, label: '⚡ 5 秒 (单镜头精特写)' },
-                { value: 15, label: '🎬 15 秒 (3镜头连贯短片)' },
-                { value: 30, label: '📽️ 30 秒 (6镜头宣传短片)' },
-                { value: 60, label: '🎞️ 60 秒 (12镜头连续剧)' },
+                { value: 5, label: '5 秒 (单镜头精特写)' },
+                { value: 15, label: '15 秒 (3镜头连贯短片)' },
+                { value: 30, label: '30 秒 (6镜头宣传短片)' },
+                { value: 60, label: '60 秒 (12镜头连续剧)' },
               ]}
             />
           </Form.Item>
