@@ -3,11 +3,11 @@
  *
  * 针对各类大模型（GLM-4/5.2、DeepSeek-R1、Qwen-2.5、Claude、GPT-4o、Llama等）
  * 输出的各种不规范 JSON 格式提供全套容错、净化与修复能力：
- *   1. 彻底剔除 <think>...</think> 或 <thought>...</thought> 思考链标签
- *   2. 支持多代码块提取 (```json ... ``` 或 ``` ... ```)
- *   3. 剔除 JavaScript/C 风格注释 (// ... 与 /* ... */)
+ *   1. 彻底剔除 think 或 thought 思考链标签
+ *   2. 支持多代码块提取
+ *   3. 剔除 JavaScript/C 风格注释 (// 和 block comments)
  *   4. 智能修复未转义的字符串内换行符与控制字符
- *   5. 剔除尾随逗号 (Trailing commas: `,}` 或 `,]`)
+ *   5. 剔除尾随逗号 (Trailing commas)
  *   6. 单引号键值转双引号 (Fix single quoted keys/values)
  *   7. 自动补全因 maxTokens 截断的未闭合括号 (Auto repair truncated JSON)
  */
