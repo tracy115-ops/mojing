@@ -86,15 +86,24 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
     let parsed: any = parseLLMJson<any>(resp.content);
     if (!parsed) return fallbackHeuristicExtract(input);
 
-    if (parsed.result && typeof parsed.result === 'object') parsed = parsed.result;
-    else if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) parsed = parsed.data;
+    if (Array.isArray(parsed)) {
+      parsed = { characters: parsed };
+    } else if (parsed && typeof parsed === 'object') {
+      if (parsed.result && typeof parsed.result === 'object') parsed = parsed.result;
+      else if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) parsed = parsed.data;
+      else if (parsed.output && typeof parsed.output === 'object' && !Array.isArray(parsed.output)) parsed = parsed.output;
+    }
+
+    const rawChars = parsed.characters || parsed.roles || parsed.persons || parsed.actors || parsed.people || [];
+    const rawScenes = parsed.scenes || parsed.locations || parsed.backgrounds || parsed.environments || [];
+    const rawProps = parsed.props || parsed.items || parsed.objects || [];
 
     const characters = mergeCharacters(
-      normalizeCharacters(parsed.characters ?? []),
+      normalizeCharacters(Array.isArray(rawChars) ? rawChars : []),
       input.existingCharacters ?? [],
     );
-    const scenes = normalizeScenes(parsed.scenes ?? []);
-    const props = normalizeProps(parsed.props ?? []);
+    const scenes = normalizeScenes(Array.isArray(rawScenes) ? rawScenes : []);
+    const props = normalizeProps(Array.isArray(rawProps) ? rawProps : []);
 
     // 用 characterIdMap / sceneIdMap 把 ShotSpec 里的占位 id 换成真实 id
     const nameToId = new Map(characters.map((c) => [c.name, c.id]));

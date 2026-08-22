@@ -81,6 +81,13 @@ async function processBatch(
       else if (Array.isArray(parsed.storyboard)) parsed = parsed.storyboard;
       else if (Array.isArray(parsed.scenes)) parsed = parsed.scenes;
       else if (Array.isArray(parsed.result)) parsed = parsed.result;
+      else if (Array.isArray(parsed.list)) parsed = parsed.list;
+      else if (Array.isArray(parsed.output)) parsed = parsed.output;
+      else {
+        // 如果是 {"0": {...}, "1": {...}} 这种索引对象
+        const vals = Object.values(parsed).filter((v) => v && typeof v === 'object' && ('videoPrompt' in (v as any) || 'sourceText' in (v as any)));
+        if (vals.length > 0) parsed = vals;
+      }
     }
 
     if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {

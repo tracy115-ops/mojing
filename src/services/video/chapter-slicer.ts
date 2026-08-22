@@ -99,6 +99,12 @@ export async function sliceChaptersWithLLM(
       else if (Array.isArray(parsed.storyboard)) parsed = parsed.storyboard;
       else if (Array.isArray(parsed.scenes)) parsed = parsed.scenes;
       else if (Array.isArray(parsed.result)) parsed = parsed.result;
+      else if (Array.isArray(parsed.list)) parsed = parsed.list;
+      else if (Array.isArray(parsed.output)) parsed = parsed.output;
+      else {
+        const vals = Object.values(parsed).filter((v) => v && typeof v === 'object' && ('sourceText' in (v as any) || 'videoPrompt' in (v as any) || 'text' in (v as any)));
+        if (vals.length > 0) parsed = vals;
+      }
     }
 
     if (Array.isArray(parsed) && parsed.length > 0) {
