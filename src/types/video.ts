@@ -266,6 +266,10 @@ export interface CharacterAnchor {
    *  keyframe 步优先用 turnaroundImage(裁中间 1/3 正视图)做 reference,
    *  没有则回退到 portraitImage。 */
   turnaroundImage?: string;
+  /** 固定 Seed 种子（锁定后在生图/生视频时保持面容与风格高度一致） */
+  seed?: number;
+  /** 角色视觉一致性标签（如 LoRA Tag / 专属外观标记） */
+  consistencyTags?: string[];
 }
 
 /** 步 3 提取的场景 */
@@ -276,6 +280,7 @@ export interface SceneAnchor {
   description: string;
   backgroundImage?: string;      // 步 7 产物:base64
   firstAppearShotIndex: number;
+  seed?: number;
 }
 
 /** 步 3 提取的关键道具(暂不生成图,只做 prompt 增强) */

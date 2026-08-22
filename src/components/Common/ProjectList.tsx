@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Card, Button, Tag, Empty, Typography, Input, Dropdown } from 'antd';
+import React, { useState, useMemo, useRef } from 'react';
+import { Card, Button, Tag, Empty, Typography, Input, Dropdown, message, Tooltip, Space } from 'antd';
 import {
   PlusOutlined,
   DeleteOutlined,
@@ -13,8 +13,10 @@ import {
   InfoCircleOutlined,
   CopyOutlined,
   ExportOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import { exportProjectPackage, importProjectPackage } from '@/services/project/project-package';
 import type { CreativeProject, CreativeProjectType, ProjectStatus } from '@/types';
 
 const { Text, Paragraph } = Typography;
@@ -108,13 +110,51 @@ const ProjectList: React.FC<ProjectListProps> = ({
     completed: projects.filter((p) => p.status === 'completed' || p.status === 'archived').length,
   }), [projects]);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const newProjectId = await importProjectPackage(text);
+      message.success('工程包导入成功！');
+      onSelect(newProjectId);
+    } catch (err) {
+      message.error(`导入失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleExportMojing = async (projectId: string) => {
+    try {
+      await exportProjectPackage(projectId);
+      message.success('已成功导出 .mojing 工程备份包！');
+    } catch (err) {
+      message.error(`导出失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   if (projects.length === 0) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".mojing,.json"
+          style={{ display: 'none' }}
+          onChange={handleFileImport}
+        />
         <Empty description={emptyText} image={Empty.PRESENTED_IMAGE_SIMPLE}>
-          <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
-            {createLabel}
-          </Button>
+          <Space>
+            <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
+              {createLabel}
+            </Button>
+            <Button icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()}>
+              导入工程包
+            </Button>
+          </Space>
         </Empty>
       </div>
     );
@@ -122,6 +162,15 @@ const ProjectList: React.FC<ProjectListProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* 隐藏的工程包文件选择器 */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".mojing,.json"
+        style={{ display: 'none' }}
+        onChange={handleFileImport}
+      />
+
       {/* Search */}
       <div style={{ padding: '6px 12px 0' }}>
         <Input
@@ -165,7 +214,12 @@ const ProjectList: React.FC<ProjectListProps> = ({
         })}
 
         <div style={{ flex: 1 }} />
-        <Button size="small" type="text" icon={<PlusOutlined />} onClick={onCreate} style={{ fontSize: 12, padding: '0 4px' }} />
+        <Tooltip title="导入 .mojing 工程备份包">
+          <Button size="small" type="text" icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()} style={{ fontSize: 12, padding: '0 4px' }} />
+        </Tooltip>
+        <Tooltip title={createLabel}>
+          <Button size="small" type="text" icon={<PlusOutlined />} onClick={onCreate} style={{ fontSize: 12, padding: '0 4px' }} />
+        </Tooltip>
       </div>
 
       {/* Project list */}
@@ -182,6 +236,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
               { key: 'editInfo', icon: <EditOutlined />, label: t('project.context.editInfo'), onClick: () => onEditInfo?.(project.id) },
               { key: 'favorite', icon: project.isFavorite ? <StarFilled style={{ color: '#f59e0b' }} /> : <StarOutlined />, label: project.isFavorite ? t('project.context.unfavorite') : t('project.context.favorite'), onClick: () => onToggleFavorite(project.id) },
               { type: 'divider' as const },
+              { key: 'exportMojing', icon: <ExportOutlined />, label: '导出为 .mojing 工程包', onClick: () => handleExportMojing(project.id) },
               { key: 'duplicate', icon: <CopyOutlined />, label: t('project.context.duplicate'), onClick: () => onDuplicate?.(project.id) },
               ...(onExport ? [{ key: 'export', icon: <ExportOutlined />, label: t('project.context.export'), onClick: () => onExport(project.id) }] : []),
               { type: 'divider' as const },

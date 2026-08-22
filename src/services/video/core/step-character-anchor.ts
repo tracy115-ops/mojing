@@ -85,6 +85,7 @@ export async function runCharacterAnchor(
           width: 768,
           height: 1152,
           style: ctx.style,
+          seed: c.seed,
         });
         result[i].portraitImage = await saveAsset(
           ctx.novelProjectId,
@@ -152,6 +153,7 @@ export async function runCharacterAnchor(
           height: 1024,
           style: ctx.style,
           referenceImages: [turnaroundRef],
+          seed: c.seed,
         });
         result[i].turnaroundImage = await saveAsset(
           ctx.novelProjectId,

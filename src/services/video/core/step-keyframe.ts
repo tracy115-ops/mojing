@@ -115,6 +115,9 @@ export async function runKeyframe(
       if (i > 0) {
         await new Promise((resolve) => setTimeout(resolve, 800));
       }
+      const primaryChar = ctx.characters.find((c) =>
+        (shot.characterIds || []).some((sc: string) => sc === c.name || sc === c.id || (c.aliases || []).includes(sc)),
+      );
       const img = await providerRouter.generateImage({
         taskType: 'storyboard',
         prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, i > 0 ? result[i - 1] : undefined),
@@ -122,6 +125,7 @@ export async function runKeyframe(
         width: dims.w,
         height: dims.h,
         style: ctx.style,
+        seed: primaryChar?.seed,
       });
       result[i].keyframeImage = await saveAsset(
         ctx.novelProjectId,
