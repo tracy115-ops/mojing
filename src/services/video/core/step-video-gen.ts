@@ -178,8 +178,8 @@ async function generateOne(
 
   const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);
   const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
-  const negativePrompt = 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, poorly drawn face, camera shake, erratic camera movement, rapid spinning, motion sickness, dizzying rotation, chaotic motion, extreme shake';
-  const seed = (shot as any).seed ?? (Math.abs((shot.index + 1) * 31337 + Date.now()) % 2147483647);
+  const presentCharsForSeed = findMatchingCharacters(shot, options.characters);
+  const seed = (shot as any).seed ?? presentCharsForSeed[0]?.seed ?? (Math.abs((shot.index + 1) * 31337 + Date.now()) % 2147483647);
 
   let response;
   try {
