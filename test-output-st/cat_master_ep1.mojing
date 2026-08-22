@@ -1,0 +1,126 @@
+{
+  "format": "mojing-project-package",
+  "version": "1.0",
+  "exportedAt": "2026-08-22T02:53:42.773Z",
+  "project": {
+    "id": "st_proj_1787367222676",
+    "title": "猫大师与小师妹·第1集",
+    "type": "video",
+    "status": "completed"
+  },
+  "videoState": {
+    "sceneSpec": {
+      "title": "猫大师与小师妹",
+      "shots": [
+        {
+          "index": 1,
+          "videoPrompt": "古风禅意庭院，长发女生双手合十站在石桌前，对面胖橘猫大师闭目盘坐",
+          "dialogue": [
+            {
+              "speaker": "小师妹",
+              "text": "大师，我有一事相求！"
+            }
+          ],
+          "characterIds": [
+            "char_girl"
+          ],
+          "durationSeconds": 5,
+          "cameraMovement": "zoom_in",
+          "mood": "禅意温馨",
+          "keyframeImage": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\keyframe_shot_1.png",
+          "audioTrack": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\audio_shot_1_小师妹.wav"
+        },
+        {
+          "index": 2,
+          "videoPrompt": "胖橘猫大师戴着圆墨镜，慢条斯理地抿了一口茶，神态高深莫测",
+          "dialogue": [
+            {
+              "speaker": "胖橘猫",
+              "text": "（慢条斯理）缘起缘灭，皆有定数。"
+            }
+          ],
+          "characterIds": [
+            "char_cat"
+          ],
+          "durationSeconds": 6,
+          "cameraMovement": "pan_left",
+          "mood": "幽默反差",
+          "keyframeImage": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\keyframe_shot_2.png",
+          "audioTrack": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\audio_shot_2_胖橘猫.wav"
+        },
+        {
+          "index": 3,
+          "videoPrompt": "小师妹满脸期待，胖橘猫猛然睁眼露出狡黠神色",
+          "dialogue": [
+            {
+              "speaker": "小师妹",
+              "text": "大师，我能脱单吗？"
+            },
+            {
+              "speaker": "胖橘猫",
+              "text": "（冷笑）你接着编！"
+            }
+          ],
+          "characterIds": [
+            "char_girl",
+            "char_cat"
+          ],
+          "durationSeconds": 5,
+          "cameraMovement": "static",
+          "mood": "高潮爆笑",
+          "keyframeImage": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\keyframe_shot_3.png",
+          "audioTrack": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\audio_shot_3_胖橘猫.wav"
+        }
+      ]
+    },
+    "characters": [
+      {
+        "id": "char_girl",
+        "name": "小师妹",
+        "aliases": [
+          "女生",
+          "长发女生"
+        ],
+        "appearance": "甜美年轻女生，黑长直发，清秀五官，身穿粉色古风襦裙",
+        "seed": 88481234,
+        "portraitFile": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\portrait_char_girl.png",
+        "turnaroundFile": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\turnaround_char_girl.png",
+        "croppedReference": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\turnaround_char_girl.png"
+      },
+      {
+        "id": "char_cat",
+        "name": "胖橘猫",
+        "aliases": [
+          "猫大师",
+          "大师"
+        ],
+        "appearance": "胖橘猫，戴黑色圆墨镜，身穿明黄色僧袍，神态傲娇狡黠",
+        "seed": 99661122,
+        "portraitFile": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\portrait_char_cat.png",
+        "turnaroundFile": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\turnaround_char_cat.png",
+        "croppedReference": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\turnaround_char_cat.png"
+      }
+    ],
+    "clips": [
+      {
+        "shotId": "shot_1",
+        "videoUrl": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\clip_shot_1.mp4",
+        "durationSeconds": 5,
+        "hasAudio": true
+      },
+      {
+        "shotId": "shot_2",
+        "videoUrl": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\clip_shot_2.mp4",
+        "durationSeconds": 6,
+        "hasAudio": true
+      },
+      {
+        "shotId": "shot_3",
+        "videoUrl": "D:\\workspace\\ai-work\\ai-workstation-test\\aiWorkStation\\test-output-st\\clip_shot_3.mp4",
+        "durationSeconds": 5,
+        "hasAudio": true
+      }
+    ],
+    "currentStage": "compose"
+  }
+}
