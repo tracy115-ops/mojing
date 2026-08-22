@@ -5,6 +5,7 @@ import type {
 } from '@/types/providers';
 import { BaseImageProvider } from './base';
 import { fetch as httpFetch } from './fetch-proxy';
+import { readAsDataUri, isRemoteUrl } from '@/services/video/asset-store';
 
 // --- DALL-E Adapter ---
 
@@ -436,18 +437,22 @@ export class AgnesImageProvider extends BaseImageProvider {
     };
     // 图生图:Agnes 文档明确要求 image 数组里的元素是 "public URL 或 Data URI Base64"。
     // Data URI 必须保留 `data:image/...;base64,` 前缀(剥掉会触发 'invalid input image')。
-    // 本地 webview URL(http://asset.localhost/...)Agnes 后端拉不到,必须转成 data URI。
-    // 多张参考图全部传给 Agnes(场景背景 + 角色立绘),让 provider 同时看到两者。
+    // 本地 webview URL(http://asset.localhost/...)Agnes 后端拉不到,自动转成 data URI。
     if (request.referenceImages?.length) {
-      const cleaned = request.referenceImages
-        .map((r) => normalizeForAgnes(r))
-        .filter((r): r is string => !!r);
-      if (cleaned.length === 0) {
-        throw new Error(
-          'Agnes Image: 引用图格式不支持。Agnes 只接受完整 data URI 或公网 URL,本地文件请先转成 data URI。',
-        );
+      const cleaned: string[] = [];
+      for (const r of request.referenceImages) {
+        let candidate = r;
+        if (candidate && !candidate.startsWith('data:') && !isRemoteUrl(candidate)) {
+          try {
+            candidate = await readAsDataUri(candidate);
+          } catch {}
+        }
+        const norm = normalizeForAgnes(candidate);
+        if (norm) cleaned.push(norm);
       }
-      extraBody.image = cleaned;
+      if (cleaned.length > 0) {
+        extraBody.image = cleaned;
+      }
     }
 
     const body: Record<string, unknown> = {
@@ -646,12 +651,15 @@ function normalizeForAgnes(s: string | undefined | null): string | null {
     return trimmed;
   }
 
-  // 公网 http(s) URL —— 原样返回
+  // 排除本地 webview URL 与 localhost 链接(云端无法访问本地回环)
+  if (/^https?:\/\/(asset\.localhost|localhost|127\.0\.0\.1|tauri\.localhost)/i.test(trimmed)) {
+    return null;
+  }
+
+  // 真正的公网 http(s) URL —— 原样返回
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
 
-  // 其它都视为本地不可访问的引用(asset.localhost / blob: / file: / 绝对路径 / 纯 base64 无前缀)
-  // 纯 base64 没有 data URI 前缀的也拒绝 —— Agnes 要求带前缀,调用方负责转成 data URI
   return null;
 }

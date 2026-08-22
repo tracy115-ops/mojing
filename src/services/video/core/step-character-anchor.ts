@@ -77,6 +77,7 @@ export async function runCharacterAnchor(
       ? customPrompt
       : buildPortraitPrompt(c, limited, ctx.style);
     let portraitOk = !!result[i].portraitImage;
+    let currentPortraitRaw = '';
     if (!portraitOk) {
       try {
         const img = await providerRouter.generateImage({
@@ -87,6 +88,7 @@ export async function runCharacterAnchor(
           style: ctx.style,
           seed: c.seed,
         });
+        currentPortraitRaw = img.imageData;
         result[i].portraitImage = await saveAsset(
           ctx.novelProjectId,
           'portrait',
@@ -138,9 +140,12 @@ export async function runCharacterAnchor(
     // 三视图作为附加产物,**不覆盖** portraitImage。
     // 用 default 立绘做 reference,保证三视图里的角色和单图是同一个人。
     const portraitUrl = result[i].portraitImage;
-    if (wantTurnaround && !result[i].turnaroundImage && portraitOk && portraitUrl) {
+    if (wantTurnaround && !result[i].turnaroundImage && portraitOk && (portraitUrl || currentPortraitRaw)) {
       try {
-        const turnaroundRef = await readAsDataUri(portraitUrl);
+        let turnaroundRef = currentPortraitRaw;
+        if (!turnaroundRef && portraitUrl) {
+          turnaroundRef = await readAsDataUri(portraitUrl);
+        }
         const customTurnaround = ctx.turnaroundPrompts?.[c.id] || ctx.turnaroundPrompts?.[c.name];
         const turnaroundPrompt = customTurnaround && customTurnaround.trim()
           ? customTurnaround
@@ -149,10 +154,10 @@ export async function runCharacterAnchor(
         const img = await providerRouter.generateImage({
           taskType: 'character',
           prompt: turnaroundPrompt,
-          width: 2048,
+          width: 1536,
           height: 1024,
           style: ctx.style,
-          referenceImages: [turnaroundRef],
+          referenceImages: turnaroundRef ? [turnaroundRef] : undefined,
           seed: c.seed,
         });
         result[i].turnaroundImage = await saveAsset(
@@ -163,7 +168,7 @@ export async function runCharacterAnchor(
         );
         okCount++;
       } catch (err) {
-        // 三视图失败不影响主流程 — 单图立绘已成功,keyframe 会回退用单图
+        // 三视图失败记录日志，不阻断主流程
         console.warn(`character_anchor: turnaround failed for ${c.name} (non-blocking)`, err);
         lastErr = err;
       }

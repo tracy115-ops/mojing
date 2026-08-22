@@ -56,7 +56,7 @@ export function autoResolveCostumeVariant(
 }
 
 /**
- * 智能检索当前分镜在场的角色（支持 ID / 名称 / 别名 / 正文与分镜 Prompt 语义精准比对）
+ * 智能检索当前分镜在场的角色（支持 ID / 名称 / 别名 / 视觉描述精准比对，严格防止角色溢出与幽灵人物）
  */
 export function findMatchingCharacters(
   shot: { characterIds?: string[]; videoPrompt?: string; sourceText?: string; narration?: string },
@@ -64,28 +64,49 @@ export function findMatchingCharacters(
 ): CharacterAnchor[] {
   if (!characters || characters.length === 0) return [];
   const matched = new Set<CharacterAnchor>();
-  const charIds = (shot.characterIds || []).map((id) => id.trim().toLowerCase());
-  const shotText = `${shot.videoPrompt || ''} ${shot.sourceText || ''} ${shot.narration || ''}`.toLowerCase();
+  const charIds = (shot.characterIds || []).map((id) => id.trim().toLowerCase()).filter(Boolean);
 
-  for (const c of characters) {
-    const cId = c.id.toLowerCase();
-    const cName = c.name.toLowerCase();
-    const aliases = (c.aliases || []).map((a) => a.toLowerCase());
-
-    // 1. 直接 ID / Name / Alias 匹配
-    const isIdMatch = charIds.some((id) => id === cId || id === cName || aliases.includes(id));
-
-    // 2. 文本语义中包含角色名或别名
-    const isTextMatch = (cName.length >= 2 && shotText.includes(cName)) ||
-      aliases.some((a) => a.length >= 2 && shotText.includes(a));
-
-    if (isIdMatch || isTextMatch) {
-      matched.add(c);
+  // 1. 如果分镜已明确指定了 characterIds（最高权威），严格只匹配指定的角色，绝对不误判拉入其他角色
+  if (charIds.length > 0) {
+    for (const c of characters) {
+      const cId = c.id.toLowerCase();
+      const cName = c.name.toLowerCase();
+      const aliases = (c.aliases || []).map((a) => a.toLowerCase());
+      if (charIds.some((id) => id === cId || id === cName || aliases.includes(id))) {
+        matched.add(c);
+      }
+    }
+    if (matched.size > 0) {
+      return Array.from(matched);
     }
   }
 
-  // 3. 兜底：如果分镜明确有在场角色需求，但未识别到具体名字，且总角色库只有 1 个主角，自动关联该主角
-  if (matched.size === 0 && characters.length === 1) {
+  // 2. 如果未指定 characterIds，从实际画面视觉描述 videoPrompt 中精准检索在场角色
+  const promptText = (shot.videoPrompt || '').toLowerCase();
+  if (promptText) {
+    for (const c of characters) {
+      const cName = c.name.toLowerCase();
+      const aliases = (c.aliases || []).map((a) => a.toLowerCase());
+      if (
+        (cName.length >= 2 && promptText.includes(cName)) ||
+        aliases.some((a) => a.length >= 2 && promptText.includes(a))
+      ) {
+        matched.add(c);
+      }
+    }
+    if (matched.size > 0) {
+      return Array.from(matched);
+    }
+  }
+
+  // 3. 检查是否为纯环境空镜头（如包含“空镜”、“风景”、“山门”、“大殿”、“云海”等无人物词汇）
+  const isScenery = /(空镜|风景|远景|大远景|山门|大殿|夜空|云海|无人物|环境空景)/i.test(promptText);
+  if (isScenery) {
+    return [];
+  }
+
+  // 4. 兜底：如果总角色库只有 1 个主角，且非空景描述，关联该主角
+  if (characters.length === 1) {
     matched.add(characters[0]);
   }
 
@@ -93,7 +114,7 @@ export function findMatchingCharacters(
 }
 
 /**
- * 为多个在场角色生成联合 DNA 锁定词（尊重原版，直接拼接人物原版特征）
+ * 为在场角色生成联合 DNA 锁定词（严格限定人物数量，杜绝多余路人/幽灵人物）
  */
 export function buildMultiCharacterDnaTokens(
   characters: CharacterAnchor[],
@@ -102,7 +123,7 @@ export function buildMultiCharacterDnaTokens(
   contextText = '',
 ): string {
   if (!characters || characters.length === 0) {
-    return isChinese ? '空景画面，无人物' : 'empty scene, no people';
+    return isChinese ? '纯环境场景空镜头，画面中无任何人物、无角色、无路人' : 'empty scenery shot, landscape, no humans, no people';
   }
 
   const parts = characters.map((c) => {
@@ -115,5 +136,15 @@ export function buildMultiCharacterDnaTokens(
     return isChinese ? dna.zh : dna.en;
   });
 
-  return parts.join(isChinese ? '，' : ', ');
+  if (characters.length === 1) {
+    const soloTag = isChinese
+      ? `【严格单人镜头：画面中仅有${characters[0].name}一人独自出镜，绝对无其他人物/无多余路人/无第二人】`
+      : `[solo, 1person, single character, only ${characters[0].name}, no other people, no bystanders]`;
+    return `${soloTag}，${parts[0]}`;
+  }
+
+  const groupTag = isChinese
+    ? `【同框镜头：画面中仅有【${characters.map((c) => c.name).join('与')}】共 ${characters.length} 人，严禁出现其他额外人物】`
+    : `[group shot, exactly ${characters.length} people: only ${characters.map((c) => c.name).join(' and ')}, no extra people]`;
+  return `${groupTag}，${parts.join(isChinese ? '，' : ', ')}`;
 }

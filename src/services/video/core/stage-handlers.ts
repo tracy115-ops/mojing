@@ -339,7 +339,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
   // 读用户在 UI 里改过的 anchorMode / characterPrompts(单步重跑用)
   const proj0 = useVideoStore.getState().getProject(pid);
   const anchorInput = proj0?.stages['character_anchor']?.input;
-  const anchorMode = anchorInput?.anchorMode;
+  const anchorMode = anchorInput?.anchorMode ?? 'turnaround';
   const characterPrompts = (anchorInput as any)?.characterPrompts as Record<string, string> | undefined;
   const turnaroundPrompts = (anchorInput as any)?.turnaroundPrompts as Record<string, string> | undefined;
 

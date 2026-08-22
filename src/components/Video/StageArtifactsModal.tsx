@@ -309,49 +309,41 @@ export function renderStageContent(
       }));
       return (
         <Section title={t('video.artifacts.characterPortraits')}>
-          {hasTurnaround && (
-            <Tabs
-              size="small"
-              defaultActiveKey="portrait"
-              style={{ marginBottom: 8 }}
-              items={[
-                {
-                  key: 'portrait',
-                  label: t('video.artifacts.portraitTab'),
-                  children: (
-                    <ImageGrid
-                      items={portraitItems}
-                      emptyText={t('video.artifacts.noPortraits')}
+          <Tabs
+            size="small"
+            defaultActiveKey={hasTurnaround ? 'turnaround' : 'portrait'}
+            style={{ marginBottom: 8 }}
+            items={[
+              {
+                key: 'portrait',
+                label: t('video.artifacts.portraitTab'),
+                children: (
+                  <ImageGrid
+                    items={portraitItems}
+                    emptyText={t('video.artifacts.noPortraits')}
+                  />
+                ),
+              },
+              {
+                key: 'turnaround',
+                label: `${t('video.artifacts.turnaroundTab')}${hasTurnaround ? ' ✓' : ''}`,
+                children: (
+                  <>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12 }}
+                      message={hasTurnaround ? t('video.artifacts.turnaroundHint') : '角色三视图（正面/侧面/背面模型板），可锁定人物全方位特征。'}
                     />
-                  ),
-                },
-                {
-                  key: 'turnaround',
-                  label: t('video.artifacts.turnaroundTab'),
-                  children: (
-                    <>
-                      <Alert
-                        type="info"
-                        showIcon
-                        style={{ marginBottom: 12 }}
-                        message={t('video.artifacts.turnaroundHint')}
-                      />
-                      <ImageGrid
-                        items={turnaroundItems}
-                        emptyText={t('video.artifacts.noTurnaround')}
-                      />
-                    </>
-                  ),
-                },
-              ]}
-            />
-          )}
-          {!hasTurnaround && (
-            <ImageGrid
-              items={portraitItems}
-              emptyText={t('video.artifacts.noPortraits')}
-            />
-          )}
+                    <ImageGrid
+                      items={turnaroundItems}
+                      emptyText={t('video.artifacts.noTurnaround')}
+                    />
+                  </>
+                ),
+              },
+            ]}
+          />
         </Section>
       );
     }

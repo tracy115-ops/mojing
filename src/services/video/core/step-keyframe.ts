@@ -118,9 +118,12 @@ export async function runKeyframe(
       const primaryChar = ctx.characters.find((c) =>
         (shot.characterIds || []).some((sc: string) => sc === c.name || sc === c.id || (c.aliases || []).includes(sc)),
       );
+      const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
+      const negPrompt = buildKeyframeNegativePrompt(presentChars, isChinese);
       const img = await providerRouter.generateImage({
         taskType: 'storyboard',
         prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, i > 0 ? result[i - 1] : undefined),
+        negativePrompt: negPrompt,
         referenceImages,
         width: dims.w,
         height: dims.h,
@@ -216,13 +219,18 @@ export async function generateSingleKeyframe(
   }
 
   const prevShot = shotIndex > 0 ? allShots[shotIndex - 1] : undefined;
+  const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
+  const presentChars = findMatchingCharacters(shot, ctx.characters);
+  const negPrompt = buildKeyframeNegativePrompt(presentChars, isChinese);
   const img = await providerRouter.generateImage({
     taskType: 'storyboard',
     prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, prevShot),
+    negativePrompt: negPrompt,
     referenceImages,
     width: dims.w,
     height: dims.h,
     style: ctx.style,
+    seed: presentChars[0]?.seed,
   });
 
   return await saveAsset(
@@ -234,6 +242,22 @@ export async function generateSingleKeyframe(
 }
 
 import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters } from './character-dna';
+
+function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese: boolean): string {
+  if (presentChars.length === 0) {
+    return isChinese
+      ? '人物，角色，人类，女人，男人，人群，路人，多余人物，多头，多分身，分屏，三视图，文字，水印，签名'
+      : 'person, human, people, man, woman, crowd, character, 1person, 2people, extra people, split screen, character sheet, text, watermark';
+  }
+  if (presentChars.length === 1) {
+    return isChinese
+      ? '多个人物，第二个人，双人，多人，人群，路人，多余人物，复制人物，分身，多分屏，三视图，文字，水印，签名'
+      : '2people, multiple people, extra person, duplicate character, crowd, bystanders, 2persons, multi-character, split screen, text, watermark';
+  }
+  return isChinese
+    ? '额外多余人物，路人，无关人员，三视图，多分屏，文字，水印，签名'
+    : 'extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark';
+}
 
 function buildKeyframePrompt(
   shot: ShotSpec,
