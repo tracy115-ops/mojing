@@ -225,9 +225,126 @@ const ProviderSettings: React.FC = () => {
   const setVideoModel = useProviderStore((s) => s.setVideoModel);
   const checkHealth = useProviderStore((s) => s.checkHealth);
 
+  const [discoveringOllama, setDiscoveringOllama] = useState(false);
+  const [discoveringLMStudio, setDiscoveringLMStudio] = useState(false);
+  const [discoveringComfyUI, setDiscoveringComfyUI] = useState(false);
+
   const getEndpointsByCategory = useCallback((category: 'llm' | 'image' | 'video' | 'tts') => {
     return endpoints.filter((e) => (e.category ?? PROVIDER_CATEGORY[e.provider]) === category);
   }, [endpoints]);
+
+  // 一键探测并添加本地 Ollama
+  const handleAutoDiscoverOllama = async () => {
+    setDiscoveringOllama(true);
+    try {
+      const { fetch: httpFetch } = await import('@/services/providers/fetch-proxy');
+      const resp = await httpFetch('http://127.0.0.1:11434/api/tags', { method: 'GET' });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as { models?: Array<{ name: string }> };
+      const modelNames = (data?.models?.map((m) => m.name) || []).filter(Boolean);
+      const finalModels = modelNames.length > 0 ? modelNames : ['qwen2.5:7b', 'deepseek-r1:8b'];
+
+      const existing = endpoints.find((e) => e.baseUrl?.includes('11434'));
+      if (existing) {
+        updateEndpoint(existing.id, {
+          models: finalModels,
+          enabled: true,
+        });
+        handleSetPrimary(existing);
+        message.success(`已连接本地 Ollama，成功同步 ${finalModels.length} 个本地模型！`);
+      } else {
+        const newId = addEndpoint({
+          name: '本地 Ollama (11434)',
+          provider: 'custom',
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          apiKey: 'ollama',
+          models: finalModels,
+          enabled: true,
+          category: 'llm',
+        });
+        setLLMProvider('custom', finalModels[0], newId);
+        message.success(`成功添加并切换为本地 Ollama，已检测到 ${finalModels.length} 个模型！`);
+      }
+    } catch {
+      message.warning('未检测到本地正在运行的 Ollama 服务。请确认已在本地启动 ollama（如运行 `ollama serve`）。');
+    } finally {
+      setDiscoveringOllama(false);
+    }
+  };
+
+  // 一键探测并添加本地 LM Studio
+  const handleAutoDiscoverLMStudio = async () => {
+    setDiscoveringLMStudio(true);
+    try {
+      const { fetch: httpFetch } = await import('@/services/providers/fetch-proxy');
+      const resp = await httpFetch('http://127.0.0.1:1234/v1/models', { method: 'GET' });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as { data?: Array<{ id: string }> };
+      const modelNames = (data?.data?.map((m) => m.id) || []).filter(Boolean);
+      const finalModels = modelNames.length > 0 ? modelNames : ['local-model'];
+
+      const existing = endpoints.find((e) => e.baseUrl?.includes('1234'));
+      if (existing) {
+        updateEndpoint(existing.id, {
+          models: finalModels,
+          enabled: true,
+        });
+        handleSetPrimary(existing);
+        message.success(`已连接本地 LM Studio，成功同步 ${finalModels.length} 个本地模型！`);
+      } else {
+        const newId = addEndpoint({
+          name: '本地 LM Studio (1234)',
+          provider: 'custom',
+          baseUrl: 'http://127.0.0.1:1234/v1',
+          apiKey: 'lm-studio',
+          models: finalModels,
+          enabled: true,
+          category: 'llm',
+        });
+        setLLMProvider('custom', finalModels[0], newId);
+        message.success(`成功添加并切换为本地 LM Studio，检测到模型：${finalModels.join(', ')}！`);
+      }
+    } catch {
+      message.warning('未检测到本地正在运行的 LM Studio 服务。请在 LM Studio 中开启 Local Server (端口 1234)。');
+    } finally {
+      setDiscoveringLMStudio(false);
+    }
+  };
+
+  // 一键探测并添加本地 ComfyUI
+  const handleAutoDiscoverComfyUI = async () => {
+    setDiscoveringComfyUI(true);
+    try {
+      const { fetch: httpFetch } = await import('@/services/providers/fetch-proxy');
+      const resp = await httpFetch('http://127.0.0.1:8188/system_stats', { method: 'GET' });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`);
+      }
+      const existing = endpoints.find((e) => e.baseUrl?.includes('8188'));
+      if (existing) {
+        message.success('本地 ComfyUI (8188) 服务在线！');
+      } else {
+        addEndpoint({
+          name: '本地 ComfyUI 工作流 (8188)',
+          provider: 'comfyui',
+          baseUrl: 'http://127.0.0.1:8188',
+          apiKey: 'comfyui',
+          models: ['FLUX.1-schnell', 'SDXL-Turbo', 'Wan2.1-I2V'],
+          enabled: true,
+          category: 'image',
+        });
+        message.success('已成功录入本地 ComfyUI (8188) 端点！');
+      }
+    } catch {
+      message.warning('未检测到本地正在运行的 ComfyUI 服务。请确认 ComfyUI 已在 127.0.0.1:8188 启动。');
+    } finally {
+      setDiscoveringComfyUI(false);
+    }
+  };
 
   // 判断是否为当前类别的主选端点
   const isPrimaryEndpoint = useCallback((endpoint: ApiEndpoint) => {
@@ -638,6 +755,26 @@ const ProviderSettings: React.FC = () => {
             ),
             children: (
               <div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <Button
+                    size="small"
+                    icon={<ThunderboltOutlined />}
+                    onClick={handleAutoDiscoverOllama}
+                    loading={discoveringOllama}
+                    style={{ borderColor: '#f97316', color: '#f97316' }}
+                  >
+                    一键探测并添加本地 Ollama (127.0.0.1:11434)
+                  </Button>
+                  <Button
+                    size="small"
+                    icon={<ThunderboltOutlined />}
+                    onClick={handleAutoDiscoverLMStudio}
+                    loading={discoveringLMStudio}
+                    style={{ borderColor: '#8b5cf6', color: '#8b5cf6' }}
+                  >
+                    一键探测并添加本地 LM Studio (127.0.0.1:1234)
+                  </Button>
+                </div>
                 <Table
                   dataSource={getEndpointsByCategory('llm')}
                   columns={getEndpointColumns('llm')}
@@ -663,6 +800,17 @@ const ProviderSettings: React.FC = () => {
             ),
             children: (
               <div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <Button
+                    size="small"
+                    icon={<ThunderboltOutlined />}
+                    onClick={handleAutoDiscoverComfyUI}
+                    loading={discoveringComfyUI}
+                    style={{ borderColor: '#06b6d4', color: '#06b6d4' }}
+                  >
+                    一键探测并添加本地 ComfyUI (127.0.0.1:8188)
+                  </Button>
+                </div>
                 <Table
                   dataSource={getEndpointsByCategory('image')}
                   columns={getEndpointColumns('image')}
@@ -698,7 +846,7 @@ const ProviderSettings: React.FC = () => {
                   style={{ marginBottom: 12 }}
                 />
                 <Button type="dashed" icon={<PlusOutlined />} block onClick={() => handleAddEndpoint('video')}>
-                  添加视频生成接口端点 (如 可灵 Kling / 即梦 Seedance / 硅基流动 Wan2.1)
+                  添加视频生成接口端点 (如 可灵 Kling / 即梦 Seedance / 硅基流动 Wan2.1 / Agnes)
                 </Button>
               </div>
             ),

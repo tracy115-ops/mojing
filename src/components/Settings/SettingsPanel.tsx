@@ -1,7 +1,17 @@
-import React, { Suspense } from 'react';
-import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Space, message, Alert } from 'antd';
+import React, { Suspense, useState, useEffect } from 'react';
+import { Card, Tabs, Form, Select, Switch, InputNumber, Input, Button, Space, message, Alert, Statistic, Row, Col, Popconfirm, Tag, Divider } from 'antd';
+import {
+  FolderOpenOutlined,
+  ClearOutlined,
+  HddOutlined,
+  ReloadOutlined,
+  FileTextOutlined,
+  CheckCircleOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useProjectStore } from '@/stores/projectStore';
+import { cleanAllAssets, formatBytes } from '@/services/video/asset-store';
 import type { AppSettings } from '@/types';
 
 const ProviderSettings = React.lazy(() => import('./ProviderSettings'));
@@ -401,6 +411,102 @@ const SettingsPanel: React.FC = () => {
         <Suspense fallback={<div>{t('common.loading')}</div>}>
           <ProviderSettings />
         </Suspense>
+      ),
+    },
+    {
+      key: 'storage',
+      label: '存储与缓存管理',
+      children: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Alert
+            message="本地数据与产物缓存"
+            description="视频工坊和漫画工坊在生成过程中会将关键帧、对白音频、中间视频片段保存在本地数据目录中。您可以随时在此查看占用并进行安全瘦身清理。"
+            type="info"
+            showIcon
+          />
+
+          <Row gutter={[16, 16]}>
+            <Col span={12}>
+              <Card size="small" style={{ borderRadius: 8, background: 'var(--bg-secondary, #fafafa)' }}>
+                <Statistic
+                  title="本地项目工程总数"
+                  value={useProjectStore.getState().projects.length}
+                  prefix={<FolderOpenOutlined style={{ color: '#3b82f6' }} />}
+                  suffix="个"
+                />
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card size="small" style={{ borderRadius: 8, background: 'var(--bg-secondary, #fafafa)' }}>
+                <Statistic
+                  title="生成引擎状态"
+                  value="正常在线"
+                  prefix={<CheckCircleOutlined style={{ color: '#10b981' }} />}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          <Card size="small" title="存储维护与一键清理" style={{ borderRadius: 8 }}>
+            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>清理中间过程草稿与断点缓存</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    安全清理所有项目的临时草稿文件（保留最终合成成片与角色三视图资产）。
+                  </div>
+                </div>
+                <Popconfirm
+                  title="确定清理所有中间过程临时草稿文件吗？"
+                  description="不会删除您最终生成的成片和角色立绘，仅清理临时切片与失败重试的废弃片段。"
+                  onConfirm={async () => {
+                    try {
+                      const res = await cleanAllAssets();
+                      messageApi.success(`清理完成！已安全释放 ${formatBytes(res.deletedBytes)} 磁盘空间（共清理 ${res.deletedFiles} 个临时文件）。`);
+                    } catch (err) {
+                      messageApi.error(`清理失败: ${String(err)}`);
+                    }
+                  }}
+                  okText="确认清理"
+                  cancelText="取消"
+                >
+                  <Button icon={<ClearOutlined />} danger size="small">
+                    一键清理中间草稿
+                  </Button>
+                </Popconfirm>
+              </div>
+
+              <Divider style={{ margin: '8px 0' }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>打开本地日志存储目录</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    查看应用运行日志、API 调用记录与诊断错误信息。
+                  </div>
+                </div>
+                <Button
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={async () => {
+                    try {
+                      const { openLogDir, getLogPath } = await import('@/services/log');
+                      const ok = await openLogDir();
+                      if (!ok) {
+                        const p = await getLogPath();
+                        if (p) messageApi.info(`日志路径: ${p}`);
+                      }
+                    } catch (err) {
+                      messageApi.error(`打开失败: ${String(err)}`);
+                    }
+                  }}
+                >
+                  打开日志目录
+                </Button>
+              </div>
+            </Space>
+          </Card>
+        </div>
       ),
     },
   ];

@@ -19,6 +19,7 @@ import {
   ForwardOutlined, UserOutlined, EnvironmentOutlined, EditOutlined,
   PictureOutlined, PlusOutlined, RedoOutlined, FileTextOutlined,
   ClockCircleOutlined, EyeOutlined, AppstoreOutlined, CloseCircleOutlined,
+  SlidersOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
@@ -30,6 +31,7 @@ import { renderStageContent } from './StageArtifactsModal';
 import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import VideoPromptSettingsModal from './VideoPromptSettingsModal';
+import VideoTimelineDrawer from './VideoTimelineDrawer';
 import { runFromFirstFailedStage, runFromStage, runSingleStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { RUNTIME_STAGE_ORDER } from '@/services/video/core/stage-handlers';
 import { logger } from '@/services/log';
@@ -597,6 +599,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
   const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
+  const [timelineDrawerOpen, setTimelineDrawerOpen] = useState(false);
 
   const novelTitle = useProjectStore((s) => {
     if (!pipelineId || !exists) return undefined;
@@ -693,6 +696,14 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          <Button
+            size="small"
+            icon={<SlidersOutlined />}
+            onClick={() => setTimelineDrawerOpen(true)}
+            style={{ borderColor: '#10b981', color: '#10b981' }}
+          >
+            多轨时间轴剪辑
+          </Button>
           <Button
             size="small"
             icon={<SettingOutlined />}
@@ -1275,6 +1286,14 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
       <VideoPromptSettingsModal
         open={promptSettingsOpen}
         onClose={() => setPromptSettingsOpen(false)}
+      />
+
+      {/* 可视化多轨时间轴剪辑与微调工作台 Drawer */}
+      <VideoTimelineDrawer
+        open={timelineDrawerOpen}
+        onClose={() => setTimelineDrawerOpen(false)}
+        pipelineId={pipelineId}
+        project={project}
       />
     </div>
   );
