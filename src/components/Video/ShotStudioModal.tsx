@@ -453,29 +453,40 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                         </div>
                         <div style={{
                           width: '100%',
-                          height: 250,
                           background: '#000',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          overflow: 'hidden',
+                          padding: '6px',
+                          boxSizing: 'border-box',
                         }}>
-                          <video
-                            key={resolvedSrc}
-                            src={resolvedSrc}
-                            controls
-                            playsInline
-                            preload="metadata"
-                            style={{
-                              maxWidth: '100%',
-                              maxHeight: '100%',
-                              width: 'auto',
-                              height: 'auto',
-                              objectFit: 'contain',
-                              outline: 'none',
-                              display: 'block',
-                            }}
-                          />
+                          <div style={{
+                            width: aspectRatio === '9:16' ? '240px' : '100%',
+                            aspectRatio: aspectRatio === '9:16' ? '9 / 16' : aspectRatio === '1:1' ? '1 / 1' : '16 / 9',
+                            maxHeight: aspectRatio === '9:16' ? '420px' : '360px',
+                            background: '#000',
+                            borderRadius: 6,
+                            overflow: 'hidden',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}>
+                            <video
+                              key={resolvedSrc}
+                              src={resolvedSrc}
+                              controls
+                              playsInline
+                              preload="auto"
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                outline: 'none',
+                                display: 'block',
+                                background: '#000',
+                              }}
+                            />
+                          </div>
                         </div>
                       </div>
                     );

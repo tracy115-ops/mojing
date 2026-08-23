@@ -829,7 +829,7 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
               {characters.length === 0 ? (
                 <Empty description="暂无角色资产，请先在阶段一完成【剧本切片】" />
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(520px, 1fr))', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 16 }}>
                   {characters.map((char) => (
                     <Card
                       key={char.id}
@@ -838,11 +838,12 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                         background: 'rgba(255,255,255,0.02)',
                         border: '1px solid rgba(255,255,255,0.1)',
                         boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                        overflow: 'hidden',
                       }}
-                      styles={{ body: { padding: 14 } }}
+                      styles={{ body: { padding: 14, display: 'flex', flexDirection: 'column', gap: 12 } }}
                     >
-                      {/* 角色卡片头部：名称与 Seed 锁 */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      {/* 1. 角色卡片头部：名称、主角设定与 Seed 锁 */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <Space size={8}>
                           <Text strong style={{ fontSize: 15, color: '#f1f5f9' }}>{char.name}</Text>
                           <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>主角设定</Tag>
@@ -853,12 +854,12 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                         </Tag>
                       </div>
 
-                      {/* 角色卡片主体：左侧立绘双槽位 + 右侧设定与音色 */}
-                      <div style={{ display: 'flex', gap: 14, marginBottom: 12 }}>
-                        {/* 左侧：正面立绘 */}
-                        <div style={{ width: 100, height: 135, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative', border: '1px solid rgba(255,255,255,0.12)' }}>
+                      {/* 2. 角色立绘双视窗与外貌描述 */}
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        {/* 正面立绘 */}
+                        <div style={{ width: 95, height: 130, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative', border: '1px solid rgba(255,255,255,0.12)' }}>
                           {char.portraitImage ? (
-                            <Image src={toWebviewUrl(resolveLocalPath(char.portraitImage))} width={100} height={135} style={{ objectFit: 'cover' }} />
+                            <Image src={toWebviewUrl(resolveLocalPath(char.portraitImage))} width={95} height={130} style={{ objectFit: 'cover' }} />
                           ) : (
                             <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#38bdf8', gap: 6, padding: 4, textAlign: 'center' }}>
                               {isPhase2Running ? (
@@ -876,10 +877,10 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                           </Tag>
                         </div>
 
-                        {/* 中间：三视图展示 */}
-                        <div style={{ width: 150, height: 135, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative', border: '1px solid rgba(255,255,255,0.12)' }}>
+                        {/* 三视图展示 */}
+                        <div style={{ width: 140, height: 130, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative', border: '1px solid rgba(255,255,255,0.12)' }}>
                           {char.turnaroundImage ? (
-                            <Image src={toWebviewUrl(resolveLocalPath(char.turnaroundImage))} width={150} height={135} style={{ objectFit: 'cover' }} />
+                            <Image src={toWebviewUrl(resolveLocalPath(char.turnaroundImage))} width={140} height={130} style={{ objectFit: 'cover' }} />
                           ) : (
                             <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#38bdf8', gap: 6, padding: 4, textAlign: 'center' }}>
                               {isPhase2Running ? (
@@ -897,51 +898,64 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                           </Tag>
                         </div>
 
-                        {/* 右侧：外貌特征描述与音色选择 */}
-                        <div style={{ flex: 1, minWidth: 160, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                          <div>
-                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>外貌特征：</div>
-                            <div
-                              style={{
-                                fontSize: 11,
-                                color: '#cbd5e1',
-                                background: 'rgba(255,255,255,0.03)',
-                                padding: '6px 8px',
-                                borderRadius: 4,
-                                border: '1px solid rgba(255,255,255,0.05)',
-                                maxHeight: 60,
-                                overflowY: 'auto',
-                                lineHeight: 1.4,
-                              }}
-                            >
-                              {char.appearance || '已锁定角色外貌特征'}
-                            </div>
-                          </div>
-
-                          {/* 音色配置与试听播放器 */}
-                          <div style={{ marginTop: 6 }}>
-                            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 2 }}>🎙️ 专属配音音色：</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <Select
-                                size="small"
-                                value={char.voiceRef || 'zh-CN-XiaoxiaoNeural'}
-                                onChange={(val) => updateSceneSpecCharacter(pipelineId, char.id, { voiceRef: val })}
-                                style={{ flex: 1, fontSize: 11 }}
-                                options={VOICE_PRESETS.map((v) => ({ label: v.label, value: v.value }))}
-                              />
-                              <Button
-                                size="small"
-                                icon={<SoundOutlined />}
-                                onClick={() => handlePreviewVoice(char.voiceRef || 'zh-CN-XiaoxiaoNeural')}
-                                type={playingVoice === (char.voiceRef || 'zh-CN-XiaoxiaoNeural') ? 'primary' : 'default'}
-                              />
-                            </div>
+                        {/* 右侧外貌特征描述 */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>外貌设定特征：</div>
+                          <div
+                            style={{
+                              flex: 1,
+                              fontSize: 11,
+                              color: '#cbd5e1',
+                              background: 'rgba(255,255,255,0.03)',
+                              padding: '6px 8px',
+                              borderRadius: 4,
+                              border: '1px solid rgba(255,255,255,0.05)',
+                              overflowY: 'auto',
+                              lineHeight: 1.4,
+                              maxHeight: 105,
+                            }}
+                          >
+                            {char.appearance || '已锁定角色外貌特征'}
                           </div>
                         </div>
                       </div>
 
-                      {/* 底部单角色操作矩阵 */}
-                      <div style={{ display: 'flex', gap: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 10 }}>
+                      {/* 3. 专属配音音色配置栏 (全宽独立行，绝不溢出) */}
+                      <div style={{
+                        background: 'rgba(255,255,255,0.03)',
+                        padding: '8px 10px',
+                        borderRadius: 6,
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        width: '100%',
+                        boxSizing: 'border-box',
+                      }}>
+                        <Text style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          🎙️ 专属配音音色:
+                        </Text>
+                        <Select
+                          size="small"
+                          value={char.voiceRef || 'zh-CN-XiaoxiaoNeural'}
+                          onChange={(val) => updateSceneSpecCharacter(pipelineId, char.id, { voiceRef: val })}
+                          style={{ flex: 1, minWidth: 0 }}
+                          dropdownMatchSelectWidth={false}
+                          options={VOICE_PRESETS.map((v) => ({ label: v.label, value: v.value }))}
+                        />
+                        <Button
+                          size="small"
+                          icon={<SoundOutlined />}
+                          onClick={() => handlePreviewVoice(char.voiceRef || 'zh-CN-XiaoxiaoNeural')}
+                          type={playingVoice === (char.voiceRef || 'zh-CN-XiaoxiaoNeural') ? 'primary' : 'default'}
+                          style={{ flexShrink: 0 }}
+                        >
+                          试听
+                        </Button>
+                      </div>
+
+                      {/* 4. 底部单角色操作矩阵 */}
+                      <div style={{ display: 'flex', gap: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
                         <Button
                           size="small"
                           icon={<ReloadOutlined />}
