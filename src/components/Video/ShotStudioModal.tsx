@@ -32,6 +32,7 @@ import type { ShotSpec, GeneratedClip, VideoProjectState, AspectRatio } from '@/
 import { saveAsset, toWebviewUrl } from '@/services/video/asset-store';
 import { generateSingleKeyframe } from '@/services/video/core/step-keyframe';
 import { generateSingleVideoClip } from '@/services/video/core/step-video-gen';
+import { generateSingleTTS } from '@/services/video/core/step-tts';
 
 function readBlobAsDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -41,6 +42,15 @@ function readBlobAsDataUri(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+const CAMERA_PRESETS = [
+  { label: '🎬 希区柯克变焦', tag: '希区柯克推拉变焦，背景戏剧性形变拉伸，人物焦点清晰' },
+  { label: '🔄 360°环绕运镜', tag: '360度电影级平滑环绕运镜，光影在人物轮廓流动' },
+  { label: '🏃 电影级跟随', tag: '平滑跟随运镜，景深虚化，增强第一视角沉浸感' },
+  { label: '✨ 丁达尔光影', tag: '金色丁达尔光束穿透，空气中微尘粒子漂浮，电影级氛围' },
+  { label: '🦅 航拍大远景', tag: '宏大高空航拍全景，广角大景深，气势磅礴' },
+  { label: '⏳ 慢动作特写', tag: '高帧率慢动作特写镜头，微表情与发丝动态细腻呈现' },
+];
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -72,8 +82,8 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
     return shots.find((s) => s.id === selectedShotId) || shots[0];
   }, [shots, selectedShotId]);
 
-  // 创作模式：'video' | 'keyframe' | 'audio'
-  const [studioMode, setStudioMode] = useState<'video' | 'keyframe'>('video');
+  // 创作模式：'video' | 'extend' | 'keyframe'
+  const [studioMode, setStudioMode] = useState<'video' | 'extend' | 'keyframe'>('video');
 
   // 生成参数
   const [videoGenMode, setVideoGenMode] = useState<'reference' | 'text' | 'first_last'>('reference');
@@ -86,6 +96,9 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
   // 加载状态
   const [generating, setGenerating] = useState(false);
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const [generatingTTS, setGeneratingTTS] = useState(false);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // 素材选择弹窗
   const [assetSelectModalOpen, setAssetSelectModalOpen] = useState(false);
@@ -114,6 +127,45 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
       message.error('重构提示词失败');
     } finally {
       setOptimizingPrompt(false);
+    }
+  };
+
+  // --- 单镜 TTS 配音生成 ---
+  const handleGenerateActiveTTS = async () => {
+    if (!activeShot) return;
+    setGeneratingTTS(true);
+    try {
+      const { audioUrl, durationSeconds } = await generateSingleTTS(
+        activeShot,
+        characters,
+        selectedProjectId,
+      );
+      updateSceneSpecShot(selectedProjectId, activeShot.id, {
+        audioTrack: audioUrl,
+        durationSeconds: durationSeconds ? (Math.ceil((durationSeconds + 0.5) * 2) / 2 as any) : activeShot.durationSeconds,
+      });
+      message.success(`分镜 ${activeShot.index + 1} 配音生成成功！`);
+    } catch (err) {
+      message.error(`配音生成失败: ${String(err)}`);
+    } finally {
+      setGeneratingTTS(false);
+    }
+  };
+
+  // --- 试听 / 停止配音 ---
+  const handleTogglePlayAudio = (url: string) => {
+    if (playingAudioUrl === url) {
+      audioPlayerRef.current?.pause();
+      setPlayingAudioUrl(null);
+    } else {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+      }
+      const audio = new Audio(toWebviewUrl(url));
+      audioPlayerRef.current = audio;
+      audio.onended = () => setPlayingAudioUrl(null);
+      audio.play().catch((err) => message.error(`播放失败: ${String(err)}`));
+      setPlayingAudioUrl(url);
     }
   };
 
@@ -169,7 +221,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
     }
   };
 
-  // --- 生成当前分镜（关键帧或视频） ---
+  // --- 生成当前分镜（关键帧、视频或延展视频） ---
   const handleGenerateActiveShot = async () => {
     if (!activeShot) return;
     setGenerating(true);
@@ -200,7 +252,8 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
         addShotVersion(selectedProjectId, activeShot.id, versionItem);
         message.success(`分镜 ${activeShot.index + 1} 关键帧生成成功！`);
       } else {
-        // 生成视频
+        // 生成视频 / 延长视频
+        const isExtendMode = studioMode === 'extend';
         const clip = await generateSingleVideoClip(
           { ...activeShot, durationSeconds: (durationSec as any) || activeShot.durationSeconds },
           {
@@ -222,12 +275,12 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
           type: 'video' as const,
           url: clip.videoUrl,
           createdAt: new Date().toLocaleTimeString(),
-          prompt: activeShot.videoPrompt,
+          prompt: `${isExtendMode ? '【延展视频】' : ''}${activeShot.videoPrompt}`,
           model: clip.model,
           durationSeconds: clip.durationSeconds,
         };
         addShotVersion(selectedProjectId, activeShot.id, versionItem);
-        message.success(`分镜 ${activeShot.index + 1} 视频生成成功！`);
+        message.success(`分镜 ${activeShot.index + 1} ${isExtendMode ? '延展视频' : '视频'}生成成功！`);
       }
     } catch (err) {
       message.error(`生成失败: ${String(err)}`);
@@ -359,6 +412,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                   onChange={(val) => setStudioMode(val as any)}
                   options={[
                     { label: '视频创作', value: 'video', icon: <VideoCameraOutlined /> },
+                    { label: '延长视频', value: 'extend', icon: <ReloadOutlined /> },
                     { label: '分镜图创作', value: 'keyframe', icon: <PictureOutlined /> },
                   ]}
                 />
@@ -371,7 +425,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-base, rgba(255,255,255,0.08))' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <Text strong style={{ fontSize: 12 }}>
-                      🖼️ 参考素材槽位 (图片 {(activeShot.customReferenceImages?.length || (activeShot.keyframeImage ? 1 : 0))}/9 · 视频 0/3)
+                      🖼️ 参考素材槽位 (图片 {(activeShot.customReferenceImages?.length || (activeShot.keyframeImage ? 1 : 0))}/9 · 音频 {activeShot.audioTrack ? '1/1' : '0/1'})
                     </Text>
                     <Space size="small">
                       <Button size="small" icon={<AppstoreOutlined />} onClick={() => setAssetSelectModalOpen(true)}>
@@ -427,6 +481,37 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                       </div>
                     )}
                   </div>
+
+                  {/* 🎙️ 音频配音槽位 */}
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border-base, rgba(255,255,255,0.1))', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Space size="small">
+                      <AudioOutlined style={{ color: activeShot.audioTrack ? '#52c41a' : 'inherit' }} />
+                      <Text strong style={{ fontSize: 12 }}>
+                        本镜配音槽位: {activeShot.audioTrack ? '已就绪' : '未就绪'}
+                      </Text>
+                      {activeShot.audioTrack && (
+                        <Button
+                          size="small"
+                          type="dashed"
+                          icon={playingAudioUrl === activeShot.audioTrack ? <CheckCircleOutlined /> : <PlayCircleOutlined />}
+                          onClick={() => handleTogglePlayAudio(activeShot.audioTrack!)}
+                          style={{ color: '#52c41a', borderColor: '#52c41a' }}
+                        >
+                          {playingAudioUrl === activeShot.audioTrack ? '停止试听' : '试听配音'}
+                        </Button>
+                      )}
+                    </Space>
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      loading={generatingTTS}
+                      icon={<AudioOutlined />}
+                      onClick={handleGenerateActiveTTS}
+                    >
+                      {activeShot.audioTrack ? '重新合成配音' : '✨ 生成本镜配音'}
+                    </Button>
+                  </div>
                 </div>
 
                 {/* ── 2. 时间轴分段提示词编辑器 (Timeline Prompt Editor) ── */}
@@ -447,6 +532,26 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                       AI 一键重构时间轴
                     </Button>
                   </div>
+
+                  {/* 🎬 运镜与光影快捷模板库 */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+                    {CAMERA_PRESETS.map((p, idx) => (
+                      <Tag
+                        key={idx}
+                        color="blue"
+                        style={{ cursor: 'pointer', margin: 0, fontSize: 11, padding: '1px 6px', borderRadius: 4 }}
+                        onClick={() => {
+                          const current = activeShot.videoPrompt || '';
+                          const updated = current ? `${current}；${p.tag}` : p.tag;
+                          updateSceneSpecShot(selectedProjectId, activeShot.id, { videoPrompt: updated });
+                          message.info(`已追加运镜指令: ${p.label}`);
+                        }}
+                      >
+                        {p.label}
+                      </Tag>
+                    ))}
+                  </div>
+
                   <TextArea
                     rows={4}
                     value={activeShot.videoPrompt}
@@ -570,6 +675,8 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                       ? 'AI 正在渲染生成中...'
                       : studioMode === 'keyframe'
                       ? `✨ 生成分镜 ${activeShot.index + 1} 关键帧`
+                      : studioMode === 'extend'
+                      ? `✨ 生成分镜 ${activeShot.index + 1} 延展视频`
                       : `✨ 生成分镜 ${activeShot.index + 1} 视频片段`}
                   </Button>
                 </div>

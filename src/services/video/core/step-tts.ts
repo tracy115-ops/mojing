@@ -133,6 +133,69 @@ export async function runTTS(
   return { shots: result, failedShotIds };
 }
 
+export async function generateSingleTTS(
+  shot: ShotSpec,
+  characters: CharacterAnchor[],
+  novelProjectId: string,
+  customVoice?: string,
+): Promise<{ audioUrl: string; durationSeconds?: number }> {
+  const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
+  const text = (
+    dialogueStr ||
+    shot.narration ||
+    shot.sourceText ||
+    shot.videoPrompt
+  )?.trim();
+
+  if (!text) {
+    throw new Error('当前分镜没有台词或旁白文本');
+  }
+
+  let voice = customVoice;
+  if (!voice) {
+    const directSpeakerName = shot.dialogue?.find((d) => d.speaker)?.speaker;
+    let speaker: CharacterAnchor | undefined;
+    if (directSpeakerName) {
+      speaker = characters.find(
+        (c) => c.name === directSpeakerName || c.aliases?.includes(directSpeakerName),
+      );
+    }
+    if (!speaker) {
+      for (const c of characters) {
+        const cName = c.name;
+        if (text.startsWith(`${cName}：`) || text.startsWith(`${cName}:`)) {
+          speaker = c;
+          break;
+        }
+      }
+    }
+    if (!speaker && shot.characterIds?.length) {
+      const charById = new Map(characters.map((c) => [c.id, c]));
+      speaker = shot.characterIds.map((cid) => charById.get(cid)).find((c) => c?.voiceRef);
+    }
+    voice = speaker?.voiceRef;
+  }
+
+  const cleanText = cleanNarrationForTTS(text);
+  if (!cleanText) {
+    throw new Error('清洗后台词为空');
+  }
+
+  const response = await providerRouter.generateTTS({
+    text: cleanText,
+    voice,
+  });
+
+  const audioUrl = await saveAsset(
+    novelProjectId,
+    'audio',
+    response.audioData,
+    `tts_shot_${shot.index + 1}_${Date.now()}`,
+  );
+
+  return { audioUrl, durationSeconds: response.durationSeconds };
+}
+
 function cleanNarrationForTTS(raw: string): string {
   if (!raw) return '';
   const text = raw.trim();
