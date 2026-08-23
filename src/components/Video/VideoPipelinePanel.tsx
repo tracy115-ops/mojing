@@ -480,22 +480,60 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                 {isPhase3Running ? '正在批量生成关键帧/配音...' : '🖼️ 批量生成关键帧与配音'}
               </Button>
             ) : (
-              <Button
-                type="primary"
-                size="small"
-                icon={<ArrowRightOutlined />}
-                onClick={() => setActivePhase('timeline')}
-                style={{ background: '#10b981', borderColor: '#10b981' }}
-              >
-                🎬 渲染视频，下一步：多轨剪辑
-              </Button>
+              <Space size={8}>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<RocketOutlined />}
+                  loading={isPhase4Running}
+                  onClick={async () => {
+                    setActivePhase('timeline');
+                    message.loading('正在批量渲染分镜视频并合成成片...', 2.0);
+                    await runFromStage(pipelineId, 'video_generation');
+                  }}
+                  style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', border: 'none' }}
+                >
+                  {isPhase4Running ? '正在渲染视频与合成成片...' : '🎬 批量渲染分镜视频并合成成片'}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<ArrowRightOutlined />}
+                  onClick={() => setActivePhase('timeline')}
+                >
+                  🎞️ 多轨剪辑台
+                </Button>
+              </Space>
             )
           )}
 
-          {activePhase === 'timeline' && finalVideoUrl && (
-            <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setExportOpen(true)} style={{ background: '#10b981', borderColor: '#10b981' }}>
-              📦 导出成片 MP4
-            </Button>
+          {activePhase === 'timeline' && (
+            finalVideoUrl ? (
+              <Space size={8}>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<DownloadOutlined />}
+                  onClick={() => setExportOpen(true)}
+                  style={{ background: '#10b981', borderColor: '#10b981' }}
+                >
+                  📦 导出成片 MP4
+                </Button>
+              </Space>
+            ) : (
+              <Button
+                type="primary"
+                size="small"
+                icon={<RocketOutlined />}
+                loading={isPhase4Running}
+                onClick={async () => {
+                  message.loading('正在批量渲染分镜视频并合成最终成片...', 2.0);
+                  await runFromStage(pipelineId, 'video_generation');
+                }}
+                style={{ background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', border: 'none' }}
+              >
+                {isPhase4Running ? '正在渲染分镜与合成成片...' : '🎬 一键渲染视频并合成成片'}
+              </Button>
+            )
           )}
 
           {/* 全自动一键生成 (Auto-Pilot) */}

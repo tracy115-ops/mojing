@@ -11,22 +11,24 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Drawer, Typography, Button, Space, Slider, Tag, Tooltip, message,
-  Card, Popconfirm, Spin, Select, Divider, Switch, Empty,
+  Card, Popconfirm, Spin, Select, Divider, Switch, Empty, Segmented,
 } from 'antd';
 import {
   PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined,
   SoundOutlined, VideoCameraOutlined, FileTextOutlined,
   ClockCircleOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined,
   CheckOutlined, UndoOutlined, SettingOutlined, EyeOutlined,
+  DownloadOutlined, RocketOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
 import type { ShotSpec, GeneratedClip, VideoProjectState } from '@/types/video';
 import { runCompose } from '@/services/video/core/step-compose';
+import { runFromStage } from '@/services/video/core/pipeline-runner';
 import { toWebviewUrl, resolveLocalPath } from '@/services/video/asset-store';
+import ExportVideoModal from './ExportVideoModal';
 
 const { Text, Title, Paragraph } = Typography;
-
 
 interface TimelineShotItem {
   id: string;
@@ -56,6 +58,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   const project = projectProp || storeProject;
   const rawShots = project?.sceneSpec?.shots || [];
   const rawClips = project?.clips || [];
+  const finalVideoUrl = project?.finalVideoUrl;
 
   // 时间轴内部镜头列表状态（支持用户重新排序与启用状态微调）
   const [timelineShots, setTimelineShots] = useState<TimelineShotItem[]>([]);
@@ -65,6 +68,9 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   const [bgmVolume, setBgmVolume] = useState<number>(30);
   const [dialogueVolume, setDialogueVolume] = useState<number>(100);
   const [isRecomposing, setIsRecomposing] = useState(false);
+  const [isBatchRendering, setIsBatchRendering] = useState(false);
+  const [previewMode, setPreviewMode] = useState<'master' | 'single'>('master');
+  const [exportOpen, setExportOpen] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
@@ -89,7 +95,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
     }
   }, [rawShots, rawClips]);
 
-  // 计算时间轴总时长
+  // 计算时间轴总时长与已就绪片段统计
   const totalDuration = useMemo(() => {
     return timelineShots
       .filter((item) => item.enabled)
@@ -99,6 +105,12 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
         return acc + netDuration;
       }, 0);
   }, [timelineShots]);
+
+  const readyClipsCount = useMemo(() => {
+    return rawClips.filter((c) => c.videoUrl && !c.videoUrl.startsWith('video_')).length;
+  }, [rawClips]);
+
+  const totalShotsCount = rawShots.length;
 
   const currentSelected = useMemo(() => {
     return timelineShots.find((item) => item.id === selectedShotId) || timelineShots[0];
@@ -150,6 +162,22 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
     }
   };
 
+  // 批量渲染视频片段并自动执行多轨合成
+  const handleBatchRenderAndCompose = async () => {
+    if (!pipelineId) return;
+    setIsBatchRendering(true);
+    message.loading('正在批量生成分镜视频并自动执行多轨合成成片...', 2.5);
+    try {
+      await runFromStage(pipelineId, 'video_generation');
+      message.success('分镜视频渲染与成片合成完毕！');
+      setPreviewMode('master');
+    } catch (err) {
+      message.error(`视频渲染失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsBatchRendering(false);
+    }
+  };
+
   // 基于当前时间轴重新合成成片
   const handleRecompose = async () => {
     if (!pipelineId || !project) return;
@@ -179,6 +207,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           sizeBytes: composeRes.sizeBytes,
         });
         message.success('时间轴重新合成成功！已更新最终成片。');
+        setPreviewMode('master');
       }
     } catch (err) {
       message.error(`重新合成失败: ${err instanceof Error ? err.message : String(err)}`);
@@ -192,59 +221,161 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
       {/* 隐藏的音频试听播放器 */}
       <audio ref={audioPreviewRef} style={{ display: 'none' }} />
 
-      {showHeader && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <Space>
-            <VideoCameraOutlined style={{ color: 'var(--color-primary, #3b82f6)' }} />
-            <Text strong style={{ fontSize: 15 }}>
-              可视化多轨时间轴剪辑台 (Timeline Workspace)
-            </Text>
-            <Tag color="blue">总时长: {totalDuration.toFixed(1)} 秒</Tag>
-            <Tag color="purple">有效镜头: {timelineShots.filter((s) => s.enabled).length}/{timelineShots.length}</Tag>
-          </Space>
-          <Space size={8}>
+      {/* ── 顶部控制与操作条 ── */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        background: 'var(--bg-elevated, #ffffff)',
+        padding: '8px 12px',
+        borderRadius: 8,
+        border: '1px solid var(--border-secondary, #e2e8f0)',
+        flexShrink: 0,
+      }}>
+        <Space size={8} wrap>
+          <VideoCameraOutlined style={{ color: 'var(--color-primary, #3b82f6)' }} />
+          <Text strong style={{ fontSize: 14 }}>
+            多轨时间轴剪辑台 (Timeline Workspace)
+          </Text>
+          <Tag color="blue">总时长: {totalDuration.toFixed(1)} 秒</Tag>
+          <Tag color="purple">有效分镜: {timelineShots.filter((s) => s.enabled).length}/{timelineShots.length}</Tag>
+          {finalVideoUrl ? (
+            <Tag color="success">✓ 最终成片已就绪</Tag>
+          ) : (
+            <Tag color="warning">待多轨合成</Tag>
+          )}
+        </Space>
+
+        <Space size={8} wrap>
+          {readyClipsCount < totalShotsCount && (
             <Button
               type="primary"
-              icon={<PlayCircleOutlined />}
-              loading={isRecomposing}
-              onClick={handleRecompose}
-              style={{ background: '#10b981', borderColor: '#10b981' }}
+              size="small"
+              icon={<RocketOutlined />}
+              loading={isBatchRendering}
+              onClick={handleBatchRenderAndCompose}
+              style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
             >
-              基于时间轴快速重新合成
+              🚀 渲染分镜视频并合成
             </Button>
-            {onClose && <Button onClick={onClose}>关闭时间轴</Button>}
-          </Space>
-        </div>
-      )}
+          )}
+          <Button
+            type="primary"
+            size="small"
+            icon={<PlayCircleOutlined />}
+            loading={isRecomposing}
+            onClick={handleRecompose}
+            style={{ background: '#10b981', borderColor: '#10b981' }}
+          >
+            ⚡ {finalVideoUrl ? '重新多轨合成' : '一键多轨合成成片'}
+          </Button>
+          {finalVideoUrl && (
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
+              onClick={() => setExportOpen(true)}
+            >
+              导出 MP4
+            </Button>
+          )}
+          {onClose && <Button size="small" onClick={onClose}>关闭</Button>}
+        </Space>
+      </div>
 
       {/* ── 顶部：双栏预览与微调控制区 ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: 16, height: 260, flexShrink: 0 }}>
-        {/* 左侧：当前分镜视频播放器 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '460px 1fr', gap: 16, height: 270, flexShrink: 0 }}>
+        {/* 左侧：成片大屏监视器 / 单镜片段切换播放器 */}
         <Card
           size="small"
           title={
-            <Space size={4}>
-              <EyeOutlined />
-              <span>
-                镜头 #{currentSelected ? currentSelected.index + 1 : 1} 实时画面预览
-              </span>
-            </Space>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Segmented
+                size="small"
+                value={previewMode}
+                onChange={(val) => setPreviewMode(val as 'master' | 'single')}
+                options={[
+                  { label: '🎬 最终成片监视器', value: 'master' },
+                  { label: `🔍 镜头 #${currentSelected ? currentSelected.index + 1 : 1} 片段`, value: 'single' },
+                ]}
+              />
+              {previewMode === 'master' && finalVideoUrl && (
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<DownloadOutlined />}
+                  onClick={() => setExportOpen(true)}
+                  style={{ background: '#10b981', borderColor: '#10b981', fontSize: 11, height: 22 }}
+                >
+                  导出 MP4
+                </Button>
+              )}
+            </div>
           }
           style={{ height: '100%', display: 'flex', flexDirection: 'column', borderRadius: 8 }}
           styles={{ body: { flex: 1, padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', borderRadius: 6, overflow: 'hidden' } }}
         >
-          {currentSelected?.clip?.videoUrl ? (
-            <video
-              ref={videoRef}
-              src={toWebviewUrl(resolveLocalPath(currentSelected.clip.videoUrl))}
-              controls
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-            />
+          {previewMode === 'master' ? (
+            finalVideoUrl ? (
+              <video
+                key={finalVideoUrl}
+                src={toWebviewUrl(resolveLocalPath(finalVideoUrl))}
+                controls
+                playsInline
+                preload="metadata"
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', color: '#94a3b8', padding: 12 }}>
+                <VideoCameraOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#38bdf8' }} />
+                <Text style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                  {readyClipsCount >= totalShotsCount && totalShotsCount > 0
+                    ? `全部分镜已就绪 (${readyClipsCount}/${totalShotsCount})，尚未合成成片`
+                    : `分镜视频待渲染（已完成 ${readyClipsCount}/${totalShotsCount} 个分镜）`}
+                </Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11, display: 'block', marginBottom: 12 }}>
+                  {readyClipsCount >= totalShotsCount && totalShotsCount > 0
+                    ? '点击下方按钮快速通过 FFmpeg 压制音轨与字幕生成完整成片'
+                    : '点击下方按钮启动视频生成并自动执行多轨合成'}
+                </Text>
+                {readyClipsCount >= totalShotsCount && totalShotsCount > 0 ? (
+                  <Button
+                    type="primary"
+                    icon={<PlayCircleOutlined />}
+                    loading={isRecomposing}
+                    onClick={handleRecompose}
+                    style={{ background: '#10b981', borderColor: '#10b981' }}
+                  >
+                    ⚡ 立即多轨合成成片
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    icon={<RocketOutlined />}
+                    loading={isBatchRendering}
+                    onClick={handleBatchRenderAndCompose}
+                    style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
+                  >
+                    🚀 一键渲染视频并合成成片
+                  </Button>
+                )}
+              </div>
+            )
           ) : (
-            <div style={{ textAlign: 'center', color: '#94a3b8' }}>
-              <VideoCameraOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block' }} />
-              <Text style={{ color: '#94a3b8', fontSize: 12 }}>该镜头尚未生成视频片段</Text>
-            </div>
+            currentSelected?.clip?.videoUrl ? (
+              <video
+                key={currentSelected.clip.videoUrl}
+                src={toWebviewUrl(resolveLocalPath(currentSelected.clip.videoUrl))}
+                controls
+                playsInline
+                preload="metadata"
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', color: '#94a3b8' }}>
+                <VideoCameraOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block' }} />
+                <Text style={{ color: '#94a3b8', fontSize: 12 }}>镜头 #{currentSelected ? currentSelected.index + 1 : 1} 尚未生成独立视频片段</Text>
+              </div>
+            )
           )}
         </Card>
 
@@ -477,6 +608,16 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           }))}
         </div>
       </div>
+
+      {/* 导出视频弹窗 */}
+      {finalVideoUrl && (
+        <ExportVideoModal
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          sourcePath={finalVideoUrl}
+          suggestedName={`mojing-${pipelineId || 'video'}`}
+        />
+      )}
     </div>
   );
 };
