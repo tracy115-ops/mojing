@@ -11,7 +11,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Drawer, Typography, Button, Space, Slider, Tag, Tooltip, message,
-  Card, Popconfirm, Spin, Select, Divider, Switch,
+  Card, Popconfirm, Spin, Select, Divider, Switch, Empty,
 } from 'antd';
 import {
   PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined,
@@ -27,12 +27,6 @@ import { toWebviewUrl, resolveLocalPath } from '@/services/video/asset-store';
 
 const { Text, Title, Paragraph } = Typography;
 
-interface VideoTimelineDrawerProps {
-  open: boolean;
-  onClose: () => void;
-  pipelineId?: string;
-  project?: VideoProjectState;
-}
 
 interface TimelineShotItem {
   id: string;
@@ -44,13 +38,22 @@ interface TimelineShotItem {
   trimEndSeconds: number;
 }
 
-export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
-  open,
-  onClose,
+export interface VideoTimelineWorkspaceProps {
+  pipelineId?: string;
+  project?: VideoProjectState;
+  showHeader?: boolean;
+  onClose?: () => void;
+}
+
+export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   pipelineId,
-  project,
+  project: projectProp,
+  showHeader = true,
+  onClose,
 }) => {
   const { t } = useTranslation();
+  const storeProject = useVideoStore((s) => (pipelineId ? s.projects[pipelineId] : undefined));
+  const project = projectProp || storeProject;
   const rawShots = project?.sceneSpec?.shots || [];
   const rawClips = project?.clips || [];
 
@@ -68,7 +71,6 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
 
   // 初始化时间轴数据
   useEffect(() => {
-    if (!open) return;
     const initialItems: TimelineShotItem[] = rawShots.map((s, idx) => {
       const clip = rawClips.find((c) => c.shotId === s.id);
       return {
@@ -85,7 +87,7 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
     if (initialItems.length > 0 && !selectedShotId) {
       setSelectedShotId(initialItems[0].id);
     }
-  }, [open, rawShots, rawClips]);
+  }, [rawShots, rawClips]);
 
   // 计算时间轴总时长
   const totalDuration = useMemo(() => {
@@ -186,9 +188,12 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
   };
 
   return (
-    <Drawer
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 16px', background: 'var(--bg-secondary, #f8fafc)', gap: 12, overflowY: 'auto', overflowX: 'hidden' }}>
+      {/* 隐藏的音频试听播放器 */}
+      <audio ref={audioPreviewRef} style={{ display: 'none' }} />
+
+      {showHeader && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           <Space>
             <VideoCameraOutlined style={{ color: 'var(--color-primary, #3b82f6)' }} />
             <Text strong style={{ fontSize: 15 }}>
@@ -207,18 +212,10 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
             >
               基于时间轴快速重新合成
             </Button>
+            {onClose && <Button onClick={onClose}>关闭时间轴</Button>}
           </Space>
         </div>
-      }
-      placement="bottom"
-      height="85vh"
-      open={open}
-      onClose={onClose}
-      destroyOnClose
-      styles={{ body: { padding: '12px 16px', background: 'var(--bg-secondary, #f8fafc)', display: 'flex', flexDirection: 'column', gap: 12 } }}
-    >
-      {/* 隐藏的音频试听播放器 */}
-      <audio ref={audioPreviewRef} style={{ display: 'none' }} />
+      )}
 
       {/* ── 顶部：双栏预览与微调控制区 ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: 16, height: 260, flexShrink: 0 }}>
@@ -362,8 +359,12 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
           display: 'flex',
           gap: 12,
           alignItems: 'flex-start',
+          justifyContent: timelineShots.length === 0 ? 'center' : 'flex-start',
         }}>
-          {timelineShots.map((item, index) => {
+          {timelineShots.length === 0 ? (
+            <Empty description="暂无分镜时间轴数据，请在阶段一或阶段三生成分镜与视频" style={{ margin: 'auto' }} />
+          ) : (
+            timelineShots.map((item, index) => {
             const isSelected = item.id === selectedShotId;
             const duration = item.clip?.durationSeconds || item.shot.durationSeconds || 5;
 
@@ -473,9 +474,38 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
                 </div>
               </div>
             );
-          })}
+          }))}
         </div>
       </div>
+    </div>
+  );
+};
+
+export interface VideoTimelineDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  pipelineId?: string;
+  project?: VideoProjectState;
+}
+
+export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
+  open,
+  onClose,
+  pipelineId,
+  project,
+}) => {
+  if (!open) return null;
+  return (
+    <Drawer
+      title={null}
+      placement="bottom"
+      height="85vh"
+      open={open}
+      onClose={onClose}
+      styles={{ body: { padding: 0, overflow: 'hidden' } }}
+      closable={false}
+    >
+      <VideoTimelineWorkspace pipelineId={pipelineId} project={project} showHeader onClose={onClose} />
     </Drawer>
   );
 };

@@ -63,6 +63,7 @@ const VideoPromptSettingsModal: React.FC<VideoPromptSettingsModalProps> = ({ ope
       width={720}
       okText="保存并应用"
       cancelText="取消"
+      styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
     >
       <Alert

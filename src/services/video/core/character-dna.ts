@@ -143,8 +143,19 @@ export function buildMultiCharacterDnaTokens(
     return `${soloTag}，${parts[0]}`;
   }
 
+  if (characters.length === 2) {
+    const [c1, c2] = characters;
+    const groupTag = isChinese
+      ? `【同框双人镜头：画面中仅有【${c1.name}与${c2.name}】共 2 人，严禁第三人】`
+      : `[2-person group shot: exactly 2 people: only ${c1.name} and ${c2.name}, no third person]`;
+    const spatialTag = isChinese
+      ? `【空间构图防串色】左侧主体为【${c1.name}（${c1.appearance || '原貌'}）】，右侧主体为【${c2.name}（${c2.appearance || '原貌'}）】，两人各自服饰、发型与体貌特征完全独立，绝不混淆串色`
+      : `[Spatial anti-bleed layout: on the left is ${c1.name} (${c1.appearance || 'features'}), on the right is ${c2.name} (${c2.appearance || 'features'}), strictly separate hair/outfits, no feature bleeding]`;
+    return `${groupTag}，${parts.join(isChinese ? '，' : ', ')}，${spatialTag}`;
+  }
+
   const groupTag = isChinese
-    ? `【同框镜头：画面中仅有【${characters.map((c) => c.name).join('与')}】共 ${characters.length} 人，严禁出现其他额外人物】`
-    : `[group shot, exactly ${characters.length} people: only ${characters.map((c) => c.name).join(' and ')}, no extra people]`;
+    ? `【同框多角色镜头：画面中仅有【${characters.map((c) => c.name).join('、')}】共 ${characters.length} 人，严禁出现其他额外人物/无路人，各自外貌特征严格隔离】`
+    : `[group shot, exactly ${characters.length} people: only ${characters.map((c) => c.name).join(', ')}, strictly separate character features, no bystanders]`;
   return `${groupTag}，${parts.join(isChinese ? '，' : ', ')}`;
 }

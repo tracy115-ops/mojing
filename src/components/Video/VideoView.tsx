@@ -110,12 +110,16 @@ const VideoView: React.FC = () => {
     } as any);
     
     const duration = values.shotDurationSeconds || 5;
-    // 初始化 videoStore 中的对应项目运行时状态
     const store = useVideoStore.getState();
+    const inheritedProject = values.inheritFromProjectId ? store.projects[values.inheritFromProjectId] : undefined;
+    const effectiveSeriesCharacters = seriesCharacters || inheritedProject?.sceneSpec?.characters;
+    const effectiveSeriesScenes = seriesScenes || inheritedProject?.sceneSpec?.scenes;
+    const effectiveStyleGuide = seriesStyleGuide || (inheritedProject?.spec as any)?.style;
+
     const spec = {
-      aspectRatio: (values.aspectRatio as any) || '16:9',
-      resolution: values.resolution || '1920x1080',
-      fps: values.fps || 24,
+      aspectRatio: (values.aspectRatio as any) || inheritedProject?.spec?.aspectRatio || '16:9',
+      resolution: values.resolution || inheritedProject?.spec?.resolution || '1920x1080',
+      fps: values.fps || inheritedProject?.spec?.fps || 24,
       shotDurationSeconds: duration as any,
       videoTier: 'value' as const,
       imageTier: 'value' as const,
@@ -125,6 +129,14 @@ const VideoView: React.FC = () => {
     };
 
     store.initProject(project.id, [], spec, values.title);
+
+    // 如果继承了已有项目，立即将已锁定的角色与场景资产写入新项目的 sceneSpec
+    if (inheritedProject?.sceneSpec?.characters?.length) {
+      store.updateSceneSpec(project.id, {
+        characters: inheritedProject.sceneSpec.characters.map((c) => ({ ...c })),
+        scenes: inheritedProject.sceneSpec.scenes?.map((s) => ({ ...s })) || [],
+      });
+    }
 
     setActiveProject(project.id);
     store.setActivePipelineId(project.id);
@@ -150,9 +162,9 @@ const VideoView: React.FC = () => {
             ],
             spec,
             options: FULL_PIPELINE_OPTIONS,
-            seriesCharacters,
-            seriesScenes,
-            seriesStyleGuide,
+            seriesCharacters: effectiveSeriesCharacters,
+            seriesScenes: effectiveSeriesScenes,
+            seriesStyleGuide: effectiveStyleGuide,
             seriesContinuityContext: episodeContinuity,
           },
           {

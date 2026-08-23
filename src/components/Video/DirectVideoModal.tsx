@@ -439,6 +439,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       onCancel={onClose}
       footer={null}
       width={860}
+      styles={{ body: { maxHeight: '75vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnHidden
     >
       {!hasVideoProvider && (

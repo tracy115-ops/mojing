@@ -355,6 +355,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
           anchorMode,
           characterPrompts,
           turnaroundPrompts,
+          shouldAbort: ctx.shouldAbort,
         },
         (done, total) => {
           store.setStageStatus(pid, 'character_anchor', 'running', { progress: done / total });
@@ -414,6 +415,7 @@ export async function executeSceneImage(ctx: StageContext): Promise<StageResult 
           style: workingSpec.meta.style,
           imageTier: 'value',
           novelProjectId: pid,
+          shouldAbort: ctx.shouldAbort,
         },
         (done, total) => {
           store.setStageStatus(pid, 'scene_image', 'running', { progress: done / total });
@@ -456,7 +458,7 @@ export async function executeTTS(ctx: StageContext): Promise<StageResult | null>
       runTTS(
         workingSpec.shots,
         workingSpec.characters ?? [],
-        { ttsTier: 'free', novelProjectId: pid, model: customModel },
+        { ttsTier: 'free', novelProjectId: pid, model: customModel, shouldAbort: ctx.shouldAbort },
         (done, total) => {
           store.setStageStatus(pid, 'tts', 'running', { progress: done / total });
           callbacks?.onStageProgress?.('tts', done / total);
@@ -513,6 +515,7 @@ export async function executeKeyframe(ctx: StageContext): Promise<StageResult | 
           imageTier: 'value',
           novelProjectId: pid,
           openingReferenceImage: workingSpec.meta.openingReferenceImage,
+          shouldAbort: ctx.shouldAbort,
         },
         (done, total) => {
           store.setStageStatus(pid, 'keyframe_image', 'running', { progress: done / total });

@@ -18,7 +18,7 @@ export interface TTSResult {
 export async function runTTS(
   shots: ShotSpec[],
   characters: CharacterAnchor[],
-  ctx: { ttsTier: string; novelProjectId: string; model?: string },
+  ctx: { ttsTier: string; novelProjectId: string; model?: string; shouldAbort?: () => boolean },
   onProgress?: (done: number, total: number) => void,
 ): Promise<TTSResult> {
   const total = shots.length;
@@ -30,6 +30,9 @@ export async function runTTS(
   let lastErr: unknown = null;
 
   for (let i = 0; i < shots.length; i++) {
+    if (ctx.shouldAbort?.()) {
+      break;
+    }
     const shot = shots[i];
     const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
     const text = (

@@ -187,6 +187,9 @@ export async function saveAsset(
  * 返回原路径 —— 这种竞态只影响启动 100ms 内的调用,后续都用转换后的 URL。
  */
 export function toWebviewUrl(localPath: string): string {
+  if (!localPath) return '';
+  // 如果已经是网络 URL、data URI、blob URL 或 asset protocol URL，直接返回，杜绝重复编码
+  if (/^(https?|data|blob|asset):/i.test(localPath)) return localPath;
   if (!isTauri()) return localPath;
   if (!convertFileSrcFn) return localPath;
   try {

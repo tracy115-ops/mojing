@@ -226,6 +226,7 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
       onCancel={onClose}
       footer={footer}
       width={820}
+      styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >

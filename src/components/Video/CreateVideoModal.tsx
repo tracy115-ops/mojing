@@ -10,6 +10,7 @@ export interface CreateVideoFormValues {
   description?: string;
   prompt?: string;
   novelId?: string;
+  inheritFromProjectId?: string;
   scriptText?: string;
   style: string;
   resolution: string;
@@ -34,6 +35,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
   const [form] = Form.useForm();
   const projects = useProjectStore((s) => s.projects);
   const novelProjects = projects.filter((p) => p.type === 'novel');
+  const videoProjects = projects.filter((p) => p.type === 'video');
 
   return (
     <Modal
@@ -60,6 +62,7 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
       okText={t('video.series.newEpisode')}
       cancelText={t('common.cancel')}
       width={560}
+      styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >
@@ -93,7 +96,17 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
             <Select
               allowClear
               placeholder="选择已导入的小说后，在下一步选择章节"
-              options={novelProjects.map((p) => ({ value: p.id, label: p.title }))}
+              options={novelProjects.map((p) => ({ value: p.id, label: `📖 ${p.title}` }))}
+            />
+          </Form.Item>
+        )}
+
+        {videoProjects.length > 0 && (
+          <Form.Item name="inheritFromProjectId" label="继承已有视频的角色与场景（多集连续剧）">
+            <Select
+              allowClear
+              placeholder="选择已有集数，自动继承其正面立绘、三视图、种子与配音"
+              options={videoProjects.map((p) => ({ value: p.id, label: `🎬 ${p.title}` }))}
             />
           </Form.Item>
         )}

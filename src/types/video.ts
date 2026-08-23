@@ -548,6 +548,8 @@ export interface VideoSpec {
   imageTier: ModelTier;
   ttsTier: ModelTier;
   hardcodeSubtitles: boolean;
+  style?: string;
+  stylePreset?: string;
   bgmStyle?: string;
   customBgmUrl?: string;
   /** Phase 2:是否启用角色立绘(默认 true) */

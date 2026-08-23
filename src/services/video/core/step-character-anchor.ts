@@ -50,6 +50,7 @@ export async function runCharacterAnchor(
     turnaroundPrompts?: Record<string, string>;
     /** 向后兼容的单句 promptOverride(只在其匹配指定角色时使用) */
     promptOverride?: string;
+    shouldAbort?: () => boolean;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<CharacterAnchorResult> {
@@ -69,6 +70,9 @@ export async function runCharacterAnchor(
   let lastErr: unknown = null;
 
   for (let i = 0; i < limited.length; i++) {
+    if (ctx.shouldAbort?.()) {
+      break;
+    }
     const c = limited[i];
 
     // 按角色 ID 或角色名匹配独立专属提示词，彻底防止多角色提示词踩踏与混淆
@@ -188,6 +192,56 @@ export async function runCharacterAnchor(
   }
 
   return { characters: result, failed };
+}
+
+export async function generateSingleCharacterPortrait(
+  character: CharacterAnchor,
+  allCharacters: CharacterAnchor[],
+  ctx: { style?: string; imageTier?: ModelTier; novelProjectId: string },
+): Promise<string> {
+  const portraitPrompt = buildPortraitPrompt(character, allCharacters, ctx.style);
+  const img = await providerRouter.generateImage({
+    taskType: 'character',
+    prompt: portraitPrompt,
+    width: 768,
+    height: 1152,
+    style: ctx.style,
+    seed: character.seed,
+  });
+  const savedPath = await saveAsset(
+    ctx.novelProjectId,
+    'portrait',
+    img.imageData,
+    `char_${sanitizeFileName(character.name)}_${Date.now()}`,
+  );
+  return savedPath;
+}
+
+export async function generateSingleCharacterTurnaround(
+  character: CharacterAnchor,
+  ctx: { style?: string; imageTier?: ModelTier; novelProjectId: string },
+): Promise<string> {
+  let turnaroundRef = '';
+  if (character.portraitImage) {
+    turnaroundRef = await readAsDataUri(character.portraitImage);
+  }
+  const turnaroundPrompt = buildTurnaroundPrompt(character, ctx.style);
+  const img = await providerRouter.generateImage({
+    taskType: 'character',
+    prompt: turnaroundPrompt,
+    width: 1536,
+    height: 1024,
+    style: ctx.style,
+    referenceImages: turnaroundRef ? [turnaroundRef] : undefined,
+    seed: character.seed,
+  });
+  const savedPath = await saveAsset(
+    ctx.novelProjectId,
+    'portrait',
+    img.imageData,
+    `char_${sanitizeFileName(character.name)}_turnaround_${Date.now()}`,
+  );
+  return savedPath;
 }
 
 /** 计算需要生成的图片数:default + variants + (可选)turnaround */

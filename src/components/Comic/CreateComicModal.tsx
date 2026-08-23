@@ -64,7 +64,8 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
       }}
       okText={t('common.create')}
       cancelText={t('common.cancel')}
-      width={560}
+      width={600}
+      styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >

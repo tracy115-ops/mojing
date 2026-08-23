@@ -145,6 +145,8 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       okButtonProps={{ loading: busy }}
       cancelButtonProps={{ disabled: busy }}
       maskClosable={!busy}
+      width={580}
+      styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
     >
       <Space direction="vertical" style={{ width: '100%' }} size="middle">

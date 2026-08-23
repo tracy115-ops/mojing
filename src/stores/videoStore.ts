@@ -58,6 +58,8 @@ import type {
   ModelTier,
   SceneSpec,
   ShotSpec,
+  CharacterAnchor,
+  SceneAnchor,
   PipelineOptions,
   StageInvocation,
   StageTotals,
@@ -155,8 +157,9 @@ interface VideoStoreState {
   deleteSceneSpecShot: (novelProjectId: string, shotId: string) => void;
   addShotVersion: (novelProjectId: string, shotId: string, version: { id: string; type: 'image' | 'video'; url: string; createdAt: string; prompt?: string; model?: string; durationSeconds?: number }) => void;
   selectShotVersion: (novelProjectId: string, shotId: string, versionId: string) => void;
-  updateSceneSpecCharacter: (novelProjectId: string, characterId: string, updates: { portraitImage?: string; appearance?: string; name?: string }) => void;
-  updateSceneSpecScene: (novelProjectId: string, sceneId: string, updates: { backgroundImage?: string; description?: string; name?: string }) => void;
+  updateSceneSpecCharacter: (novelProjectId: string, characterId: string, updates: Partial<CharacterAnchor>) => void;
+  updateSceneSpecScene: (novelProjectId: string, sceneId: string, updates: Partial<SceneAnchor>) => void;
+  updateSceneSpec: (novelProjectId: string, patch: Partial<SceneSpec>) => void;
 
   // --- direct (no-novel) mode ---
   setDirectGenerating: (inProgress: boolean) => void;
@@ -877,6 +880,43 @@ export const useVideoStore = create<VideoStoreState>()(
     });
   },
 
+  updateSceneSpec: (novelProjectId, patch) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      const prevSpec = proj.sceneSpec || {
+        shots: [],
+        characters: [],
+        scenes: [],
+        meta: {
+          aspectRatio: '16:9',
+          defaultShotDuration: 5,
+          sourceMode: 'multishot' as const,
+          channel: 'novel' as const,
+        },
+      };
+      const nextSpec: SceneSpec = {
+        ...prevSpec,
+        ...patch,
+        characters: patch.characters || prevSpec.characters || [],
+        scenes: patch.scenes || prevSpec.scenes || [],
+        shots: patch.shots || prevSpec.shots || [],
+        meta: patch.meta || prevSpec.meta || {
+          aspectRatio: '16:9',
+          defaultShotDuration: 5,
+          sourceMode: 'multishot' as const,
+          channel: 'novel' as const,
+        },
+      };
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec: nextSpec }),
+        },
+      };
+    });
+  },
+
   setPipelineOptions: (novelProjectId, options) => {
     set((s) => {
       const proj = s.projects[novelProjectId];
@@ -1079,13 +1119,40 @@ export const useVideoStore = create<VideoStoreState>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         // 进程重启后 blob: URL 全部失效。扫一遍每个 project,把失效产物清空。
-        // 不动 stage 状态本身 —— 用户能看到"这步跑过但产物丢了",自己决定是否重跑。
+        // 同时：清理重启前残留的 running 伪执行状态（进程重启后后台任务已销毁，不能保留 running 误导用户）
         let totalPurged = 0;
         const nextProjects: Record<string, VideoProjectState> = {};
         for (const [pid, proj] of Object.entries(state.projects)) {
           const { project, purged } = purgeDeadAssets(proj);
           totalPurged += purged;
-          nextProjects[pid] = project;
+
+          // 清除所有 stage 的残留 running 状态
+          let hadRunningStage = false;
+          const nextStages = { ...project.stages };
+          for (const [stageKey, stageState] of Object.entries(nextStages)) {
+            if (stageState && stageState.status === 'running') {
+              hadRunningStage = true;
+              nextStages[stageKey as VideoStage] = {
+                ...stageState,
+                status: 'pending',
+                progress: 0,
+              };
+            }
+          }
+
+          let nextCurrentStage = project.currentStage;
+          if (hadRunningStage || (nextCurrentStage && nextCurrentStage !== 'complete' && nextCurrentStage !== 'idle' && nextStages[nextCurrentStage]?.status !== 'completed')) {
+            if (nextCurrentStage !== 'complete') {
+              nextCurrentStage = 'idle';
+            }
+          }
+
+          nextProjects[pid] = {
+            ...project,
+            stages: nextStages,
+            currentStage: nextCurrentStage,
+            error: undefined,
+          };
         }
         // directClips 同样扫一遍
         const nextDirectClips = state.directClips.map((c) => {
@@ -1095,6 +1162,7 @@ export const useVideoStore = create<VideoStoreState>()(
         });
         state.projects = nextProjects;
         state.directClips = nextDirectClips;
+        state.directGenerating = false;
         // activePipelineId 校验:如果指向的 project 不在 store 里(被删 / 数据损坏),
         // 清掉它避免面板渲染一个不存在的 pipeline。
         if (state.activePipelineId && !nextProjects[state.activePipelineId]) {

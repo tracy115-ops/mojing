@@ -47,8 +47,12 @@ export function abortPipeline(pid: string): void {
   activeAborts.set(pid, true);
   const store = useVideoStore.getState();
   const proj = store.getProject(pid);
-  if (proj && proj.currentStage && proj.currentStage !== 'complete' && proj.currentStage !== 'idle') {
-    store.setStageStatus(pid, proj.currentStage, 'error', { error: '已被用户强行终止生成' });
+  if (proj) {
+    store.setError(pid, '已被用户强行终止生成');
+    if (proj.currentStage && proj.currentStage !== 'complete' && proj.currentStage !== 'idle') {
+      store.setStageStatus(pid, proj.currentStage, 'error', { error: '已被用户强行终止生成', progress: 0 });
+      store.advanceToStage(pid, 'idle');
+    }
   }
 }
 
@@ -498,6 +502,7 @@ export async function runFromStage(pid: string, stage: VideoStage): Promise<bool
         options: built.ctx.options,
         videoGen: built.ctx.videoGen,
         clips,
+        shouldAbort: checkAbort,
       },
       s,
     );

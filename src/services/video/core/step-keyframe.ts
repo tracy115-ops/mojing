@@ -38,6 +38,7 @@ export async function runKeyframe(
     novelProjectId: string;
     /** 系列上一集的收束关键帧，只影响本集第一镜。 */
     openingReferenceImage?: string;
+    shouldAbort?: () => boolean;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<KeyframeResult> {
@@ -55,6 +56,9 @@ export async function runKeyframe(
   const total = shots.length;
 
   for (let i = 0; i < shots.length; i++) {
+    if (ctx.shouldAbort?.()) {
+      break;
+    }
     const shot = shots[i];
     const charRefs: CollectedRef[] = [];
     const sceneRefs: CollectedRef[] = [];

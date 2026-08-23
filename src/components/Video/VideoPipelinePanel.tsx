@@ -1,1289 +1,1056 @@
 // ============================================================================
-// VideoPipelinePanel — 视频流水线常驻面板
-// ----------------------------------------------------------------------------
-// 布局:左侧 Steps 导航(垂直,可点击切换) + 右侧产物预览(弹性) + 底部 Shots。
-// pipelineId 由 videoStore.activePipelineId 决定(由 VideoGeneratorModal/
-// DirectVideoModal 启动时写入)。
+// VideoPipelinePanel.tsx — 工业级 AI 漫剧人机协同创作工作台 (Studio Architecture)
+// ============================================================================
+// 人机协同核心哲学 (Human-in-the-Loop & Smart Automation):
+//   1. 自动化 (Automation): 剧本切词、提示词增强、批量生图生视频、音频混流、字幕对齐与合成
+//   2. 人工介入门禁 (Human Checkpoints / Gates):
+//      - Gate 1: 📝 剧本分镜门禁 — 检查/微调景别、运镜、台词与镜头时长
+//      - Gate 2: 🎨 角色场景门禁 — 确认正面立绘/三视图、试听挑选音色、锁定 Seed
+//      - Gate 3: 🎬 分镜精修门禁 — 单镜提示词分秒重构、运镜预设、TTS试听、多版本画廊
+//      - Gate 4: 🎞️ 多轨成片门禁 — 实时播放器、多轨剪辑、BGM音量平衡、4K导出
 // ============================================================================
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
-  Typography, Tag, Card, Spin, Empty, Divider, Button, Space, Dropdown, Menu,
-  Alert, Popconfirm, Tooltip, Steps, Input, message, Select, Modal, Image,
-  Form, InputNumber,
+  Typography, Tag, Card, Empty, Button, Space,
+  Popconfirm, Tooltip, Input, message, Modal, Image,
+  Drawer, Progress, Segmented, Row, Col, Select, InputNumber,
+  Divider, Upload, Spin, Alert,
 } from 'antd';
 import {
-  VideoCameraOutlined, PlayCircleOutlined, StopOutlined,
-  LoadingOutlined, DownOutlined, DownloadOutlined, ReloadOutlined,
-  DeleteOutlined, SettingOutlined, SafetyCertificateOutlined,
-  ForwardOutlined, UserOutlined, EnvironmentOutlined, EditOutlined,
-  PictureOutlined, PlusOutlined, RedoOutlined, FileTextOutlined,
-  ClockCircleOutlined, EyeOutlined, AppstoreOutlined, CloseCircleOutlined,
-  SlidersOutlined,
+  PlayCircleOutlined, StopOutlined, DownloadOutlined, ReloadOutlined,
+  DeleteOutlined, SettingOutlined, PlusOutlined, ProfileOutlined,
+  SoundOutlined, LockOutlined, UnlockOutlined, UploadOutlined,
+  CheckCircleOutlined, ArrowRightOutlined, EditOutlined, CopyOutlined,
+  EyeOutlined, VideoCameraOutlined, RocketOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
-import type { CharacterAnchor, SceneSpec, VideoStage, StoryboardShot, GeneratedClip } from '@/types/video';
+import type { VideoStage, StoryboardShot, CharacterAnchor, SceneAnchor, AspectRatio, ShotSpec } from '@/types/video';
 import type { VideoMetadata } from '@/types';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import { renderStageContent } from './StageArtifactsModal';
-import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import VideoPromptSettingsModal from './VideoPromptSettingsModal';
-import VideoTimelineDrawer from './VideoTimelineDrawer';
-import { ShotStudioModal } from './ShotStudioModal';
-import { runFromFirstFailedStage, runFromStage, runSingleStage, abortPipeline } from '@/services/video/core/pipeline-runner';
+import { ShotStudioWorkspace } from './ShotStudioModal';
+import { VideoTimelineWorkspace } from './VideoTimelineDrawer';
+import { runFromFirstFailedStage, runFromStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { RUNTIME_STAGE_ORDER } from '@/services/video/core/stage-handlers';
-import { logger } from '@/services/log';
-import { getProjectAssetStats, cleanProjectAssets, formatBytes } from '@/services/video/asset-store';
-import { reviewSeriesEpisode } from '@/services/video/series-episode-review';
-import { reviewSeriesEpisodeVisuals, type SeriesVisualReview } from '@/services/video/series-visual-review';
-import { reviewSeriesStoryContinuity, type SeriesStoryReview } from '@/services/video/series-story-review';
+import { toWebviewUrl, saveAsset } from '@/services/video/asset-store';
+import { generateSingleCharacterPortrait, generateSingleCharacterTurnaround } from '@/services/video/core/step-character-anchor';
+import { generateSingleSceneImage } from '@/services/video/core/step-scene-image';
+import { generateSingleTTS } from '@/services/video/core/step-tts';
 
 const { Text, Title, Paragraph } = Typography;
 
-function getShotStatus(
-  clips: { shotId: string }[],
-  currentStage: VideoStage | undefined,
-  shot: StoryboardShot,
-): 'pending' | 'running' | 'done' | 'error' {
-  const clip = clips.find((c) => c.shotId === shot.id);
-  if (clip) return 'done';
-  if (currentStage === 'video_generation') return 'running';
-  return 'pending';
-}
+export type StudioPhase = 'script' | 'assets' | 'studio' | 'timeline';
 
-const ShotRow: React.FC<{
-  pid: string;
-  shot: StoryboardShot;
-  specShot?: SceneSpec['shots'][number];
-  clip?: GeneratedClip;
-  seriesCharacters?: CharacterAnchor[];
-  status: 'pending' | 'running' | 'done' | 'error';
-}> = ({ pid, shot, specShot, clip, seriesCharacters, status }) => {
-  const { t } = useTranslation();
-  const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
-  const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editVideoPrompt, setEditVideoPrompt] = useState(shot.videoPrompt || '');
-  const [editSourceText, setEditSourceText] = useState(shot.sourceText || '');
-  const [editCamera, setEditCamera] = useState(shot.cameraMovement || 'static');
-  const [editDuration, setEditDuration] = useState(shot.durationSeconds || 5);
-  const [editLocation, setEditLocation] = useState(shot.location || specShot?.sceneId || '');
-  const [rerunning, setRerunning] = useState(false);
-  const [rerunningKeyframe, setRerunningKeyframe] = useState(false);
-  const [videoModalOpen, setVideoModalOpen] = useState(false);
-
-  const costumeChoices = useMemo(() => (specShot?.characterIds ?? []).flatMap((characterId) => {
-    const character = seriesCharacters?.find((item) => item.id === characterId);
-    return character?.costumeVariants?.length ? [{ character, characterId }] : [];
-  }), [specShot?.characterIds, seriesCharacters]);
-
-  const openEditModal = () => {
-    setEditVideoPrompt(shot.videoPrompt || '');
-    setEditSourceText(shot.sourceText || '');
-    setEditCamera(shot.cameraMovement || 'static');
-    setEditDuration(shot.durationSeconds || 5);
-    setEditLocation(shot.location || specShot?.sceneId || '');
-    setEditModalOpen(true);
-  };
-
-  const handleSaveShot = () => {
-    updateSceneSpecShot(pid, shot.id, {
-      videoPrompt: editVideoPrompt.trim(),
-      sourceText: editSourceText.trim() || undefined,
-      cameraMovement: editCamera || undefined,
-      durationSeconds: (editDuration || 5) as any,
-      location: editLocation.trim() || undefined,
-    });
-    setEditModalOpen(false);
-    message.success('分镜信息已更新！');
-  };
-
-  const handleRerun = async () => {
-    setRerunning(true);
-    try {
-      const { rerunSingleShot } = await import('@/services/video/core/pipeline-runner');
-      const res = await rerunSingleShot(pid, shot.id);
-      if (res) {
-        message.success('本镜动态视频已重生成并自动合成！');
-      } else {
-        message.error(t('video.pipeline.rerunFailed'));
-      }
-    } catch (err) {
-      message.error(String(err));
-    } finally {
-      setRerunning(false);
-    }
-  };
-
-  const handleRerunKeyframe = async () => {
-    setRerunningKeyframe(true);
-    try {
-      const { rerunSingleKeyframe } = await import('@/services/video/core/pipeline-runner');
-      const res = await rerunSingleKeyframe(pid, shot.id);
-      if (res) {
-        message.success('关键帧已重新生成！');
-      } else {
-        message.error('关键帧重新生成失败');
-      }
-    } catch (err) {
-      message.error(String(err));
-    } finally {
-      setRerunningKeyframe(false);
-    }
-  };
-
-  const handleCostumeChange = (characterId: string, variantId?: string) => {
-    const refs = { ...specShot?.costumeVariantRefs };
-    if (variantId) refs[characterId] = variantId;
-    else delete refs[characterId];
-    updateSceneSpecShot(pid, shot.id, { costumeVariantRefs: Object.keys(refs).length ? refs : undefined });
-  };
-
-  return (
-    <Card size="small" style={{ marginBottom: 8 }} styles={{ body: { padding: '10px 14px' } }}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <Tag color={status === 'done' ? 'success' : status === 'running' ? 'processing' : status === 'error' ? 'error' : 'default'} style={{ marginTop: 2 }}>
-          {t('video.gen.shot')} {shot.index + 1}
-        </Tag>
-
-        {specShot?.keyframeImage && (
-          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', marginTop: 2 }}>
-            <Image
-              src={specShot.keyframeImage}
-              width={46}
-              height={46}
-              style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid var(--border-secondary)' }}
-              preview={{ mask: <EyeOutlined /> }}
-            />
-          </div>
-        )}
-
-        {clip?.videoUrl && (
-          <Tooltip title="点击预览此镜生成视频">
-            <Button
-              size="small"
-              type="primary"
-              ghost
-              icon={<PlayCircleOutlined />}
-              onClick={() => setVideoModalOpen(true)}
-              style={{ fontSize: 11, padding: '0 6px', height: 24, marginTop: 2 }}
-            >
-              片段
-            </Button>
-          </Tooltip>
-        )}
-
-        {videoModalOpen && clip?.videoUrl && (
-          <Modal
-            title={`第 ${shot.index + 1} 镜视频预览 (${clip.durationSeconds || 5}s)`}
-            open={videoModalOpen}
-            onCancel={() => setVideoModalOpen(false)}
-            footer={null}
-            width={640}
-            centered
-            destroyOnClose
-          >
-            <div style={{ textAlign: 'center', background: '#000', borderRadius: 6, overflow: 'hidden' }}>
-              <video
-                src={clip.videoUrl}
-                controls
-                autoPlay
-                style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block', margin: '0 auto' }}
-              />
-            </div>
-            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-              <strong>提示词：</strong>{shot.videoPrompt || shot.sourceText}
-            </div>
-          </Modal>
-        )}
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* 画面提示词完整展示 */}
-          <div style={{ marginBottom: 4 }}>
-            <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>
-              <PictureOutlined style={{ marginRight: 4 }} />画面提示词:
-            </Text>
-            <Paragraph
-              style={{ margin: 0, fontSize: 13, color: 'var(--text-primary)', display: 'inline', lineHeight: '1.6' }}
-              ellipsis={{ rows: 2, expandable: true, symbol: '【展开查看全文】' }}
-            >
-              {shot.videoPrompt || shot.sourceText || '无提示词'}
-            </Paragraph>
-          </div>
-
-          {/* 原剧本台词展示(若与提示词不同) */}
-          {shot.sourceText && shot.videoPrompt && shot.sourceText !== shot.videoPrompt && (
-            <div style={{ marginBottom: 4 }}>
-              <Text type="secondary" style={{ fontSize: 11, marginRight: 6, fontWeight: 600 }}>
-                <FileTextOutlined style={{ marginRight: 4 }} />剧本台词/动作:
-              </Text>
-              <Paragraph
-                style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)', display: 'inline', lineHeight: '1.5' }}
-                ellipsis={{ rows: 1, expandable: true, symbol: '【展开】' }}
-              >
-                {shot.sourceText}
-              </Paragraph>
-            </div>
-          )}
-
-          {/* 镜头元数据标签 */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, alignItems: 'center' }}>
-            {shot.durationSeconds && (
-              <Tag style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                <ClockCircleOutlined style={{ fontSize: 10 }} />
-                {shot.durationSeconds}s
-              </Tag>
-            )}
-            {shot.cameraMovement && (
-              <Tag color="geekblue" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                <VideoCameraOutlined style={{ fontSize: 10 }} />
-                {shot.cameraMovement}
-              </Tag>
-            )}
-            {specShot?.characterIds?.map((charId) => {
-              const char = seriesCharacters?.find((c) => c.id === charId);
-              const isSeries = !!char;
-              return (
-                <Tag key={charId} color={isSeries ? 'blue' : 'default'} style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                  <UserOutlined style={{ fontSize: 10 }} />
-                  {char?.name || charId} {isSeries ? '(系列)' : ''}
-                </Tag>
-              );
-            })}
-            {(specShot?.sceneId || shot.location) && (
-              <Tag color="cyan" style={{ fontSize: 10, lineHeight: '18px', padding: '0 4px', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                <EnvironmentOutlined style={{ fontSize: 10 }} />
-                {shot.location || specShot?.sceneId}
-              </Tag>
-            )}
-          </div>
-        </div>
-
-        <Space size={4} style={{ marginLeft: 8 }}>
-          <Tooltip title="编辑分镜描述与运镜">
-            <Button
-              size="small"
-              type="text"
-              icon={<EditOutlined />}
-              onClick={openEditModal}
-            />
-          </Tooltip>
-          <Tooltip title="单独重新生成此镜头关键帧">
-            <Button
-              size="small"
-              type="text"
-              icon={<PictureOutlined />}
-              loading={rerunningKeyframe}
-              onClick={handleRerunKeyframe}
-            />
-          </Tooltip>
-          <Tooltip title="单独重新生成此镜头视频片段">
-            <Button
-              size="small"
-              type="text"
-              icon={<ReloadOutlined />}
-              loading={rerunning}
-              onClick={handleRerun}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="确定删除此镜头分镜？"
-            onConfirm={() => useVideoStore.getState().deleteSceneSpecShot(pid, shot.id)}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Tooltip title="删除分镜">
-              <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ fontSize: 12 }} />
-            </Tooltip>
-          </Popconfirm>
-        </Space>
-      </div>
-
-      {/* 专属镜头分镜修改弹窗 */}
-      <Modal
-        title={`编辑第 ${shot.index + 1} 镜头分镜信息`}
-        open={editModalOpen}
-        onCancel={() => setEditModalOpen(false)}
-        onOk={handleSaveShot}
-        okText="保存分镜"
-        cancelText="取消"
-        width={640}
-        destroyOnClose
-        getContainer={() => document.getElementById('root')!}
-      >
-        <Form layout="vertical" style={{ marginTop: 8 }}>
-          <Form.Item label="画面生成提示词 (Video Prompt)" tooltip="用于 AI 画面生成和视频运镜的模型提示词">
-            <Input.TextArea
-              rows={4}
-              value={editVideoPrompt}
-              onChange={(e) => setEditVideoPrompt(e.target.value)}
-              placeholder="输入镜头画面视觉描述、光影、构图与动作..."
-            />
-          </Form.Item>
-          <Form.Item label="原剧本对白与动作 (Script / Source Text)" tooltip="小说/剧本原始对白，用于 TTS 配音与字幕生成">
-            <Input.TextArea
-              rows={3}
-              value={editSourceText}
-              onChange={(e) => setEditSourceText(e.target.value)}
-              placeholder="角色台词对白或动作描写..."
-            />
-          </Form.Item>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Form.Item label="运镜模式 (Camera Movement)">
-              <Select
-                value={editCamera}
-                allowClear
-                placeholder="选择运镜方式"
-                onChange={(val) => setEditCamera(val)}
-                options={[
-                  { value: 'static', label: '固定镜头 (画面平稳微动)' },
-                  { value: 'dolly_in', label: '缓慢推进 (特写聚焦)' },
-                  { value: 'dolly_out', label: '平稳拉远 (展现全景)' },
-                  { value: 'pan_left', label: '平缓左摇 (滑轨平移)' },
-                  { value: 'pan_right', label: '平缓右摇 (滑轨平移)' },
-                  { value: 'tracking', label: '平稳跟随 (人物跟拍)' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item label="镜头时长 (秒)">
-              <InputNumber
-                min={2}
-                max={15}
-                style={{ width: '100%' }}
-                value={editDuration}
-                onChange={(val) => setEditDuration(val || 5)}
-              />
-            </Form.Item>
-          </div>
-          <Form.Item label="场景 / 拍摄地点">
-            <Input
-              value={editLocation}
-              onChange={(e) => setEditLocation(e.target.value)}
-              placeholder="例如: 破庙内、雨夜小巷、凌霄大殿..."
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
-      {costumeChoices.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-secondary)' }}>
-          {costumeChoices.map(({ character, characterId }) => (
-            <Space key={characterId} size={4}>
-              <Text type="secondary" style={{ fontSize: 12 }}>{t('video.series.shotCostume', { name: character.name })}</Text>
-              <Select
-                size="small"
-                allowClear
-                value={specShot?.costumeVariantRefs?.[characterId]}
-                placeholder={t('video.series.defaultCostume')}
-                style={{ minWidth: 130 }}
-                onChange={(value) => handleCostumeChange(characterId, value)}
-                options={character.costumeVariants?.map((variant) => ({ value: variant.id, label: variant.id }))}
-              />
-            </Space>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
+export const STAGE_NAMES_ZH: Record<string, string> = {
+  script_slicing: '📝 剧本智能切片与分镜规划',
+  storyboard_prompt: '✨ 分镜提示词工业级增强',
+  extraction: '🔍 角色与场景资产提取',
+  character_anchor: '🎨 角色正面立绘与三视图生成',
+  scene_image: '🏞️ 场景环境背景图生成',
+  voice_assignment: '🎙️ 智能角色音色分配',
+  tts: '🗣️ 台词配音与旁白合成',
+  keyframe_image: '🖼️ 分镜关键帧生成与参考图对齐',
+  video_generation: '🎬 AI 视频片段分镜渲染',
+  audio_merge: '🎚️ 视频与配音音视融合',
+  composing: '🎞️ 多轨剪辑与最终成片导出',
 };
 
-interface VideoPipelinePanelProps {
-  pipelineId: string | null;
-}
+// 常用高质量推荐音色库
+export const VOICE_PRESETS = [
+  { value: 'zh-CN-XiaoxiaoNeural', label: '晓晓 · 甜美少女 (温暖亲切/解说推荐)', gender: 'female' },
+  { value: 'zh-CN-XiaoyiNeural', label: '晓伊 · 活泼萝莉 (萌系/童声)', gender: 'female' },
+  { value: 'zh-CN-YunxiNeural', label: '云希 · 阳光青年 (男主/活力清脆)', gender: 'male' },
+  { value: 'zh-CN-YunyangNeural', label: '云扬 · 沉稳大气 (旁白/老僧/大叔)', gender: 'male' },
+  { value: 'zh-CN-YunjianNeural', label: '云健 · 磁性总裁 (冷峻/力量感)', gender: 'male' },
+  { value: 'zh-CN-XiaohanNeural', label: '晓涵 · 情感细腻 (忧郁/唯美叙事)', gender: 'female' },
+  { value: 'zh-CN-XiaomengNeural', label: '晓梦 · 温柔御姐 (成熟知性)', gender: 'female' },
+];
 
-const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) => {
+export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipelineId: propPipelineId }) => {
   const { t } = useTranslation();
-  // 拆细 selector:每条只订阅一个字段,避免高频更新触发整面板重渲
-  const exists = useVideoStore((s) => !!(pipelineId && s.projects[pipelineId]));
-  const currentStage = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.currentStage : undefined));
-  const stages = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.stages : undefined));
-  const shots = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.shots : undefined));
-  const clips = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.clips : undefined));
-  const sceneSpec = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.sceneSpec : undefined));
+  const activePipelineId = useVideoStore((s) => s.activePipelineId);
+  const pipelineId = propPipelineId || activePipelineId;
+
   const project = useVideoStore((s) => (pipelineId ? s.projects[pipelineId] : undefined));
-  const finalVideoUrl = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.finalVideoUrl : undefined));
-  const errorMsg = useVideoStore((s) => (pipelineId ? s.projects[pipelineId]?.error : undefined));
-  const resetProject = useVideoStore((s) => s.resetProject);
-  const setActivePipelineId = useVideoStore((s) => s.setActivePipelineId);
+  const stages = project?.stages;
+  const currentStage = project?.currentStage;
+  const errorMsg = project?.error;
+  const sceneSpec = project?.sceneSpec;
+  const shots = project?.sceneSpec?.shots || [];
+  const characters = project?.sceneSpec?.characters || [];
+  const scenes = project?.sceneSpec?.scenes || [];
+  const clips = project?.clips || [];
+  const finalVideoUrl = project?.finalVideoUrl;
+
+  const updateSceneSpecShot = useVideoStore((s) => s.updateSceneSpecShot);
+  const addSceneSpecShot = useVideoStore((s) => s.addSceneSpecShot);
+  const deleteSceneSpecShot = useVideoStore((s) => s.deleteSceneSpecShot);
+  const updateSceneSpecCharacter = useVideoStore((s) => s.updateSceneSpecCharacter);
+  const updateSceneSpecScene = useVideoStore((s) => s.updateSceneSpecScene);
+
+  // 4 大核心创作阶段切换
+  const [activePhase, setActivePhase] = useState<StudioPhase>('script');
+
+  // 弹窗与抽屉状态
   const [exportOpen, setExportOpen] = useState(false);
-  /** 断点续跑中标志(禁用重试按钮防重复点击) */
-  const [retrying, setRetrying] = useState(false);
-  const [confirmingKeyframes, setConfirmingKeyframes] = useState(false);
-  const [reviewingVisuals, setReviewingVisuals] = useState(false);
-  const [visualReview, setVisualReview] = useState<SeriesVisualReview | undefined>();
-  const [reviewingStory, setReviewingStory] = useState(false);
-  const [storyReview, setStoryReview] = useState<SeriesStoryReview | undefined>();
+  const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
+  const [logsDrawerOpen, setLogsDrawerOpen] = useState(false);
+
+  // 分镜编辑状态
   const [addShotModalOpen, setAddShotModalOpen] = useState(false);
   const [newShotPrompt, setNewShotPrompt] = useState('');
 
-  const handleAddShotConfirm = () => {
-    if (!pipelineId || !newShotPrompt.trim()) return;
-    useVideoStore.getState().addSceneSpecShot(pipelineId, {
-      videoPrompt: newShotPrompt.trim(),
-      sourceText: newShotPrompt.trim(),
-      durationSeconds: 5,
-      characters: [],
-      characterIds: [],
-    });
-    setNewShotPrompt('');
-    setAddShotModalOpen(false);
-    message.success(t('common.success'));
-  };
-  /** 当前 pipeline 产物占用(字节数),用于显示「已缓存 X MB」 */
-  const [assetBytes, setAssetBytes] = useState(0);
-  const [cleaningAssets, setCleaningAssets] = useState(false);
+  // 单角色/单场景生成加载状态
+  const [busyCharId, setBusyCharId] = useState<string | null>(null);
+  const [busySceneId, setBusySceneId] = useState<string | null>(null);
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
-  // 拉取产物占用 — pipelineId 变化时拉一次,stage 状态变化时再拉一次
-  // (stage 完成会落新文件,数字要刷新)。不必高频,简单挂在 exists/currentStage 变化上。
-  useEffect(() => {
-    if (!pipelineId) {
-      setAssetBytes(0);
-      return;
-    }
-    let cancelled = false;
-    void getProjectAssetStats(pipelineId).then((s) => {
-      if (!cancelled) setAssetBytes(s.bytes);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [pipelineId, currentStage, exists]);
-
-  const handleCleanAssets = async () => {
-    if (!pipelineId || cleaningAssets) return;
-    setCleaningAssets(true);
-    try {
-      const r = await cleanProjectAssets(pipelineId);
-      setAssetBytes(0);
-      message.success(
-        t('video.pipeline.cleanAssetsDone', {
-          deleted: r.deletedFiles,
-          size: formatBytes(r.deletedBytes),
-        }),
-      );
-    } catch (err) {
-      message.error(`清理失败: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setCleaningAssets(false);
-    }
-  };
-
-  const handleRetryFromFailure = async () => {
-    if (!pipelineId || retrying) return;
-    const pid = pipelineId;
-    setRetrying(true);
-    void logger.info(`[panel] retry-from-failure pid=${pid}`, 'panel');
-    try {
-      message.loading('正在从失败处智能恢复生成...', 1.5);
-      await runFromFirstFailedStage(pid);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      void logger.error(`[panel] retry threw: ${msg}`, 'panel');
-      message.error(`${t('video.pipeline.retryFailed')}: ${msg}`);
-    } finally {
-      setRetrying(false);
-    }
-  };
-
-  const handleConfirmKeyframes = async () => {
-    if (!pipelineId || confirmingKeyframes) return;
-    setConfirmingKeyframes(true);
-    try {
-      const success = await runFromStage(pipelineId, 'video_generation');
-      if (!success) message.warning(t('video.pipeline.keyframeReviewContinuePartial'));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : String(error));
-    } finally {
-      setConfirmingKeyframes(false);
-    }
-  };
-  const handleVisualReview = async () => {
-    if (!sceneSpec || !seriesProject || reviewingVisuals) return;
-    setReviewingVisuals(true);
-    try {
-      const metadata = seriesProject.metadata as VideoMetadata;
-      setVisualReview(await reviewSeriesEpisodeVisuals(sceneSpec, {
-        characters: metadata.seriesCharacters,
-        scenes: metadata.seriesScenes,
-      }));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t('video.pipeline.visualReviewFailed'));
-    } finally {
-      setReviewingVisuals(false);
-    }
-  };
-  const handleStoryReview = async () => {
-    if (!sceneSpec || !pipelineId || reviewingStory) return;
-    const episode = useProjectStore.getState().projects.find((item) => item.id === pipelineId);
-    const metadata = episode?.metadata as VideoMetadata | undefined;
-    if (!metadata?.seriesId) return;
-    setReviewingStory(true);
-    try {
-      setStoryReview(await reviewSeriesStoryContinuity(sceneSpec, metadata.episodeContinuity, metadata.episodeEndingSummary));
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t('video.pipeline.storyReviewFailed'));
-    } finally {
-      setReviewingStory(false);
-    }
-  };
-
-  const handleAddCharacterToSeries = (charName: string) => {
-    if (!seriesProject) return;
-    const metadata = (seriesProject.metadata || {}) as VideoMetadata;
-    const currentChars = metadata.seriesCharacters || [];
-    if (currentChars.some((c) => c.name === charName || c.aliases?.includes(charName))) {
-      message.info(`角色 "${charName}" 已存在于系列资产库`);
-      return;
-    }
-    const newChar: CharacterAnchor = {
-      id: `char_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: charName,
-      aliases: [charName],
-      appearance: `从剧集分镜提取的角色: ${charName}`,
-      firstAppearShotIndex: 0,
-    };
-    const updatedChars = [...currentChars, newChar];
-    useProjectStore.getState().updateProjectMetadata(seriesProject.id, {
-      seriesCharacters: updatedChars,
-    });
-    if (pipelineId && sceneSpec) {
-      const updatedUnmatched = (sceneSpec.meta?.unmatchedCharacterNames || []).filter((n) => n !== charName);
-      const updatedMatched = [...(sceneSpec.meta?.matchedCharacterNames || []), charName];
-      useVideoStore.getState().setSceneSpec(pipelineId, {
-        ...sceneSpec,
-        meta: {
-          ...sceneSpec.meta,
-          unmatchedCharacterNames: updatedUnmatched,
-          matchedCharacterNames: updatedMatched,
-        },
-      });
-    }
-    message.success(`已成功将角色 "${charName}" 录入系列资产库！`);
-  };
-
-  const handleAddSceneToSeries = (sceneName: string) => {
-    if (!seriesProject) return;
-    const metadata = (seriesProject.metadata || {}) as VideoMetadata;
-    const currentScenes = metadata.seriesScenes || [];
-    if (currentScenes.some((s) => s.name === sceneName || s.aliases?.includes(sceneName))) {
-      message.info(`场景 "${sceneName}" 已存在于系列资产库`);
-      return;
-    }
-    const newScene = {
-      id: `scene_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: sceneName,
-      aliases: [sceneName],
-      description: `从剧集分镜提取的场景: ${sceneName}`,
-      firstAppearShotIndex: 0,
-    };
-    const updatedScenes = [...currentScenes, newScene];
-    useProjectStore.getState().updateProjectMetadata(seriesProject.id, {
-      seriesScenes: updatedScenes,
-    });
-    if (pipelineId && sceneSpec) {
-      const updatedUnmatched = (sceneSpec.meta?.unmatchedSceneNames || []).filter((n) => n !== sceneName);
-      const updatedMatched = [...(sceneSpec.meta?.matchedSceneNames || []), sceneName];
-      useVideoStore.getState().setSceneSpec(pipelineId, {
-        ...sceneSpec,
-        meta: {
-          ...sceneSpec.meta,
-          unmatchedSceneNames: updatedUnmatched,
-          matchedSceneNames: updatedMatched,
-        },
-      });
-    }
-    message.success(`已成功将场景 "${sceneName}" 录入系列场景库！`);
-  };
-
-  // 用户点 Steps 上某个步骤时,切换产物视图到该步骤。
-  // null = 自动跟随(currentStage 优先,否则最近完成的步骤)。
-  const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
-  const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
-  const [timelineDrawerOpen, setTimelineDrawerOpen] = useState(false);
-  const [shotStudioOpen, setShotStudioOpen] = useState(false);
-
+  // 系列项目信息
   const novelTitle = useProjectStore((s) => {
-    if (!pipelineId || !exists) return undefined;
+    if (!pipelineId || !project) return undefined;
     if (pipelineId.startsWith('direct_')) return undefined;
     const np = s.projects.find((p) => p.id === pipelineId);
     return np?.title;
   });
-  const seriesProject = useProjectStore((s) => {
-    if (!pipelineId) return undefined;
-    const episode = s.projects.find((project) => project.id === pipelineId);
-    const seriesId = (episode?.metadata as VideoMetadata | undefined)?.seriesId;
-    return seriesId ? s.projects.find((project) => project.id === seriesId) : undefined;
-  });
-  const directTitle = useVideoStore((s) =>
-    pipelineId && pipelineId.startsWith('direct_') ? s.projects[pipelineId]?.title : undefined,
-  );
 
   const headerLabel = useMemo(() => {
-    if (!exists) return '';
+    if (!project) return '';
     if (pipelineId?.startsWith('direct_')) {
-      return directTitle || t('video.pipeline.directLabel');
+      return project.title || t('video.pipeline.directLabel');
     }
     if (novelTitle) return t('video.pipeline.fromNovelLabel', { title: novelTitle });
     return t('video.pipeline.title');
-  }, [exists, pipelineId, novelTitle, directTitle, t]);
+  }, [project, pipelineId, novelTitle, t]);
 
-  if (!pipelineId || !exists || !stages || !shots || !clips) {
+  // 整体状态与实时工序计算
+  const overall: 'idle' | 'running' | 'complete' | 'error' = (() => {
+    if (currentStage === 'complete') return 'complete';
+    if (currentStage === 'error' || errorMsg) return 'error';
+    if (currentStage === 'idle' || !currentStage) return 'idle';
+    const stageState = stages?.[currentStage];
+    if (!stageState) return 'idle';
+    if (stageState.status === 'running') return 'running';
+    if (stageState.status === 'error') return 'error';
+    return 'idle';
+  })();
+  const statusColor = { idle: 'default', running: 'processing', complete: 'success', error: 'error' }[overall];
+  const statusLabel = t(`video.pipeline.status.${overall}`);
+
+  const isRunning = overall === 'running';
+  const runningStage = isRunning && currentStage && stages?.[currentStage]?.status === 'running' ? currentStage : undefined;
+  const runningStageName = runningStage ? (STAGE_NAMES_ZH[runningStage] || runningStage) : '';
+  const currentStageState = runningStage ? stages?.[runningStage] : undefined;
+  const currentStageSummary = currentStageState?.inputSummary?.headline || currentStageState?.error || '';
+  const currentStageProgressNum = typeof currentStageState?.progress === 'number' 
+    ? Math.round(currentStageState.progress * 100) 
+    : 0;
+
+  // 各大阶段实时运行态判定
+  const isPhase1Running = isRunning && (currentStage === 'script_slicing' || currentStage === 'storyboard_prompt' || currentStage === 'extraction');
+  const isPhase2Running = isRunning && (currentStage === 'character_anchor' || currentStage === 'scene_image' || currentStage === 'voice_assignment');
+  const isPhase3Running = isRunning && (currentStage === 'keyframe_image' || currentStage === 'tts');
+  const isPhase4Running = isRunning && (currentStage === 'video_generation' || currentStage === 'audio_merge' || currentStage === 'composing');
+
+  // 步骤完成统计
+  const visibleStages = VIDEO_PIPELINE_STAGES.filter((s) => !DEFAULT_SKIPPED_STAGES.has(s));
+  const completedStages = visibleStages.filter((s) => stages?.[s]?.status === 'completed');
+  const progressPercent = Math.round((completedStages.length / visibleStages.length) * 100);
+
+  // 4 个阶段完成度计算
+  const phase1Done = shots.length > 0;
+  const phase2Done = characters.length > 0 && characters.every((c) => !!c.portraitImage);
+  const phase3Done = shots.length > 0 && shots.every((s) => !!s.keyframeImage);
+  const phase4Done = !!finalVideoUrl;
+
+  if (!pipelineId || !project) {
     return (
-      <div style={{
-        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
+      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Empty description={t('video.pipeline.empty')} />
       </div>
     );
   }
 
-  const visibleStages = VIDEO_PIPELINE_STAGES.filter((s) => !DEFAULT_SKIPPED_STAGES.has(s));
-  const activeStageIdx = currentStage ? VIDEO_PIPELINE_STAGES.indexOf(currentStage) : -1;
-  const completedStages = visibleStages.filter((s) => stages[s]?.status === 'completed');
-  const awaitingKeyframeReview = stages.video_generation?.status === 'awaiting_review';
-  const continuityReview = useMemo(() => {
-    const metadata = seriesProject?.metadata as VideoMetadata | undefined;
-    return reviewSeriesEpisode(sceneSpec, {
-      characters: metadata?.seriesCharacters,
-      scenes: metadata?.seriesScenes,
+  // --- 处理追加新镜头 ---
+  const handleAddShotConfirm = () => {
+    if (!newShotPrompt.trim()) {
+      message.warning('请输入镜头描述');
+      return;
+    }
+    addSceneSpecShot(pipelineId, {
+      videoPrompt: newShotPrompt.trim(),
+      sourceText: newShotPrompt.trim(),
+      durationSeconds: 5,
+      cameraMovement: 'static',
+      characters: [],
+      characterIds: [],
     });
-  }, [sceneSpec, seriesProject]);
+    setNewShotPrompt('');
+    setAddShotModalOpen(false);
+    message.success('已追加新分镜！');
+  };
 
-  // 整体状态
-  const overall: 'idle' | 'running' | 'complete' | 'error' = (() => {
-    if (currentStage === 'complete') return 'complete';
-    if (currentStage === 'error' || errorMsg) return 'error';
-    if (currentStage === 'idle') return 'idle';
-    return 'running';
-  })();
-  const statusColor = { idle: 'default', running: 'processing', complete: 'success', error: 'error' }[overall];
-  const statusLabel = t(`video.pipeline.status.${overall}`);
+  // --- 处理复制镜头 ---
+  const handleDuplicateShot = (shot: ShotSpec) => {
+    addSceneSpecShot(pipelineId, {
+      videoPrompt: `${shot.videoPrompt} (副本)`,
+      sourceText: shot.sourceText || shot.videoPrompt || '',
+      durationSeconds: (shot.durationSeconds || 5) as any,
+      cameraMovement: shot.cameraMovement || 'static',
+      location: shot.location,
+      characters: [],
+      characterIds: [...(shot.characterIds || [])],
+      narration: shot.narration,
+    });
+    message.success(`已复制分镜 #${shot.index + 1}`);
+  };
 
-  // 产物聚焦的 stage:
-  // - 用户点了 Steps 上某个 stage → 用那个
-  // - 否则:运行中聚焦当前 stage;否则聚焦最近完成的 stage;都没有 → 第一个 visible stage
-  const inlineStage: VideoStage = focusStage
-    ?? (currentStage && currentStage !== 'complete' && currentStage !== 'error' && currentStage !== 'idle'
-      ? currentStage
-      : null)
-    ?? completedStages[completedStages.length - 1]
-    ?? visibleStages[0];
+  // --- 试听音色 ---
+  const handlePreviewVoice = (voiceId: string) => {
+    try {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance('你好，我是 AI 漫剧配音，当前音色已成功匹配。');
+        utterance.lang = 'zh-CN';
+        utterance.rate = 1.0;
+        window.speechSynthesis.speak(utterance);
+        setPlayingVoice(voiceId);
+        utterance.onend = () => setPlayingVoice(null);
+        utterance.onerror = () => setPlayingVoice(null);
+      } else {
+        message.info(`已选中音色: ${voiceId}`);
+      }
+    } catch {
+      message.info(`已选中音色: ${voiceId}`);
+    }
+  };
 
-  const finalMeta = project
-    ? { dur: project.finalDurationSeconds, size: project.finalSizeBytes }
-    : { dur: undefined, size: undefined };
-  const sizeLabel = finalMeta.size ? `${(finalMeta.size / 1024 / 1024).toFixed(1)} MB` : undefined;
-  const durLabel = finalMeta.dur ? `${finalMeta.dur.toFixed(1)}s` : undefined;
-  const metaLabel = [durLabel, sizeLabel].filter(Boolean).join(' · ');
+  // --- 单角色：重新生成正面立绘 ---
+  const handleRegenCharPortrait = async (char: CharacterAnchor) => {
+    setBusyCharId(char.id);
+    try {
+      message.loading(`正在重新生成【${char.name}】正面立绘...`, 2.5);
+      const newPath = await generateSingleCharacterPortrait(char, characters, {
+        style: project.spec?.style,
+        imageTier: project.spec?.imageTier,
+        novelProjectId: pipelineId,
+      });
+      updateSceneSpecCharacter(pipelineId, char.id, { portraitImage: newPath });
+      message.success(`【${char.name}】正面立绘生成成功！`);
+    } catch (err) {
+      message.error(`立绘生成失败: ${String(err)}`);
+    } finally {
+      setBusyCharId(null);
+    }
+  };
+
+  // --- 单角色：重新生成三视图 ---
+  const handleRegenCharTurnaround = async (char: CharacterAnchor) => {
+    setBusyCharId(char.id);
+    try {
+      message.loading(`正在基于正面立绘生成【${char.name}】正/侧/背三视图...`, 3.0);
+      const newPath = await generateSingleCharacterTurnaround(char, {
+        style: project.spec?.style,
+        imageTier: project.spec?.imageTier,
+        novelProjectId: pipelineId,
+      });
+      updateSceneSpecCharacter(pipelineId, char.id, { turnaroundImage: newPath });
+      message.success(`【${char.name}】三视图生成成功！`);
+    } catch (err) {
+      message.error(`三视图生成失败: ${String(err)}`);
+    } finally {
+      setBusyCharId(null);
+    }
+  };
+
+  // --- 单角色：上传自定义立绘 ---
+  const handleUploadCharPortrait = async (char: CharacterAnchor, file: File) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        const savedPath = await saveAsset(pipelineId, 'portrait', base64, `custom_${char.id}_${Date.now()}`);
+        updateSceneSpecCharacter(pipelineId, char.id, { portraitImage: savedPath });
+        message.success(`【${char.name}】自定义参考图已生效！`);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      message.error(`上传失败: ${String(err)}`);
+    }
+    return false;
+  };
+
+  // --- 单场景：重新生成背景图 ---
+  const handleRegenSceneBg = async (scene: SceneAnchor) => {
+    setBusySceneId(scene.id);
+    try {
+      message.loading(`正在重新生成【${scene.name}】场景背景图...`, 2.5);
+      const newPath = await generateSingleSceneImage(scene, {
+        aspectRatio: project.spec?.aspectRatio as AspectRatio,
+        style: project.spec?.style,
+        imageTier: project.spec?.imageTier,
+        novelProjectId: pipelineId,
+      });
+      updateSceneSpecScene(pipelineId, scene.id, { backgroundImage: newPath });
+      message.success(`【${scene.name}】场景背景图生成成功！`);
+    } catch (err) {
+      message.error(`场景生成失败: ${String(err)}`);
+    } finally {
+      setBusySceneId(null);
+    }
+  };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* ── Header bar ── */}
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg-layout, #0f172a)', overflow: 'hidden' }}>
+      <audio ref={audioPreviewRef} style={{ display: 'none' }} />
+
+      {/* ==================================================================== */}
+      {/* 1. 顶栏：工作室全局导航与向导式阶段选择器 (Studio Stepper Header)     */}
+      {/* ==================================================================== */}
       <div style={{
-        padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        flexWrap: 'wrap', gap: 8, flexShrink: 0,
-        background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
+        padding: '8px 16px',
+        background: 'var(--bg-container, #1e293b)',
+        borderBottom: '1px solid var(--border-base, rgba(255,255,255,0.1))',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: 12,
+        flexShrink: 0,
       }}>
-        <Space size={8} align="center" wrap>
-          <Title level={5} style={{ margin: 0 }}>{headerLabel}</Title>
+        {/* 左侧：工程标题与全局进度 */}
+        <Space size="middle" align="center">
+          <Title level={5} style={{ margin: 0, color: 'var(--text-primary, #fff)', fontWeight: 600 }}>
+            {headerLabel}
+          </Title>
           <Tag color={statusColor}>{statusLabel}</Tag>
-          {errorMsg && (
-            <Tooltip title={errorMsg}>
-              <Text type="danger" style={{ fontSize: 12, maxWidth: 400 }} ellipsis>
-                {errorMsg}
-              </Text>
-            </Tooltip>
-          )}
+          <Tooltip title={`总工序进度: 已完成 ${completedStages.length}/${visibleStages.length} 步骤`}>
+            <div style={{ width: 90, display: 'flex', alignItems: 'center' }}>
+              <Progress percent={progressPercent} size="small" showInfo={false} strokeColor="#3b82f6" />
+            </div>
+          </Tooltip>
         </Space>
-        <Space size={4}>
-          <Button
-            size="small"
-            type="primary"
-            icon={<AppstoreOutlined />}
-            onClick={() => setShotStudioOpen(true)}
-            style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
-          >
-            分镜精修工作台
-          </Button>
-          <Button
-            size="small"
-            icon={<SlidersOutlined />}
-            onClick={() => setTimelineDrawerOpen(true)}
-            style={{ borderColor: '#10b981', color: '#10b981' }}
-          >
-            多轨时间轴剪辑
-          </Button>
+
+        {/* 中间：4 大阶段导航胶囊 (带有清晰状态 Badge 与实时运行旋转态) */}
+        <Segmented
+          value={activePhase}
+          onChange={(val) => setActivePhase(val as StudioPhase)}
+          options={[
+            {
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>📝 1. 剧本分镜</span>
+                  {isPhase1Running ? (
+                    <LoadingOutlined spin style={{ color: '#38bdf8', fontSize: 12 }} />
+                  ) : phase1Done ? (
+                    <CheckCircleOutlined style={{ color: '#10b981', fontSize: 12 }} />
+                  ) : null}
+                </span>
+              ),
+              value: 'script',
+            },
+            {
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>🎨 2. 角色场景</span>
+                  {isPhase2Running ? (
+                    <LoadingOutlined spin style={{ color: '#38bdf8', fontSize: 12 }} />
+                  ) : phase2Done ? (
+                    <CheckCircleOutlined style={{ color: '#10b981', fontSize: 12 }} />
+                  ) : characters.length > 0 ? (
+                    <Tag color="warning" style={{ fontSize: 9, lineHeight: '14px', padding: '0 3px', margin: 0 }}>待确认</Tag>
+                  ) : null}
+                </span>
+              ),
+              value: 'assets',
+            },
+            {
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>🎬 3. 分镜精修</span>
+                  {isPhase3Running ? (
+                    <LoadingOutlined spin style={{ color: '#38bdf8', fontSize: 12 }} />
+                  ) : phase3Done ? (
+                    <CheckCircleOutlined style={{ color: '#10b981', fontSize: 12 }} />
+                  ) : null}
+                </span>
+              ),
+              value: 'studio',
+            },
+            {
+              label: (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span>🎞️ 4. 多轨成片</span>
+                  {isPhase4Running ? (
+                    <LoadingOutlined spin style={{ color: '#38bdf8', fontSize: 12 }} />
+                  ) : phase4Done ? (
+                    <CheckCircleOutlined style={{ color: '#10b981', fontSize: 12 }} />
+                  ) : null}
+                </span>
+              ),
+              value: 'timeline',
+            },
+          ]}
+          style={{
+            background: 'rgba(0,0,0,0.3)',
+            padding: 3,
+            borderRadius: 8,
+            border: '1px solid rgba(255,255,255,0.1)',
+            fontWeight: 500,
+          }}
+        />
+
+        {/* 右侧：智能导引主按钮 + 全自动成片 + 工具箱 */}
+        <Space size="small">
+          {/* 智能主按钮：根据当前阶段给予最直接的下一步导引 */}
+          {activePhase === 'script' && (
+            shots.length === 0 ? (
+              <Button
+                type="primary"
+                size="small"
+                loading={isPhase1Running}
+                icon={<PlayCircleOutlined />}
+                onClick={async () => {
+                  message.loading('AI 正在智能切片剧本并提取分镜大纲...', 2.0);
+                  await runFromStage(pipelineId, 'script_slicing');
+                }}
+                style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
+              >
+                {isPhase1Running ? 'AI 正在切片分镜...' : '✨ AI 智能切片分镜'}
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                size="small"
+                icon={<ArrowRightOutlined />}
+                onClick={() => setActivePhase('assets')}
+                style={{ background: '#10b981', borderColor: '#10b981' }}
+              >
+                👉 确认分镜，下一步：角色与场景
+              </Button>
+            )
+          )}
+
+          {activePhase === 'assets' && (
+            !phase2Done ? (
+              <Button
+                type="primary"
+                size="small"
+                loading={isPhase2Running}
+                icon={<ReloadOutlined />}
+                onClick={async () => {
+                  message.loading('正在批量生成全套角色立绘与场景图...', 2.0);
+                  await runFromStage(pipelineId, 'character_anchor');
+                }}
+                style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
+              >
+                {isPhase2Running ? '正在批量生成立绘与场景...' : '🎨 批量生成立绘与三视图'}
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                size="small"
+                icon={<ArrowRightOutlined />}
+                onClick={() => setActivePhase('studio')}
+                style={{ background: '#10b981', borderColor: '#10b981' }}
+              >
+                🔒 锁定形象，下一步：分镜精修
+              </Button>
+            )
+          )}
+
+          {activePhase === 'studio' && (
+            !phase3Done ? (
+              <Button
+                type="primary"
+                size="small"
+                loading={isPhase3Running}
+                icon={<PlayCircleOutlined />}
+                onClick={async () => {
+                  message.loading('正在批量生成关键帧与配音...', 2.0);
+                  await runFromStage(pipelineId, 'keyframe_image');
+                }}
+                style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
+              >
+                {isPhase3Running ? '正在批量生成关键帧/配音...' : '🖼️ 批量生成关键帧与配音'}
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                size="small"
+                icon={<ArrowRightOutlined />}
+                onClick={() => setActivePhase('timeline')}
+                style={{ background: '#10b981', borderColor: '#10b981' }}
+              >
+                🎬 渲染视频，下一步：多轨剪辑
+              </Button>
+            )
+          )}
+
+          {activePhase === 'timeline' && finalVideoUrl && (
+            <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setExportOpen(true)} style={{ background: '#10b981', borderColor: '#10b981' }}>
+              📦 导出成片 MP4
+            </Button>
+          )}
+
+          {/* 全自动一键生成 (Auto-Pilot) */}
+          <Tooltip title="一键全流程无人值守自动生成：自动切片 -> 生成立绘 -> 生成分镜视频 -> 混音成片">
+            <Button
+              size="small"
+              icon={<RocketOutlined />}
+              loading={isRunning}
+              onClick={async () => {
+                message.loading('正在启动全流程全自动生成...', 1.5);
+                const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
+                await runFromStage(pipelineId, firstStage);
+              }}
+            >
+              一键全自动
+            </Button>
+          </Tooltip>
+
+          {isRunning && (
+            <Popconfirm
+              title="确定要立即强行终止当前生成流程吗？"
+              onConfirm={() => {
+                abortPipeline(pipelineId);
+                message.warning('已强行终止生成任务');
+              }}
+            >
+              <Button type="primary" danger size="small" icon={<StopOutlined />}>
+                终止
+              </Button>
+            </Popconfirm>
+          )}
+
           <Button
             size="small"
             icon={<SettingOutlined />}
             onClick={() => setPromptSettingsOpen(true)}
-            style={{ borderColor: 'var(--color-primary, #3b82f6)', color: 'var(--color-primary, #3b82f6)' }}
           >
-            提示词预设配置
+            预设
           </Button>
-          {overall === 'running' && (
+        </Space>
+      </div>
+
+      {/* ── 全局实时生成进度动态横幅 (Live Execution Status Banner) ── */}
+      {isRunning && (
+        <div style={{
+          padding: '8px 16px',
+          background: 'linear-gradient(90deg, rgba(14, 116, 144, 0.25) 0%, rgba(88, 28, 135, 0.25) 100%)',
+          borderBottom: '1px solid rgba(56, 189, 248, 0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 12,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+          flexShrink: 0,
+        }}>
+          <Space size="middle" align="center">
+            <Spin indicator={<LoadingOutlined style={{ fontSize: 18, color: '#38bdf8' }} spin />} />
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text strong style={{ fontSize: 13, color: '#38bdf8' }}>
+                  ⚙️ 正在执行工序：【{runningStageName}】
+                </Text>
+                {currentStageProgressNum > 0 && (
+                  <Tag color="cyan" style={{ fontSize: 11, margin: 0, fontWeight: 600 }}>{currentStageProgressNum}%</Tag>
+                )}
+              </div>
+              {currentStageSummary && (
+                <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', display: 'block', marginTop: 2 }}>
+                  {currentStageSummary}
+                </Text>
+              )}
+            </div>
+          </Space>
+
+          <Space size="middle" align="center">
+            <div style={{ width: 160 }}>
+              <Progress
+                percent={currentStageProgressNum || 40}
+                status="active"
+                size="small"
+                strokeColor={{ '0%': '#1677ff', '100%': '#38bdf8' }}
+              />
+            </div>
             <Popconfirm
-              title="确定要立即强行终止当前视频生成流程吗？"
-              okText="终止生成"
-              okButtonProps={{ danger: true }}
-              cancelText="取消"
+              title="确定要强行终止当前生成吗？"
               onConfirm={() => {
-                if (!pipelineId) return;
                 abortPipeline(pipelineId);
-                message.warning('已收到终止请求，正在强行停止当前生成任务...');
+                message.warning('已强行终止生成任务');
               }}
             >
-              <Button
-                type="primary"
-                danger
-                size="small"
-                icon={<StopOutlined />}
-              >
+              <Button size="small" danger type="primary" icon={<StopOutlined />}>
                 终止生成
               </Button>
             </Popconfirm>
-          )}
-          {overall === 'error' ? (
-            <Button
-              type="primary"
-              danger
-              size="small"
-              icon={<ReloadOutlined />}
-              onClick={async () => {
-                if (!pipelineId) return;
-                message.loading('正在从失败处智能恢复生成...', 1.5);
-                await runFromFirstFailedStage(pipelineId);
-              }}
-            >
-              从失败处恢复重试
-            </Button>
-          ) : (
-            overall !== 'running' && (
-              <Button
-                type="primary"
-                size="small"
-                icon={<PlayCircleOutlined />}
-                onClick={async () => {
-                  if (!pipelineId) return;
-                  const proj = useVideoStore.getState().getProject(pipelineId);
-                  const hasStarted = proj?.stages && Object.values(proj.stages).some((s) => s.status === 'completed');
-                  if (hasStarted) {
-                    message.loading('正在智能继续未完成的流水线生成...', 1.5);
-                    await runFromFirstFailedStage(pipelineId);
-                  } else {
-                    message.loading('正在从第一步启动全流程流水线生成...', 1.5);
-                    const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
-                    await runFromStage(pipelineId, firstStage);
-                  }
-                }}
-              >
-                {project?.stages && Object.values(project.stages).some((s) => s.status === 'completed') ? '继续流水线生成' : '开始全流程生成'}
-              </Button>
-            )
-          )}
-          <Popconfirm
-            title="确定清空全部产物，一键从第一步重新全流程生成吗？"
-            onConfirm={async () => {
-              if (!pipelineId) return;
-              message.loading('正在重置并从第一步【剧本切片】重新生成...', 1.5);
-              const firstStage = RUNTIME_STAGE_ORDER[0] || 'script_slicing';
-              useVideoStore.getState().resetStagesFrom(pipelineId, firstStage);
-              await runFromStage(pipelineId, firstStage);
-            }}
-          >
-            <Button size="small" icon={<RedoOutlined />}>
-              从头重新生成
-            </Button>
-          </Popconfirm>
-          <Tooltip title="导出 4K 高帧率超分增强版本">
-            <Tag color="gold" style={{ cursor: 'pointer', fontSize: 11 }}>
-              4K 超分渲染已就绪
-            </Tag>
-          </Tooltip>
-          {finalVideoUrl && (
-            <Button type="primary" size="small" icon={<DownloadOutlined />} onClick={() => setExportOpen(true)}>
-              {t('video.export.button')}
-            </Button>
-          )}
-          {assetBytes > 0 && (
-            <Tooltip title={t('video.pipeline.cleanAssetsConfirm')}>
-              <Popconfirm
-                title={t('video.pipeline.cleanAssetsConfirm')}
-                okText={t('video.pipeline.cleanAssets')}
-                okButtonProps={{ danger: true, loading: cleaningAssets }}
-                cancelText={t('common.cancel')}
-                onConfirm={handleCleanAssets}
-              >
-                <Button
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  loading={cleaningAssets}
-                >
-                  {t('video.pipeline.assetStats', { size: formatBytes(assetBytes) })}
-                </Button>
-              </Popconfirm>
-            </Tooltip>
-          )}
-          <Popconfirm
-            title="确定重置所有步骤与产物，回到待生成状态吗？"
-            onConfirm={() => {
-              if (pipelineId) {
-                const firstStage = RUNTIME_STAGE_ORDER[0] || 'voice_assignment';
-                useVideoStore.getState().resetStagesFrom(pipelineId, firstStage);
-                message.success('已成功重置流水线进度');
-              }
-            }}
-          >
-            <Button size="small" icon={<ReloadOutlined />} danger>
-              {t('video.pipeline.reset')}
-            </Button>
-          </Popconfirm>
-        </Space>
-      </div>
-
-      {/* ── 漫剧 SOP 黄金法则 Banner ── */}
-      <div style={{
-        padding: '6px 12px',
-        background: 'linear-gradient(90deg, rgba(24, 144, 255, 0.08), rgba(114, 46, 209, 0.08))',
-        borderBottom: '1px solid var(--border-secondary)',
-        fontSize: 12,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <Space size={6} style={{ flex: 1, overflow: 'hidden' }}>
-          <Tag color="purple" style={{ fontWeight: 600 }}>AI 漫剧 SOP 6 步工作流</Tag>
-          <Text type="secondary" style={{ fontSize: 11 }}>
-            1.剧本(角色/目标/冲突/行动/结局) ➔ 2.分镜(景别/角度/构图) ➔ 3.角色一致(Seed/参考图) ➔ 4.图生视频 ➔ 5.后期配音 ➔ 6.SOP工具箱
-          </Text>
-        </Space>
-        <Text style={{ fontSize: 11, color: '#722ed1', fontWeight: 600, fontStyle: 'italic', whiteSpace: 'nowrap' }}>
-          "AI 是副驾驶，不是方向盘。流程越清楚，结果越稳定。"
-        </Text>
-      </div>
-      <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        {/* 左侧 Steps 导航 - Antd Steps 竖向时间轴 */}
-        <div style={{
-          width: 220, flexShrink: 0,
-          borderRight: '1px solid var(--border-secondary)',
-          overflowY: 'auto', padding: '12px 8px 12px 4px',
-          background: 'var(--bg-elevated, transparent)',
-        }}>
-          <Steps
-            direction="vertical"
-            size="small"
-            current={visibleStages.indexOf(inlineStage)}
-            onChange={(current) => {
-              const stage = visibleStages[current];
-              if (stage) setFocusStage(stage);
-            }}
-            items={visibleStages.map((stage) => {
-              const state = stages[stage];
-              const skipped = DEFAULT_SKIPPED_STAGES.has(stage);
-              const completed = state?.status === 'completed';
-              const running = state?.status === 'running';
-              const awaitingReview = state?.status === 'awaiting_review';
-              const errored = state?.status === 'error';
-              const isFocused = stage === inlineStage;
-
-              // Antd Steps 的 status: 'finish' | 'process' | 'wait' | 'error'
-              let stepStatus: 'finish' | 'process' | 'wait' | 'error';
-              if (skipped) stepStatus = 'wait';
-              else if (errored) stepStatus = 'error';
-              else if (running) stepStatus = 'process';
-              else if (awaitingReview) stepStatus = 'process';
-              else if (completed) stepStatus = 'finish';
-              else stepStatus = 'wait';
-
-              // 进度条 / 百分比 / 错误描述
-              let description: React.ReactNode = undefined;
-              if (running) {
-                const pct = state?.progress !== undefined && state.progress > 0
-                  ? Math.round(state.progress * 100)
-                  : null;
-                description = (
-                  <div style={{ marginTop: 2 }}>
-                    <div style={{
-                      fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 3,
-                      display: 'flex', justifyContent: 'space-between',
-                    }}>
-                      <span>{t('video.artifacts.status.running')}</span>
-                      {pct !== null && <span>{pct}%</span>}
-                    </div>
-                    {/* 进度条:有 pct 显示真实进度,否则显示脉冲流动条(表示在干活) */}
-                    <div style={{
-                      height: 3,
-                      borderRadius: 2,
-                      background: 'var(--bg-secondary, rgba(128,128,128,0.15))',
-                      overflow: 'hidden',
-                      position: 'relative',
-                    }}>
-                      {pct !== null ? (
-                        <div style={{
-                          width: `${pct}%`,
-                          height: '100%',
-                          background: 'var(--accent-primary)',
-                          borderRadius: 2,
-                          transition: 'width 0.3s ease',
-                        }} />
-                      ) : (
-                        <div style={{
-                          width: '40%',
-                          height: '100%',
-                          background: 'var(--accent-primary)',
-                          borderRadius: 2,
-                          animation: 'mojing-pipeline-pulse 1.4s ease-in-out infinite',
-                        }} />
-                      )}
-                    </div>
-                  </div>
-                );
-              } else if (awaitingReview) {
-                description = (
-                  <span style={{ fontSize: 10, color: 'var(--accent-primary)' }}>
-                    {t('video.artifacts.status.awaiting_review')}
-                  </span>
-                );
-              } else if (errored && state?.error) {
-                description = (
-                  <Tooltip title={state.error}>
-                    <span style={{
-                      fontSize: 10, color: 'var(--accent-danger, #ef4444)',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      display: 'inline-block', maxWidth: 160,
-                    }}>
-                      <CloseCircleOutlined style={{ marginRight: 2 }} />
-                      {state.error}
-                    </span>
-                  </Tooltip>
-                );
-              } else if (skipped) {
-                description = (
-                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)', opacity: 0.6 }}>
-                    {t('video.artifacts.status.skipped')}
-                  </span>
-                );
-              }
-
-              return {
-                status: stepStatus,
-                title: (
-                  <span style={{
-                    fontSize: 12,
-                    fontWeight: isFocused ? 600 : 400,
-                    color: isFocused
-                      ? 'var(--accent-primary)'
-                      : skipped
-                        ? 'var(--text-tertiary)'
-                        : 'var(--text-primary)',
-                  }}>
-                    {t(`video.gen.stage.${stage}`)}
-                  </span>
-                ),
-                description,
-              };
-            })}
-          />
+          </Space>
         </div>
+      )}
 
-        {/* 右侧产物区:上方产物预览(弹性) + 下方 Shots(固定高度) */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-          {/* 产物预览 */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: 12, minHeight: 0 }}>
-            {/* 错误提示(放在产物区顶部,紧凑) */}
-            {(() => {
-              const stageErrors = visibleStages
-                .map((s) => ({ stage: s, err: stages[s]?.error }))
-                .filter((x): x is { stage: VideoStage; err: string } => !!x.err);
-              if (!errorMsg && stageErrors.length === 0) return null;
-              return (
-                <Alert
-                  type="error" showIcon
-                  style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}
-                  message={errorMsg ?? t('video.pipeline.stageErrorTitle')}
-                  action={
-                    <Tooltip title={t('video.pipeline.retryFromFailureHint')}>
-                      <Button
-                        size="small"
-                        type="primary"
-                        danger
-                        icon={retrying ? <LoadingOutlined /> : <ReloadOutlined />}
-                        disabled={retrying}
-                        onClick={handleRetryFromFailure}
-                      >
-                        {t('video.pipeline.retryFromFailure')}
-                      </Button>
-                    </Tooltip>
-                  }
-                  description={
-                    errorMsg ? null : (
-                      <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
-                        {stageErrors.map((x) => (
-                          <li key={x.stage}>
-                            <a onClick={() => setFocusStage(x.stage)}>
-                              <strong>{t(`video.gen.stage.${x.stage}`)}</strong>
-                            </a>: {x.err}
-                          </li>
-                        ))}
-                      </ul>
-                    )
-                  }
-                />
-              );
-            })()}
-
-            {/* 系列资产匹配与快速收录提示 */}
-            {seriesProject && (sceneSpec?.meta?.unmatchedCharacterNames?.length || sceneSpec?.meta?.unmatchedSceneNames?.length) ? (
+      {/* ==================================================================== */}
+      {/* 2. 主画板区：根据当前选中的阶段展示对应工作台                       */}
+      {/* ==================================================================== */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: activePhase === 'studio' || activePhase === 'timeline' ? 0 : 16 }}>
+        {/* ── Phase 1: 📝 剧本与分镜大纲 (人机协同检查门禁 1) ── */}
+        {activePhase === 'script' && (
+          <div style={{ height: '100%', minHeight: 520, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {isPhase1Running && (
               <Alert
                 type="info"
                 showIcon
-                style={{ marginBottom: 12 }}
-                message="系列资产库匹配与收录提示"
-                description={
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {sceneSpec?.meta?.unmatchedCharacterNames && sceneSpec.meta.unmatchedCharacterNames.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                        <Text style={{ fontSize: 12 }}>发现本集新增/未匹配角色：</Text>
-                        {sceneSpec.meta.unmatchedCharacterNames.map((name) => (
-                          <Tag key={name} color="orange" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <UserOutlined /> {name}
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<PlusOutlined style={{ fontSize: 10 }} />}
-                              style={{ padding: 0, height: 'auto', fontSize: 11 }}
-                              onClick={() => handleAddCharacterToSeries(name)}
-                            >
-                              加入系列库
-                            </Button>
-                          </Tag>
-                        ))}
-                      </div>
-                    )}
-                    {sceneSpec?.meta?.unmatchedSceneNames && sceneSpec.meta.unmatchedSceneNames.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                        <Text style={{ fontSize: 12 }}>发现本集新增/未匹配场景：</Text>
-                        {sceneSpec.meta.unmatchedSceneNames.map((name) => (
-                          <Tag key={name} color="cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            <EnvironmentOutlined /> {name}
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<PlusOutlined style={{ fontSize: 10 }} />}
-                              style={{ padding: 0, height: 'auto', fontSize: 11 }}
-                              onClick={() => handleAddSceneToSeries(name)}
-                            >
-                              加入系列库
-                            </Button>
-                          </Tag>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                }
-              />
-            ) : null}
-
-            {awaitingKeyframeReview && (
-              <Alert
-                type={continuityReview.ready ? 'success' : 'warning'}
-                showIcon
-                icon={<SafetyCertificateOutlined />}
-                style={{ marginBottom: 12 }}
-                message={t('video.pipeline.keyframeReviewTitle')}
-                description={
-                  <div>
-                    <div>{t('video.pipeline.keyframeReviewHint')}</div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                      <Tag color={continuityReview.missingKeyframeIndexes.length ? 'warning' : 'success'}>
-                        {t('video.pipeline.review.keyframes', { done: continuityReview.keyframedShots, total: continuityReview.totalShots })}
-                      </Tag>
-                      <Tag color={continuityReview.unresolvedCharacterIds.length || continuityReview.libraryCharacterMismatches.length ? 'error' : 'success'}>
-                        {t('video.pipeline.review.characters', { count: continuityReview.unresolvedCharacterIds.length + continuityReview.libraryCharacterMismatches.length })}
-                      </Tag>
-                      <Tag color={continuityReview.unresolvedSceneIds.length || continuityReview.librarySceneMismatches.length ? 'error' : 'success'}>
-                        {t('video.pipeline.review.scenes', { count: continuityReview.unresolvedSceneIds.length + continuityReview.librarySceneMismatches.length })}
-                      </Tag>
-                    </div>
-                    {!continuityReview.ready && (
-                      <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
-                        {t('video.pipeline.review.blockedHint')}
-                      </Text>
-                    )}
-                    {(continuityReview.charactersWithoutPortrait.length > 0 || continuityReview.scenesWithoutReference.length > 0) && (
-                      <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
-                        {t('video.pipeline.review.referenceHint', {
-                          characters: continuityReview.charactersWithoutPortrait.length,
-                          scenes: continuityReview.scenesWithoutReference.length,
-                        })}
-                      </Text>
-                    )}
-                    {visualReview && (
-                      <Text type={visualReview.issues.some((item) => !item.passed) ? 'warning' : 'success'} style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
-                        {t('video.pipeline.visualReviewResult', { reviewed: visualReview.reviewedShots, issues: visualReview.issues.filter((item) => !item.passed).length })}
-                        {visualReview.issues.filter((item) => !item.passed).map((item) => ` · #${item.shotIndex} ${item.reason}`).join('')}
-                      </Text>
-                    )}
-                    {storyReview && (
-                      <Text type={storyReview.risks.length ? 'warning' : 'success'} style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
-                        {t('video.pipeline.storyReviewResult', { count: storyReview.risks.length })}{storyReview.risks.map((risk) => ` · ${risk}`).join('')}
-                      </Text>
-                    )}
-                  </div>
-                }
-                action={
-                  <Space direction="vertical" size={6}>
-                    <Button size="small" loading={reviewingVisuals} onClick={handleVisualReview}>{t('video.pipeline.visualReview')}</Button>
-                    <Button size="small" loading={reviewingStory} onClick={handleStoryReview}>{t('video.pipeline.storyReview')}</Button>
-                    <Button
-                      type="primary"
-                      size="small"
-                      loading={confirmingKeyframes}
-                      onClick={handleConfirmKeyframes}
-                    >
-                      {t('video.pipeline.keyframeReviewContinue')}
-                    </Button>
-                  </Space>
-                }
+                icon={<LoadingOutlined spin style={{ color: '#38bdf8', fontSize: 16 }} />}
+                message="AI 正在深度切片原著章节、规划分镜时长并提取登场角色与场景..."
+                description={currentStageSummary || '正在执行剧本语义切词与分镜提示词工业级增强，分镜生成后将自动呈现于下方列表。'}
+                style={{ background: 'rgba(14, 116, 144, 0.15)', borderColor: 'rgba(56, 189, 248, 0.3)' }}
               />
             )}
-
-            {/* 最终视频(完成时显示在产物区顶部) */}
-            {overall === 'complete' && finalVideoUrl && (
-              <>
-                <video
-                  src={finalVideoUrl}
-                  controls
-                  style={{ width: '100%', maxHeight: 400, background: '#000', borderRadius: 6 }}
-                />
-                {metaLabel && (
-                  <div style={{ marginTop: 6, marginBottom: 6 }}>
-                    <Tag color="blue" style={{ fontSize: 11 }}>{metaLabel}</Tag>
-                  </div>
-                )}
-                <Divider style={{ margin: '12px 0' }} />
-              </>
-            )}
-
-            {/* 当前聚焦步骤的产物 */}
-            {project && (
-              <div>
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  marginBottom: 8, padding: '6px 0',
-                }}>
-                  <Space>
-                    <Text strong style={{ fontSize: 14 }}>
-                      {t(`video.gen.stage.${inlineStage}`)}
-                    </Text>
-                    {stages[inlineStage]?.status && (
-                      <Tag color={stages[inlineStage]?.status === 'completed' ? 'success' : stages[inlineStage]?.status === 'running' ? 'processing' : stages[inlineStage]?.status === 'error' ? 'error' : 'default'} style={{ fontSize: 11 }}>
-                        {t(`video.artifacts.status.${stages[inlineStage]!.status}`)}
-                      </Tag>
-                    )}
-                  </Space>
-                  <Space>
-                    <Button
-                      size="small"
-                      type="primary"
-                      ghost
-                      icon={<PlayCircleOutlined />}
-                      onClick={async () => {
-                        if (!pipelineId) return;
-                        message.loading(`正在执行【${t(`video.gen.stage.${inlineStage}`)}】...`, 1.5);
-                        await runSingleStage(pipelineId, inlineStage);
-                      }}
-                    >
-                      立即运行此步
-                    </Button>
-                    <Button
-                      size="small"
-                      type="primary"
-                      icon={<ForwardOutlined />}
-                      onClick={async () => {
-                        if (!pipelineId) return;
-                        message.loading(`正在从【${t(`video.gen.stage.${inlineStage}`)}】向下连续生成...`, 1.5);
-                        await runFromStage(pipelineId, inlineStage);
-                      }}
-                    >
-                      从此步向下连续生成
-                    </Button>
-                  </Space>
-                </div>
-                {renderStageContent(inlineStage, project, sceneSpec, t)}
-                {/* 单步重跑:输入参数编辑 + 重跑按钮 */}
-                <Divider style={{ margin: '12px 0 8px' }} />
-                <StageInputEditor stage={inlineStage} project={project} />
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(320px, 420px) 1fr', gap: 16 }}>
+              {/* 左侧：小说与剧本文本预览与切片 */}
+              <Card
+                size="small"
+                title="📄 原始小说与剧本文本"
+              extra={
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  icon={<ReloadOutlined />}
+                  onClick={async () => {
+                    message.loading('正在重新切片分镜...', 1.5);
+                    await runFromStage(pipelineId, 'script_slicing');
+                  }}
+                >
+                  AI 重新切片
+                </Button>
+              }
+              style={{ height: '100%', minHeight: 480, display: 'flex', flexDirection: 'column' }}
+              styles={{ body: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 12 } }}
+            >
+              <div style={{ marginBottom: 6, fontSize: 11, color: 'var(--text-secondary)' }}>
+                分镜切片将依据下方剧本提取动作、台词与场景切换：
               </div>
-            )}
-          </div>
+              <Input.TextArea
+                value={sceneSpec?.shots?.map((s) => s.sourceText || s.videoPrompt).join('\n\n') || ''}
+                readOnly
+                placeholder="本集小说段落或剧本文本..."
+                style={{ flex: 1, minHeight: 120, resize: 'none', lineHeight: 1.8, fontSize: 13, background: 'rgba(0,0,0,0.2)' }}
+              />
+            </Card>
 
-          {/* Shots 列表(底部高度自适应滚动) */}
-          {shots.length > 0 && (
-            <div style={{
-              maxHeight: 380, minHeight: 180, flexShrink: 0,
-              borderTop: '1px solid var(--border-secondary)',
-              display: 'flex', flexDirection: 'column',
-              background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
-            }}>
-              <div style={{
-                padding: '4px 12px', fontSize: 12, fontWeight: 600,
-                color: 'var(--text-secondary)',
-                borderBottom: '1px solid var(--border-secondary)',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              }}>
-                <span>
-                  {t('video.gen.shots')} ({clips.length}/{shots.length})
-                </span>
-                <Space size={8}>
+            {/* 右侧：结构化分镜卡片流 (支持景别、运镜、台词行内快速修改) */}
+            <Card
+              size="small"
+              title={`🎬 镜头大纲清单 (${shots.length} 镜) · 人工审核与微调`}
+              extra={
+                <Space>
                   <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setAddShotModalOpen(true)}>
-                    添加分镜
+                    追加分镜
                   </Button>
-                  {overall === 'running' && <Spin size="small" />}
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<ArrowRightOutlined />}
+                    onClick={() => setActivePhase('assets')}
+                    style={{ background: '#10b981', borderColor: '#10b981' }}
+                  >
+                    确认分镜，下一步
+                  </Button>
                 </Space>
-              </div>
+              }
+              style={{ height: '100%', minHeight: 480, display: 'flex', flexDirection: 'column' }}
+              styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 12 } }}
+            >
+              {shots.length === 0 ? (
+                <Empty description="暂无切片镜头，请点击左上方【AI 重新切片】或右上角【追加分镜】" />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {shots.map((s, idx) => (
+                    <Card
+                      key={s.id}
+                      size="small"
+                      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      styles={{ body: { padding: '10px 14px' } }}
+                    >
+                      {/* 顶排：序号、景别、运镜、时长、场景 */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Space size={6} wrap>
+                          <Tag color="blue" style={{ fontWeight: 600 }}>镜头 #{idx + 1}</Tag>
 
-              <Modal
-                title="手动追加分镜"
-                open={addShotModalOpen}
-                onOk={handleAddShotConfirm}
-                onCancel={() => setAddShotModalOpen(false)}
-                okText="追加镜头"
-                cancelText="取消"
-              >
-                <div style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
-                    输入新分镜的画面描述 (Video Prompt):
-                  </Text>
-                  <Input.TextArea
-                    rows={4}
-                    value={newShotPrompt}
-                    onChange={(e) => setNewShotPrompt(e.target.value)}
-                    placeholder="例如: 镜头从主角侧面推近，环境光影交织，气势磅礴..."
-                  />
+                          {/* 运镜与景别选择 */}
+                          <Select
+                            size="small"
+                            value={s.cameraMovement || 'static'}
+                            onChange={(val) => updateSceneSpecShot(pipelineId, s.id, { cameraMovement: val })}
+                            style={{ width: 130 }}
+                            options={[
+                              { label: '🎬 定镜 (Static)', value: 'static' },
+                              { label: '🔍 特写推镜 (Push in)', value: 'zoom_in' },
+                              { label: '🔭 全景拉镜 (Pull out)', value: 'zoom_out' },
+                              { label: '🏃 跟随运镜 (Follow)', value: 'pan_right' },
+                              { label: '🔄 360°环绕 (Orbit)', value: 'orbit' },
+                            ]}
+                          />
+
+                          {/* 时长 */}
+                          <Space size={2}>
+                            <InputNumber
+                              size="small"
+                              min={2}
+                              max={12}
+                              value={s.durationSeconds || 5}
+                              onChange={(val) => updateSceneSpecShot(pipelineId, s.id, { durationSeconds: (val || 5) as any })}
+                              style={{ width: 55 }}
+                            />
+                            <Text style={{ fontSize: 11 }}>秒</Text>
+                          </Space>
+
+                          <Tag color="purple">{s.location || '默认场景'}</Tag>
+                        </Space>
+
+                        {/* 操作栏 */}
+                        <Space size="small">
+                          <Tooltip title="复制该镜头">
+                            <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => handleDuplicateShot(s)} />
+                          </Tooltip>
+                          <Tooltip title="删除该镜头">
+                            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => deleteSceneSpecShot(pipelineId, s.id)} />
+                          </Tooltip>
+                        </Space>
+                      </div>
+
+                      {/* 画面描述 (Prompt) */}
+                      <Input.TextArea
+                        rows={2}
+                        value={s.videoPrompt || s.sourceText}
+                        onChange={(e) => updateSceneSpecShot(pipelineId, s.id, { videoPrompt: e.target.value })}
+                        placeholder="镜头画面描述与人物动作..."
+                        style={{ fontSize: 12, marginBottom: 6, resize: 'none' }}
+                      />
+
+                      {/* 台词与说话人 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Tag color="green" style={{ margin: 0, fontSize: 11 }}>🗣️ 台词对白</Tag>
+                        <Input
+                          size="small"
+                          value={s.narration || ''}
+                          onChange={(e) => updateSceneSpecShot(pipelineId, s.id, { narration: e.target.value })}
+                          placeholder="输入台词或旁白（为空则为纯画面）..."
+                          style={{ flex: 1, fontSize: 12 }}
+                        />
+                      </div>
+                    </Card>
+                  ))}
                 </div>
-              </Modal>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '4px 8px' }}>
-                {shots.map((shot) => (
-                  <ShotRow
-                    key={shot.id}
-                    pid={pipelineId}
-                    shot={shot}
-                    specShot={sceneSpec?.shots.find((item) => item.id === shot.id)}
-                    clip={clips.find((c) => c.shotId === shot.id)}
-                    seriesCharacters={(seriesProject?.metadata as VideoMetadata | undefined)?.seriesCharacters}
-                    status={getShotStatus(clips, currentStage, shot)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+              )}
+            </Card>
+          </div>
+          </div>
+        )}
+
+        {/* ── Phase 2: 🎨 角色与场景资产设定 (人机协同核心质量门禁 2) ── */}
+        {activePhase === 'assets' && (
+          <div style={{ minHeight: '100%', display: 'flex', flexDirection: 'column', gap: 16, paddingBottom: 24 }}>
+            {/* 角色一致性资产库 */}
+            <Card
+              size="small"
+              title={`👥 角色一致性资产库 (${characters.length} 位角色) · 形象与音色确认门禁`}
+              extra={
+                <Space>
+                  <Button
+                    size="small"
+                    type="primary"
+                    ghost
+                    icon={<ReloadOutlined />}
+                    onClick={async () => {
+                      message.loading('正在批量生成角色三视图...', 1.5);
+                      await runFromStage(pipelineId, 'character_anchor');
+                    }}
+                  >
+                    批量重新生成立绘
+                  </Button>
+                  <Button
+                    size="small"
+                    type="primary"
+                    icon={<ArrowRightOutlined />}
+                    onClick={() => setActivePhase('studio')}
+                    style={{ background: '#10b981', borderColor: '#10b981' }}
+                  >
+                    锁定形象，进入分镜精修
+                  </Button>
+                </Space>
+              }
+            >
+              {characters.length === 0 ? (
+                <Empty description="暂无角色资产，请先在阶段一完成【剧本切片】" />
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 14 }}>
+                  {characters.map((char) => (
+                    <Card
+                      key={char.id}
+                      size="small"
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      styles={{ body: { padding: 12 } }}
+                    >
+                      <div style={{ display: 'flex', gap: 12, marginBottom: 10 }}>
+                        {/* 左侧：正面立绘 */}
+                        <div style={{ width: 95, height: 130, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative' }}>
+                          {char.portraitImage ? (
+                            <Image src={toWebviewUrl(char.portraitImage)} width={95} height={130} style={{ objectFit: 'cover' }} />
+                          ) : (
+                            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#38bdf8', gap: 6, padding: 4, textAlign: 'center' }}>
+                              {isPhase2Running ? (
+                                <>
+                                  <Spin size="small" indicator={<LoadingOutlined spin style={{ color: '#38bdf8' }} />} />
+                                  <span style={{ fontSize: 10 }}>生成立绘中...</span>
+                                </>
+                              ) : (
+                                <span style={{ color: 'var(--text-secondary)' }}>待生成立绘</span>
+                              )}
+                            </div>
+                          )}
+                          <Tag style={{ position: 'absolute', bottom: 2, left: 2, margin: 0, fontSize: 9, padding: '0 3px', lineHeight: '14px' }}>
+                            正面立绘
+                          </Tag>
+                        </div>
+
+                        {/* 中间：三视图展示 */}
+                        <div style={{ width: 140, height: 130, borderRadius: 6, overflow: 'hidden', background: '#181818', flexShrink: 0, position: 'relative' }}>
+                          {char.turnaroundImage ? (
+                            <Image src={toWebviewUrl(char.turnaroundImage)} width={140} height={130} style={{ objectFit: 'cover' }} />
+                          ) : (
+                            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#38bdf8', gap: 6, padding: 4, textAlign: 'center' }}>
+                              {isPhase2Running ? (
+                                <>
+                                  <Spin size="small" indicator={<LoadingOutlined spin style={{ color: '#38bdf8' }} />} />
+                                  <span style={{ fontSize: 10 }}>生成三视图中...</span>
+                                </>
+                              ) : (
+                                <span style={{ color: 'var(--text-secondary)' }}>待生成三视图</span>
+                              )}
+                            </div>
+                          )}
+                          <Tag color="cyan" style={{ position: 'absolute', bottom: 2, left: 2, margin: 0, fontSize: 9, padding: '0 3px', lineHeight: '14px' }}>
+                            正/侧/背三视图
+                          </Tag>
+                        </div>
+
+                        {/* 右侧：信息与 Seed 锁 */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Text strong style={{ fontSize: 14 }}>{char.name}</Text>
+                              <Tag color="orange" style={{ margin: 0, fontSize: 10 }}>
+                                <LockOutlined style={{ marginRight: 2 }} />
+                                Seed: {char.seed || '锁定'}
+                              </Tag>
+                            </div>
+                            <Paragraph type="secondary" style={{ fontSize: 11, margin: '4px 0 0 0' }} ellipsis={{ rows: 2 }}>
+                              {char.appearance || '已锁定角色外貌特征'}
+                            </Paragraph>
+                          </div>
+
+                          {/* 音色配置与试听播放器 */}
+                          <div style={{ marginTop: 6 }}>
+                            <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 2 }}>🎙️ 专属配音音色：</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <Select
+                                size="small"
+                                value={char.voiceRef || 'zh-CN-XiaoxiaoNeural'}
+                                onChange={(val) => updateSceneSpecCharacter(pipelineId, char.id, { voiceRef: val })}
+                                style={{ flex: 1, fontSize: 11 }}
+                                options={VOICE_PRESETS.map((v) => ({ label: v.label, value: v.value }))}
+                              />
+                              <Button
+                                size="small"
+                                icon={<SoundOutlined />}
+                                onClick={() => handlePreviewVoice(char.voiceRef || 'zh-CN-XiaoxiaoNeural')}
+                                type={playingVoice === (char.voiceRef || 'zh-CN-XiaoxiaoNeural') ? 'primary' : 'default'}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 底部单角色操作矩阵 */}
+                      <div style={{ display: 'flex', gap: 6, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 8 }}>
+                        <Button
+                          size="small"
+                          icon={<ReloadOutlined />}
+                          loading={busyCharId === char.id}
+                          onClick={() => handleRegenCharPortrait(char)}
+                          style={{ flex: 1, fontSize: 11 }}
+                        >
+                          重画正面
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<ReloadOutlined />}
+                          loading={busyCharId === char.id}
+                          onClick={() => handleRegenCharTurnaround(char)}
+                          style={{ flex: 1, fontSize: 11 }}
+                        >
+                          重画三视图
+                        </Button>
+                        <Upload
+                          showUploadList={false}
+                          beforeUpload={(file) => handleUploadCharPortrait(char, file)}
+                          accept="image/*"
+                        >
+                          <Button size="small" icon={<UploadOutlined />} style={{ fontSize: 11 }}>
+                            上传参考图
+                          </Button>
+                        </Upload>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* 场景环境资产库 */}
+            <Card
+              size="small"
+              title={`🏞️ 场景资产库 (${scenes.length} 个场景) · 环境与光影背景`}
+              extra={
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  icon={<ReloadOutlined />}
+                  onClick={async () => {
+                    message.loading('正在批量生成场景背景图...', 1.5);
+                    await runFromStage(pipelineId, 'scene_image');
+                  }}
+                >
+                  批量生成场景图
+                </Button>
+              }
+            >
+              {scenes.length === 0 ? (
+                <Empty description="暂无场景资产" />
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+                  {scenes.map((scene) => (
+                    <Card
+                      key={scene.id}
+                      size="small"
+                      style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      styles={{ body: { padding: 10 } }}
+                    >
+                      <div style={{ height: 110, borderRadius: 6, overflow: 'hidden', background: '#181818', marginBottom: 8, position: 'relative' }}>
+                        {scene.backgroundImage ? (
+                          <Image src={toWebviewUrl(scene.backgroundImage)} width="100%" height={110} style={{ objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#38bdf8', gap: 6, padding: 4, textAlign: 'center' }}>
+                            {isPhase2Running ? (
+                              <>
+                                <Spin size="small" indicator={<LoadingOutlined spin style={{ color: '#38bdf8' }} />} />
+                                <span style={{ fontSize: 10 }}>生成背景中...</span>
+                              </>
+                            ) : (
+                              <span style={{ color: 'var(--text-secondary)' }}>待生成场景背景</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <Text strong style={{ fontSize: 13 }}>{scene.name}</Text>
+                        <Button
+                          size="small"
+                          type="text"
+                          icon={<ReloadOutlined />}
+                          loading={busySceneId === scene.id}
+                          onClick={() => handleRegenSceneBg(scene)}
+                        >
+                          重画背景
+                        </Button>
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 11 }} ellipsis>{scene.description || '默认环境'}</Text>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        {/* ── Phase 3: 🎬 分镜精修工作台 (人机协同质量门禁 3) ── */}
+        {activePhase === 'studio' && (
+          <div style={{ height: '100%', padding: '0 8px 8px 8px' }}>
+            <ShotStudioWorkspace pipelineId={pipelineId} showHeader={false} />
+          </div>
+        )}
+
+        {/* ── Phase 4: 🎞️ 多轨剪辑与最终成片 (人机协同质量门禁 4) ── */}
+        {activePhase === 'timeline' && (
+          <div style={{ height: '100%' }}>
+            <VideoTimelineWorkspace pipelineId={pipelineId} project={project} showHeader={false} />
+          </div>
+        )}
       </div>
 
-      {/* Export modal(完成时使用) */}
+      {/* ==================================================================== */}
+      {/* 3. 抽屉：底层流水线执行日志与账本 (Collapsible Pipeline Log Drawer)   */}
+      {/* ==================================================================== */}
+      <Drawer
+        title="📋 底层流水线步骤产物与账本 (Pipeline Log & Invocations)"
+        placement="right"
+        width={720}
+        open={logsDrawerOpen}
+        onClose={() => setLogsDrawerOpen(false)}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {visibleStages.map((st) => (
+            <Card
+              key={st}
+              size="small"
+              title={
+                <Space>
+                  <Text strong>{t(`video.gen.stage.${st}`)}</Text>
+                  <Tag>{st}</Tag>
+                  <Tag color={stages?.[st]?.status === 'completed' ? 'success' : stages?.[st]?.status === 'running' ? 'processing' : 'default'}>
+                    {stages?.[st]?.status || 'idle'}
+                  </Tag>
+                </Space>
+              }
+            >
+              {renderStageContent(st, project, sceneSpec, t)}
+            </Card>
+          ))}
+        </div>
+      </Drawer>
+
+      {/* 追加镜头 Modal */}
+      <Modal
+        title="追加新分镜"
+        open={addShotModalOpen}
+        onOk={handleAddShotConfirm}
+        onCancel={() => setAddShotModalOpen(false)}
+        okText="追加镜头"
+        cancelText="取消"
+      >
+        <div style={{ marginTop: 8 }}>
+          <Text style={{ fontSize: 12, marginBottom: 4, display: 'block' }}>
+            输入新分镜的画面描述 (Video Prompt):
+          </Text>
+          <Input.TextArea
+            rows={4}
+            value={newShotPrompt}
+            onChange={(e) => setNewShotPrompt(e.target.value)}
+            placeholder="例如: 镜头从主角侧面推近，环境光影交织，气势磅礴..."
+          />
+        </div>
+      </Modal>
+
+      {/* 导出视频 Modal */}
       {finalVideoUrl && (
         <ExportVideoModal
           open={exportOpen}
@@ -1293,25 +1060,10 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
         />
       )}
 
-      {/* 视频工坊提示词预设配置 Modal */}
+      {/* 预设配置 Modal */}
       <VideoPromptSettingsModal
         open={promptSettingsOpen}
         onClose={() => setPromptSettingsOpen(false)}
-      />
-
-      {/* 可视化多轨时间轴剪辑与微调工作台 Drawer */}
-      <VideoTimelineDrawer
-        open={timelineDrawerOpen}
-        onClose={() => setTimelineDrawerOpen(false)}
-        pipelineId={pipelineId}
-        project={project}
-      />
-
-      {/* 沉浸式分镜精修工作台 Modal */}
-      <ShotStudioModal
-        open={shotStudioOpen}
-        onClose={() => setShotStudioOpen(false)}
-        pipelineId={pipelineId}
       />
     </div>
   );

@@ -55,13 +55,17 @@ const CAMERA_PRESETS = [
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
 
-interface Props {
-  open: boolean;
-  onClose: () => void;
+export interface ShotStudioWorkspaceProps {
   pipelineId?: string;
+  showHeader?: boolean;
+  onClose?: () => void;
 }
 
-export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: initialPipelineId }) => {
+export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
+  pipelineId: initialPipelineId,
+  showHeader = true,
+  onClose,
+}) => {
   const { t } = useTranslation();
   const { projects, updateSceneSpecShot, addSceneSpecShot, deleteSceneSpecShot, addShotVersion, selectShotVersion, addClip } = useVideoStore();
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
@@ -107,7 +111,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
   // 视频预览 Modal
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
 
-  if (!open || !project) return null;
+  if (!project) return null;
 
   // --- 智能 AI 重构分秒时间轴提示词 ---
   const handleAIOptimizeTimelinePrompt = () => {
@@ -290,15 +294,9 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
   };
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width="96vw"
-      style={{ top: 16, paddingBottom: 0 }}
-      styles={{ body: { height: '88vh', padding: '12px 16px', display: 'flex', flexDirection: 'column' } }}
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 32 }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {showHeader && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0 10px 0', flexShrink: 0 }}>
           <Space size="middle">
             <Title level={4} style={{ margin: 0 }}>🎬 分镜精修工作台</Title>
             {/* 顶栏多集快速切换 */}
@@ -320,11 +318,10 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
             <Tooltip title="工业级漫剧工作台：支持多集无缝切换、时间轴提示词分段、单镜素材绑定与版本回溯。">
               <Button icon={<InfoCircleOutlined />} type="text">操作指南</Button>
             </Tooltip>
-            <Button onClick={onClose}>关闭工作台</Button>
+            {onClose && <Button onClick={onClose}>关闭工作台</Button>}
           </Space>
         </div>
-      }
-    >
+      )}
       <Row gutter={12} style={{ flex: 1, minHeight: 0 }}>
         {/* ==================================================================== */}
         {/* 左栏：分镜列表侧边栏 (Shot List Sidebar)                             */}
@@ -333,7 +330,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            styles={{ body: { flex: 1, overflowY: 'auto', padding: 8 } }}
+            styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 8 } }}
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text strong>分镜列表 ({shots.length})</Text>
@@ -398,7 +395,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            styles={{ body: { flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 } }}
+            styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 } }}
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Space>
@@ -421,6 +418,35 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
           >
             {activeShot ? (
               <>
+                {/* ── 0. 当前镜头视频主舞台预览 (Main Stage Video Preview) ── */}
+                {(() => {
+                  const currentClip = project.clips?.find((c) => c.shotId === activeShot.id);
+                  const selectedVideo = activeShot.versionHistory?.find((v) => v.id === activeShot.selectedVersionId && v.type === 'video');
+                  const activeVideoUrl = selectedVideo?.url || currentClip?.videoUrl;
+                  if (activeVideoUrl) {
+                    return (
+                      <div style={{ background: '#000', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', marginBottom: 4 }}>
+                        <div style={{ padding: '5px 10px', background: 'rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Space size={6}>
+                            <Tag color="green" style={{ margin: 0, fontSize: 11 }}>🎬 当前生效视频</Tag>
+                            <Text style={{ fontSize: 12 }}>分镜 {activeShot.index + 1}</Text>
+                          </Space>
+                          <Tag style={{ margin: 0, fontSize: 10 }}>{activeShot.durationSeconds || 4}s</Tag>
+                        </div>
+                        <video
+                          key={activeVideoUrl}
+                          src={toWebviewUrl(activeVideoUrl)}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          style={{ width: '100%', maxHeight: 220, background: '#000', display: 'block' }}
+                        />
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
                 {/* ── 1. 素材槽位区 (Asset Slots) ── */}
                 <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-base, rgba(255,255,255,0.08))' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -694,7 +720,7 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-            styles={{ body: { flex: 1, overflowY: 'auto', padding: 8 } }}
+            styles={{ body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: 8 } }}
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text strong>版本画廊 ({activeShot?.versionHistory?.length || 0})</Text>
@@ -728,17 +754,13 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
                       </div>
 
                       {isVideo ? (
-                        <div style={{ position: 'relative', width: '100%', height: 110, borderRadius: 6, overflow: 'hidden', background: '#000' }}>
+                        <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden', background: '#000', marginBottom: 4 }}>
                           <video
                             src={toWebviewUrl(ver.url)}
-                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                          />
-                          <Button
-                            type="primary"
-                            shape="circle"
-                            icon={<PlayCircleOutlined />}
-                            style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0.85 }}
-                            onClick={() => setPreviewVideoUrl(toWebviewUrl(ver.url))}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            style={{ width: '100%', maxHeight: 130, objectFit: 'contain', display: 'block' }}
                           />
                         </div>
                       ) : (
@@ -788,6 +810,9 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
         footer={null}
         title="选择项目角色或场景作为参考图"
         width={600}
+        zIndex={2500}
+        destroyOnClose
+        getContainer={() => document.body}
       >
         <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
           <Title level={5}>角色立绘</Title>
@@ -849,16 +874,44 @@ export const ShotStudioModal: React.FC<Props> = ({ open, onClose, pipelineId: in
         footer={null}
         width={720}
         title="镜头视频预览"
+        zIndex={3000}
+        destroyOnClose
+        getContainer={() => document.body}
       >
         {previewVideoUrl && (
           <video
             src={previewVideoUrl}
             controls
             autoPlay
-            style={{ width: '100%', maxHeight: '65vh', borderRadius: 8, background: '#000' }}
+            playsInline
+            style={{ width: '100%', maxHeight: '65vh', borderRadius: 8, background: '#000', display: 'block' }}
           />
         )}
       </Modal>
+    </div>
+  );
+};
+
+export interface ShotStudioModalProps {
+  open: boolean;
+  onClose: () => void;
+  pipelineId?: string;
+}
+
+export const ShotStudioModal: React.FC<ShotStudioModalProps> = ({ open, onClose, pipelineId }) => {
+  if (!open) return null;
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width="96vw"
+      style={{ top: 16, paddingBottom: 0 }}
+      styles={{ body: { height: '88vh', padding: '12px 16px', display: 'flex', flexDirection: 'column' } }}
+      title={null}
+      closable={false}
+    >
+      <ShotStudioWorkspace pipelineId={pipelineId} showHeader onClose={onClose} />
     </Modal>
   );
 };

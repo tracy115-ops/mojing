@@ -14,7 +14,7 @@ export interface SceneImageResult {
 
 export async function runSceneImage(
   scenes: SceneAnchor[],
-  ctx: { aspectRatio: AspectRatio; style?: string; imageTier: ModelTier; novelProjectId: string },
+  ctx: { aspectRatio: AspectRatio; style?: string; imageTier: ModelTier; novelProjectId: string; shouldAbort?: () => boolean },
   onProgress?: (done: number, total: number) => void,
 ): Promise<SceneImageResult> {
   if (!scenes.length) return { scenes, failed: [] };
@@ -29,6 +29,9 @@ export async function runSceneImage(
   if (total === 0) return { scenes: result, failed: [] };
 
   for (let i = 0; i < scenes.length; i++) {
+    if (ctx.shouldAbort?.()) {
+      break;
+    }
     const s = scenes[i];
     if (result[i].backgroundImage) continue;
     try {
@@ -65,6 +68,28 @@ export async function runSceneImage(
   }
 
   return { scenes: result, failed };
+}
+
+export async function generateSingleSceneImage(
+  scene: SceneAnchor,
+  ctx: { aspectRatio?: AspectRatio; style?: string; imageTier?: ModelTier; novelProjectId: string },
+): Promise<string> {
+  const dims = aspectRatioToDims(ctx.aspectRatio || '16:9');
+  const scenePrompt = await enrichScenePromptWithLLM(scene, ctx.style);
+  const img = await providerRouter.generateImage({
+    taskType: 'scene',
+    prompt: scenePrompt,
+    width: dims.w,
+    height: dims.h,
+    style: ctx.style,
+  });
+  const savedPath = await saveAsset(
+    ctx.novelProjectId,
+    'background',
+    img.imageData,
+    `scene_${sanitizeFileName(scene.name)}_${Date.now()}`,
+  );
+  return savedPath;
 }
 
 function sanitizeFileName(s: string): string {
