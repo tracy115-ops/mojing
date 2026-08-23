@@ -116,7 +116,7 @@ export async function runVideoGen(
 }
 
 /**
- * 单镜头生成视频片段（供单镜头重生成与精修使用）
+ * 单镜头生成视频片段（供单镜头工作台、重生成与精修使用）
  */
 export async function generateSingleVideoClip(
   shot: ShotSpec,
@@ -134,8 +134,18 @@ async function generateOne(
   const [w, h] = parseResolution(options.spec.resolution);
   let referenceImages: string[] = [];
   if (enableI2V) {
+    // 0. 优先使用用户在分镜工作台显式绑定的自定义参考图
+    if (shot.customReferenceImages && shot.customReferenceImages.length > 0) {
+      for (const img of shot.customReferenceImages) {
+        const dataUri = await readAsDataUri(img);
+        if (dataUri) {
+          referenceImages.push(dataUri);
+        }
+      }
+    }
+
     // 1. 优先使用本镜头的专属关键帧
-    if (shot.keyframeImage) {
+    if (referenceImages.length === 0 && shot.keyframeImage) {
       const dataUri = await readAsDataUri(shot.keyframeImage);
       if (dataUri) {
         referenceImages.push(dataUri);

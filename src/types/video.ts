@@ -320,6 +320,24 @@ export interface ShotSpec {
   durationSeconds: 3 | 5 | 10 | 15 | 18;
   /** 步 8 产物:TTS 音频路径/URL */
   audioTrack?: string;
+  /** 单镜头工作台：手动绑定的参考图片 (最多9张) */
+  customReferenceImages?: string[];
+  /** 单镜头工作台：手动绑定的参考视频 (最多3条) */
+  customReferenceVideos?: string[];
+  /** 单镜头工作台：手动指定的自定义音频 */
+  customAudioUrl?: string;
+  /** 单镜头生成历史版本库 (版本画廊) */
+  versionHistory?: Array<{
+    id: string;
+    type: 'image' | 'video';
+    url: string;
+    createdAt: string;
+    prompt?: string;
+    model?: string;
+    durationSeconds?: number;
+  }>;
+  /** 当前选定生效的版本 ID */
+  selectedVersionId?: string;
 }
 
 export type CameraMovementOption =

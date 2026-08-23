@@ -150,9 +150,11 @@ interface VideoStoreState {
   ) => void;
 
   // --- Granular Manual Interventions (Human-in-the-Loop) ---
-  updateSceneSpecShot: (novelProjectId: string, shotId: string, updates: Partial<StoryboardShot> & Pick<Partial<ShotSpec>, 'costumeVariantRefs'>) => void;
-  addSceneSpecShot: (novelProjectId: string, shot: Omit<StoryboardShot, 'id' | 'index'>) => void;
+  updateSceneSpecShot: (novelProjectId: string, shotId: string, updates: Partial<StoryboardShot> & Partial<ShotSpec>) => void;
+  addSceneSpecShot: (novelProjectId: string, shot: Omit<StoryboardShot, 'id' | 'index'> & Partial<ShotSpec>) => void;
   deleteSceneSpecShot: (novelProjectId: string, shotId: string) => void;
+  addShotVersion: (novelProjectId: string, shotId: string, version: { id: string; type: 'image' | 'video'; url: string; createdAt: string; prompt?: string; model?: string; durationSeconds?: number }) => void;
+  selectShotVersion: (novelProjectId: string, shotId: string, versionId: string) => void;
   updateSceneSpecCharacter: (novelProjectId: string, characterId: string, updates: { portraitImage?: string; appearance?: string; name?: string }) => void;
   updateSceneSpecScene: (novelProjectId: string, sceneId: string, updates: { backgroundImage?: string; description?: string; name?: string }) => void;
 
@@ -345,7 +347,19 @@ function shrinkForPersistence(proj: VideoProjectState): VideoProjectState {
     });
     const shots = sceneSpec.shots?.map((sh) => {
       const keyframeImage = stripOversizedDataUri(sh.keyframeImage);
-      if (keyframeImage !== sh.keyframeImage) { specChanged = true; return { ...sh, keyframeImage }; }
+      const customReferenceImages = sh.customReferenceImages?.map(stripOversizedDataUri).filter(Boolean) as string[] | undefined;
+      const versionHistory = sh.versionHistory?.map((v) => ({
+        ...v,
+        url: stripOversizedDataUri(v.url) || v.url,
+      }));
+      if (
+        keyframeImage !== sh.keyframeImage ||
+        customReferenceImages !== sh.customReferenceImages ||
+        versionHistory !== sh.versionHistory
+      ) {
+        specChanged = true;
+        return { ...sh, keyframeImage, customReferenceImages, versionHistory };
+      }
       return sh;
     });
     if (specChanged) {
@@ -759,6 +773,71 @@ export const useVideoStore = create<VideoStoreState>()(
         projects: {
           ...s.projects,
           [novelProjectId]: touch({ ...proj, shots, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  addShotVersion: (novelProjectId, shotId, version) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      let sceneSpec = proj.sceneSpec;
+      if (sceneSpec?.shots) {
+        sceneSpec = {
+          ...sceneSpec,
+          shots: sceneSpec.shots.map((sh) => {
+            if (sh.id === shotId) {
+              const history = [version, ...(sh.versionHistory || [])];
+              const updates: Partial<ShotSpec> = {
+                versionHistory: history,
+                selectedVersionId: version.id,
+              };
+              if (version.type === 'image') {
+                updates.keyframeImage = version.url;
+              }
+              return { ...sh, ...updates };
+            }
+            return sh;
+          }),
+        };
+      }
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec }),
+        },
+      };
+    });
+  },
+
+  selectShotVersion: (novelProjectId, shotId, versionId) => {
+    set((s) => {
+      const proj = s.projects[novelProjectId];
+      if (!proj) return s;
+      let sceneSpec = proj.sceneSpec;
+      if (sceneSpec?.shots) {
+        sceneSpec = {
+          ...sceneSpec,
+          shots: sceneSpec.shots.map((sh) => {
+            if (sh.id === shotId) {
+              const found = sh.versionHistory?.find((v) => v.id === versionId);
+              const updates: Partial<ShotSpec> = {
+                selectedVersionId: versionId,
+              };
+              if (found?.type === 'image') {
+                updates.keyframeImage = found.url;
+              }
+              return { ...sh, ...updates };
+            }
+            return sh;
+          }),
+        };
+      }
+      return {
+        projects: {
+          ...s.projects,
+          [novelProjectId]: touch({ ...proj, sceneSpec }),
         },
       };
     });

@@ -32,6 +32,7 @@ import StageInputEditor from './StageInputEditor';
 import ExportVideoModal from './ExportVideoModal';
 import VideoPromptSettingsModal from './VideoPromptSettingsModal';
 import VideoTimelineDrawer from './VideoTimelineDrawer';
+import { ShotStudioModal } from './ShotStudioModal';
 import { runFromFirstFailedStage, runFromStage, runSingleStage, abortPipeline } from '@/services/video/core/pipeline-runner';
 import { RUNTIME_STAGE_ORDER } from '@/services/video/core/stage-handlers';
 import { logger } from '@/services/log';
@@ -92,7 +93,7 @@ const ShotRow: React.FC<{
       videoPrompt: editVideoPrompt.trim(),
       sourceText: editSourceText.trim() || undefined,
       cameraMovement: editCamera || undefined,
-      durationSeconds: editDuration || 5,
+      durationSeconds: (editDuration || 5) as any,
       location: editLocation.trim() || undefined,
     });
     setEditModalOpen(false);
@@ -600,6 +601,7 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
   const [focusStage, setFocusStage] = useState<VideoStage | null>(null);
   const [promptSettingsOpen, setPromptSettingsOpen] = useState(false);
   const [timelineDrawerOpen, setTimelineDrawerOpen] = useState(false);
+  const [shotStudioOpen, setShotStudioOpen] = useState(false);
 
   const novelTitle = useProjectStore((s) => {
     if (!pipelineId || !exists) return undefined;
@@ -696,6 +698,15 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
           )}
         </Space>
         <Space size={4}>
+          <Button
+            size="small"
+            type="primary"
+            icon={<AppstoreOutlined />}
+            onClick={() => setShotStudioOpen(true)}
+            style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
+          >
+            分镜精修工作台
+          </Button>
           <Button
             size="small"
             icon={<SlidersOutlined />}
@@ -1294,6 +1305,13 @@ const VideoPipelinePanel: React.FC<VideoPipelinePanelProps> = ({ pipelineId }) =
         onClose={() => setTimelineDrawerOpen(false)}
         pipelineId={pipelineId}
         project={project}
+      />
+
+      {/* 沉浸式分镜精修工作台 Modal */}
+      <ShotStudioModal
+        open={shotStudioOpen}
+        onClose={() => setShotStudioOpen(false)}
+        pipelineId={pipelineId}
       />
     </div>
   );
