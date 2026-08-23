@@ -29,7 +29,7 @@ import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { ShotSpec, GeneratedClip, VideoProjectState, AspectRatio } from '@/types/video';
-import { saveAsset, toWebviewUrl } from '@/services/video/asset-store';
+import { saveAsset, toWebviewUrl, resolveLocalPath, isValidVideoClip } from '@/services/video/asset-store';
 import { generateSingleKeyframe } from '@/services/video/core/step-keyframe';
 import { generateSingleVideoClip } from '@/services/video/core/step-video-gen';
 import { generateSingleTTS } from '@/services/video/core/step-tts';
@@ -424,23 +424,59 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                   const selectedVideo = activeShot.versionHistory?.find((v) => v.id === activeShot.selectedVersionId && v.type === 'video');
                   const activeVideoUrl = selectedVideo?.url || currentClip?.videoUrl;
                   if (activeVideoUrl) {
+                    const resolvedSrc = toWebviewUrl(resolveLocalPath(activeVideoUrl));
                     return (
-                      <div style={{ background: '#000', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', marginBottom: 4 }}>
-                        <div style={{ padding: '5px 10px', background: 'rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{
+                        background: '#000',
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        marginBottom: 6,
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                      }}>
+                        <div style={{
+                          padding: '6px 12px',
+                          background: 'rgba(255,255,255,0.06)',
+                          borderBottom: '1px solid rgba(255,255,255,0.08)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                        }}>
                           <Space size={6}>
-                            <Tag color="green" style={{ margin: 0, fontSize: 11 }}>🎬 当前生效视频</Tag>
-                            <Text style={{ fontSize: 12 }}>分镜 {activeShot.index + 1}</Text>
+                            <Tag color="green" style={{ margin: 0, fontSize: 11, fontWeight: 600 }}>🎬 当前生效视频</Tag>
+                            <Text style={{ fontSize: 12, fontWeight: 600 }}>分镜 #{activeShot.index + 1}</Text>
                           </Space>
-                          <Tag style={{ margin: 0, fontSize: 10 }}>{activeShot.durationSeconds || 4}s</Tag>
+                          <Space size={6}>
+                            <Tag style={{ margin: 0, fontSize: 10 }}>时长: {activeShot.durationSeconds || 4}s</Tag>
+                            <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>{resolution}</Tag>
+                          </Space>
                         </div>
-                        <video
-                          key={activeVideoUrl}
-                          src={toWebviewUrl(activeVideoUrl)}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          style={{ width: '100%', maxHeight: 220, background: '#000', display: 'block' }}
-                        />
+                        <div style={{
+                          width: '100%',
+                          height: 250,
+                          background: '#000',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          overflow: 'hidden',
+                        }}>
+                          <video
+                            key={resolvedSrc}
+                            src={resolvedSrc}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            style={{
+                              maxWidth: '100%',
+                              maxHeight: '100%',
+                              width: 'auto',
+                              height: 'auto',
+                              objectFit: 'contain',
+                              outline: 'none',
+                              display: 'block',
+                            }}
+                          />
+                        </div>
                       </div>
                     );
                   }
@@ -754,18 +790,28 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                       </div>
 
                       {isVideo ? (
-                        <div style={{ width: '100%', borderRadius: 6, overflow: 'hidden', background: '#000', marginBottom: 4 }}>
+                        <div style={{
+                          width: '100%',
+                          height: 140,
+                          borderRadius: 6,
+                          overflow: 'hidden',
+                          background: '#000',
+                          marginBottom: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
                           <video
-                            src={toWebviewUrl(ver.url)}
+                            src={toWebviewUrl(resolveLocalPath(ver.url))}
                             controls
                             playsInline
                             preload="metadata"
-                            style={{ width: '100%', maxHeight: 130, objectFit: 'contain', display: 'block' }}
+                            style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain', display: 'block' }}
                           />
                         </div>
                       ) : (
                         <Image
-                          src={toWebviewUrl(ver.url)}
+                          src={toWebviewUrl(resolveLocalPath(ver.url))}
                           width="100%"
                           height={110}
                           style={{ objectFit: 'cover', borderRadius: 6 }}
