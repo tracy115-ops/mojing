@@ -320,7 +320,6 @@ function buildPortraitPrompt(
       '单人全身立绘，单人居中，从头到脚完整可见',
       '纯色干净简洁背景',
       artTypeTag,
-      '超高清画面，精致细节，无文字，无水印，无多余人物，无三视图',
     ].filter(Boolean);
     return parts.join('，');
   }
@@ -334,7 +333,6 @@ function buildPortraitPrompt(
     'single centered full-body character portrait, fully visible from head to toe',
     'plain solid clean background',
     artTypeTag,
-    'masterpiece quality, sharp focus, no text, no watermark, no extra people, no turnaround sheet',
   ].filter(Boolean);
   return parts.join(', ');
 }

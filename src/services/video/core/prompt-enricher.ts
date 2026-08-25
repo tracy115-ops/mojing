@@ -69,9 +69,9 @@ CRITICAL MANDATE:
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
       if (isChinese) {
-        return `【角色主体与服装造型】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}。${enriched}，单人居中全身立绘，从头到脚完整可见，纯色干净简洁背景，专业工作室光照，${aestheticTag ? `${aestheticTag}，` : ''}${styleEnhancer}，高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图`;
+        return `角色立绘：${c.name}，${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}。${enriched}，单人全身立绘，纯色干净背景，${styleEnhancer || '写实电影质感'}`;
       }
-      return `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}. ${enriched}, single centered full-body character portrait, fully visible from head to toe, plain solid clean background, professional studio lighting, ${aestheticTag ? `${aestheticTag}, ` : ''}${styleEnhancer}, masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views`;
+      return `Character Portrait: ${c.name}, ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}. ${enriched}, single centered full-body character portrait, plain clean background, ${styleEnhancer || 'cinematic style'}`;
     }
   } catch (err) {
     console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
@@ -100,10 +100,10 @@ export async function enrichScenePromptWithLLM(
 【核心要求】：
 1. 必须使用 100% 纯中文！严禁包含英文单词或中英混排。
 2. 剔除所有人物、角色、姓名和动作，仅描述建筑、自然、环境光影。
-3. 显式包含"纯环境空景，无人物，无角色"。输出纯文本，不超过100字。`;
+3. 输出纯文本，不超过80字。`;
 
   const defaultSystemEn = `You are an expert AI landscape prompt engineer. Convert scene description into English background landscape prompt.
-CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY physical scenery. Specify "empty background scenery, zero humans, no people". Keep under 100 words.`;
+CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY physical scenery. Keep under 80 words.`;
 
   const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
 
@@ -123,9 +123,9 @@ CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY 
     const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
     if (enriched && enriched.length > 10) {
       if (isChinese) {
-        return `${enriched}，纯环境空景，无人物，无角色，${styleZh}风格，8K超高清细节，电影级光照，无文字，无水印`;
+        return `环境空景：${s.name}，${enriched}，${styleZh}风格，纯环境空镜`;
       }
-      return `${enriched}, empty background scenery, zero humans, no people, no characters, ${style ? `${style} style` : ''}, 8k detail, cinematic lighting, no text, no watermark`;
+      return `Landscape establishing shot: ${s.name}, ${enriched}, ${style ? `${style} style` : 'cinematic style'}, empty background scenery`;
     }
   } catch (err) {
     console.warn(`enrichScenePromptWithLLM: LLM fallback for ${s.name}`, err);
@@ -143,36 +143,25 @@ function defaultCharacterPrompt(
   const fullText = `${c.name} ${c.appearance} ${style || ''}`;
   const isChinese = detectInputLanguage(fullText) === 'zh';
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const aestheticTag = getCharacterAestheticTag(fullText);
 
   if (isChinese) {
-    const artTypeTag = isCartoonOrAnime
-      ? '高清2D二次元单人角色立绘，精细动漫画作'
-      : '写实人像摄影，高品质电影角色照，超高清精细特征';
-
+    const artTypeTag = isCartoonOrAnime ? '2D动漫角色立绘' : (style ? `${style}风格` : '高清写实角色立绘');
     return [
-      `【角色主体与服装】${c.name}：${c.appearance}${costumeOverride ? `，身穿专属服装【${costumeOverride}】` : ''}`,
-      '单人居中全身立绘，从头到脚完整可见',
-      '纯色干净简洁背景，专业工作室光照',
-      aestheticTag,
+      `角色立绘：${c.name}，${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
+      '单人全身立绘，从头到脚完整展示',
+      '纯净浅色背景',
       artTypeTag,
       styleEnhancer,
-      '高清晰度，极致细节，无文字，无水印，无签名，无多余人物，无残缺，无三视图',
     ].filter(Boolean).join('，');
   }
 
-  const artTypeTag = isCartoonOrAnime
-    ? 'high quality 2D anime single character portrait, detailed anime artwork'
-    : 'photorealistic portrait photography, high quality cinematic character photo, hyperrealistic detailed features';
-
+  const artTypeTag = isCartoonOrAnime ? '2D anime character portrait' : (style ? `${style} style` : 'realistic character portrait');
   return [
-    `[Character & Costume Subject] ${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
-    'single centered full-body character portrait, fully visible from head to toe',
-    'plain solid clean background, professional studio lighting',
-    aestheticTag,
+    `Character Portrait: ${c.name}, ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
+    'single full-body character portrait, fully visible from head to toe',
+    'plain clean background',
     artTypeTag,
     styleEnhancer,
-    'masterpiece quality, sharp focus, no text, no watermark, no signature, no extra people, no bad anatomy, no character sheet, no turnaround, no multiple views',
   ].filter(Boolean).join(', ');
 }
 

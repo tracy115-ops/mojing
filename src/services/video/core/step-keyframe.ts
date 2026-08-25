@@ -301,7 +301,6 @@ function buildKeyframePrompt(
       shot.cameraMovement ? `镜头：${shot.cameraMovement}` : '',
       shot.mood ? `氛围：${shot.mood}` : '',
       style ? `${style}风格` : '电影写实风格',
-      '超高清画面，精致细节，无文字，无水印，无三视图，无分屏',
     ].filter(Boolean);
     return parts.join('，');
   }
@@ -314,7 +313,6 @@ function buildKeyframePrompt(
     shot.cameraMovement ? `camera: ${shot.cameraMovement}` : '',
     shot.mood ? `mood: ${shot.mood}` : '',
     style ? `${style} style` : 'cinematic style',
-    'high quality, sharp focus, no text, no watermark, no split screen, no character sheet',
   ].filter(Boolean);
 
   return parts.join(', ');

@@ -186,11 +186,12 @@ async function generateOne(
     }
   }
 
-  const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters);
+  const isI2VMode = enableI2V && referenceImages.length > 0;
+  const enhancedPrompt = buildEnhancedVideoPrompt(shot, options.characters, isI2VMode);
   const targetModel = options.model ?? tierToDefaultModel(options.spec.videoTier);
   const presentCharsForSeed = findMatchingCharacters(shot, options.characters);
   const seed = (shot as any).seed ?? presentCharsForSeed[0]?.seed ?? (Math.abs((shot.index + 1) * 31337 + Date.now()) % 2147483647);
-  const negativePrompt = 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, poorly drawn face, camera shake, erratic camera movement, rapid spinning, motion sickness, dizzying rotation, chaotic motion, extreme shake';
+  const negativePrompt = 'deformed face, blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch, chaotic motion, rapid spinning, camera shake';
 
   let response;
   try {
@@ -321,41 +322,56 @@ export function getStyleEnhancers(promptText: string, stylePreset?: string): str
 function buildEnhancedVideoPrompt(
   shot: ShotSpec,
   characters?: CharacterAnchor[],
+  isI2V = false,
   stylePreset?: string,
 ): string {
   const basePrompt = shot.videoPrompt.trim();
   const isChinese = detectInputLanguage(basePrompt + ' ' + (shot.mood || '') + ' ' + (shot.narration || '')) === 'zh';
-
   const presentChars = findMatchingCharacters(shot, characters);
 
-  const charDna = presentChars.length > 0
-    ? buildMultiCharacterDnaTokens(presentChars, shot.costumeVariantRefs, isChinese, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`)
-    : '';
+  // 在 I2V (图生视频) 模式下，首帧已经包含角色的面部与服饰特征，不需要在提示词中重复堆叠外貌形容词，
+  // 提示词聚焦于“动作、神态与运镜”，防止视频模型重新“画蛇添足”导致融脸和服饰变色。
+  // 仅在纯文生视频 (T2V) 模式下，才需要注入完整的角色 DNA 外貌。
+  let charHeader = '';
+  if (presentChars.length > 0) {
+    if (isI2V) {
+      charHeader = isChinese
+        ? `角色：${presentChars.map((c) => c.name).join('、')}`
+        : `Character: ${presentChars.map((c) => c.name).join(', ')}`;
+    } else {
+      charHeader = buildMultiCharacterDnaTokens(
+        presentChars,
+        shot.costumeVariantRefs,
+        isChinese,
+        `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
+      );
+    }
+  }
 
   const camera = formatCameraMovement(shot.cameraMovement, isChinese);
   const mood = shot.mood
     ? (isChinese ? `${shot.mood}氛围` : `${shot.mood} atmosphere`)
     : '';
   const style = stylePreset ? (isChinese ? `${stylePreset}风格` : `${stylePreset} style`) : '';
-  // 音频与台词增强线索（为 Agnes 2.0 / Vidu 等支持原生音频的模型注入精准台词与环境声音）
+
+  // 音频与台词增强线索
   let audioCues = '';
   if (shot.dialogue && shot.dialogue.length > 0) {
     const lines = shot.dialogue.map((d) => `${d.speaker}：“${d.text}”`).join('；');
-    audioCues = isChinese ? `台词对白声音：${lines}` : `Character voice dialogue: ${lines}`;
+    audioCues = isChinese ? `台词声音：${lines}` : `Dialogue: ${lines}`;
   } else if (shot.narration) {
-    audioCues = isChinese ? `环境音效与旁白：${shot.narration}` : `Ambient sound and narration: ${shot.narration}`;
+    audioCues = isChinese ? `旁白声音：${shot.narration}` : `Narration: ${shot.narration}`;
   }
 
   const delimiter = isChinese ? '，' : ', ';
 
   return [
-    charDna,
+    charHeader,
     basePrompt,
     audioCues,
     camera,
     mood,
     style,
-    isChinese ? '高清流畅，自然微动，画面平稳舒适，无剧烈晃动，无眩晕感' : 'high quality, smooth natural motion, steady tripod shot, no camera shake, no rapid rotation',
   ].filter(Boolean).join(delimiter);
 }
 
