@@ -459,8 +459,17 @@ export class AgnesImageProvider extends BaseImageProvider {
       model,
       prompt: request.prompt,
       size: `${width}x${height}`,
+      n: 1,
+      response_format: 'b64_json',
       extra_body: extraBody,
     };
+
+    if (request.negativePrompt) {
+      body.negative_prompt = request.negativePrompt;
+    }
+    if (request.seed !== undefined && request.seed !== null) {
+      body.seed = request.seed;
+    }
 
     const response = await httpFetch(url, {
       method: 'POST',
@@ -476,9 +485,16 @@ export class AgnesImageProvider extends BaseImageProvider {
 
     const data = await response.json();
     const image = data.data?.[0];
+    const rawImage = image?.b64_json
+      ? (image.b64_json.startsWith('data:') ? image.b64_json : `data:image/png;base64,${image.b64_json}`)
+      : (image?.url ?? '');
+
+    if (!rawImage) {
+      throw new Error(`Agnes Image API returned empty image data: ${JSON.stringify(data)}`);
+    }
 
     return {
-      imageData: this.normalizeImageSrc(image?.b64_json ?? image?.url ?? ''),
+      imageData: this.normalizeImageSrc(rawImage),
       width,
       height,
       model,
