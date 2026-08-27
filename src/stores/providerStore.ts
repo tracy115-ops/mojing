@@ -228,7 +228,7 @@ export const useProviderStore = create<ProviderState>()(
       setVideoProvider: (provider, model, endpointId) => {
         let validModel = model ?? get().config.video.defaultModel;
         if (provider === 'agnes-video' && (!validModel || !validModel.startsWith('agnes-video'))) {
-          validModel = 'agnes-video-v2.0';
+          validModel = 'agnes-video-2.5-flash';
         }
         set((s) => ({
           config: {

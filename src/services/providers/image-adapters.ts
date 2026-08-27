@@ -432,15 +432,33 @@ export class AgnesImageProvider extends BaseImageProvider {
       ? `${baseUrl}/images/generations`
       : `${baseUrl}/v1/images/generations`;
 
+    // Agnes AI 官方标准: size 使用 "1K" 档位，配合 ratio 指定画幅宽高比
+    let agnesRatio = '1:1';
+    const ratioVal = width / height;
+    if (Math.abs(ratioVal - 16 / 9) < 0.15 || ratioVal > 1.4) {
+      agnesRatio = '16:9';
+    } else if (Math.abs(ratioVal - 9 / 16) < 0.15 || ratioVal < 0.6) {
+      agnesRatio = '9:16';
+    } else if (Math.abs(ratioVal - 2 / 3) < 0.15 || ratioVal < 0.8) {
+      agnesRatio = '2:3';
+    } else if (Math.abs(ratioVal - 3 / 2) < 0.15 || ratioVal > 1.2) {
+      agnesRatio = '3:2';
+    } else if (Math.abs(ratioVal - 3 / 4) < 0.15) {
+      agnesRatio = '3:4';
+    } else if (Math.abs(ratioVal - 4 / 3) < 0.15) {
+      agnesRatio = '4:3';
+    }
+
+    const isImg2Img = !!request.referenceImages?.length;
+
     const extraBody: Record<string, unknown> = {
-      response_format: 'b64_json',
+      response_format: isImg2Img ? 'b64_json' : 'url',
     };
-    // 图生图:Agnes 文档明确要求 image 数组里的元素是 "public URL 或 Data URI Base64"。
-    // Data URI 必须保留 `data:image/...;base64,` 前缀(剥掉会触发 'invalid input image')。
-    // 本地 webview URL(http://asset.localhost/...)Agnes 后端拉不到,自动转成 data URI。
-    if (request.referenceImages?.length) {
+
+    // 图生图: Agnes 官方要求在 extra_body.image 中传入 Data URI 或公网 URL 数组
+    if (isImg2Img) {
       const cleaned: string[] = [];
-      for (const r of request.referenceImages) {
+      for (const r of request.referenceImages!) {
         let candidate = r;
         if (candidate && !candidate.startsWith('data:') && !isRemoteUrl(candidate)) {
           try {
@@ -455,23 +473,18 @@ export class AgnesImageProvider extends BaseImageProvider {
       }
     }
 
-    // Agnes AI 官方标准分辨率对齐: 1024x1024 (方形), 768x1024 (竖版立绘), 1024x768 (横版场景)
-    let agnesSize = '1024x1024';
-    const ratio = width / height;
-    if (ratio > 1.3) {
-      agnesSize = '1024x768';
-    } else if (ratio < 0.8) {
-      agnesSize = '768x1024';
-    }
-
+    // 按照 Agnes 官方文档规范构造 Body (严禁在顶层放置 response_format)
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
-      size: agnesSize,
-      n: 1,
-      response_format: 'b64_json',
+      size: '1K',
+      ratio: agnesRatio,
       extra_body: extraBody,
     };
+
+    if (!isImg2Img) {
+      body.return_base64 = true;
+    }
 
     if (request.negativePrompt) {
       body.negative_prompt = request.negativePrompt;

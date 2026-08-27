@@ -440,30 +440,21 @@ export class AgnesVideoProvider extends BaseVideoProvider {
   readonly providerId = 'agnes-video';
 
   /** 记住上次提交用的 model,checkStatus 时拼到 query 里(Agnes API 要求非默认模型必填) */
-  private lastModel: string = 'agnes-video-v2.0';
+  private lastModel: string = 'agnes-video-2.5-flash';
 
   /**
    * 记住上次提交拿到的查询键 + 类型。
-   *
-   * Agnes V2.0 创建任务响应同时返回 task_id(`task_xxx` 前缀)和 video_id
-   * (`video_xxx` 前缀),两者不能混用:
-   *   - 用 video_id 查询 → 必须走推荐接口 `/agnesapi?video_id=<VIDEO_ID>`
-   *   - 用 task_id 查询 → 必须走兼容接口 `/v1/videos/<TASK_ID>`
-   *
-   * 混用会返回 400 `{"code":"task_not_exist"}`。之前代码把 video_id 喂进
-   * `/v1/videos/{id}` 就是踩了这个坑。
+   * Agnes 创建任务响应同时返回 task_id(`task_xxx` 前缀)和 video_id (`video_xxx` 前缀)
    */
+  private requestedDurationSeconds: number | undefined = 5;
+  private lastQueryKind: 'video_id' | 'task_id' = 'video_id';
   private lastQueryId: string = '';
-  private lastQueryKind: 'video_id' | 'task_id' = 'task_id';
-
-  /** 记住用户提交时想要的时长(秒),checkStatus 完成时回算成实际时长 */
-  private requestedDurationSeconds: number | undefined;
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
-    let model = request.model?.trim() || 'agnes-video-v2.0';
+    let model = request.model?.trim() || 'agnes-video-2.5-flash';
     if (!model.startsWith('agnes-video')) {
-      model = 'agnes-video-v2.0';
+      model = 'agnes-video-2.5-flash';
     }
     this.lastModel = model;
     this.requestedDurationSeconds = request.durationSeconds;
@@ -495,12 +486,13 @@ export class AgnesVideoProvider extends BaseVideoProvider {
         else if (Math.abs(aspect - 21 / 9) < 0.1) aspect_ratio = '21:9';
       }
 
+      const targetModel = model.startsWith('agnes-video-2.5') ? model : 'agnes-video-2.5';
       body = {
-        model: 'agnes-video-2.5',
+        model: targetModel,
         prompt: request.prompt,
         size: '720P',
         aspect_ratio,
-        seconds,
+        seconds: String(seconds),
       };
 
       if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
@@ -678,6 +670,7 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       // 严禁误取 `remixed_from_video_id`(此字段为 video_xxx 格式的 ID 字符串，非播放 URL，会导致播放器显示纯文字与合成失败)。
       // 优先从官方及各中转站的标准 HTTP(S) URL 字段中提取播放地址：
       let videoUrl =
+        (typeof data.metadata?.url === 'string' && /^https?:\/\//i.test(data.metadata.url) ? data.metadata.url : null) ??
         (typeof data.video_url === 'string' && /^https?:\/\//i.test(data.video_url) ? data.video_url : null) ??
         (typeof data.url === 'string' && /^https?:\/\//i.test(data.url) ? data.url : null) ??
         (typeof data.video === 'string' && /^https?:\/\//i.test(data.video) ? data.video : null) ??
