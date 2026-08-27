@@ -25,6 +25,8 @@ interface CollectedRef {
   url: string;
   /** 三视图立绘:需要裁出中间 1/3 作为 reference */
   cropMiddleThird?: boolean;
+  /** 角色名称，供提示词与参考图绑定 */
+  charName?: string;
 }
 
 export async function runKeyframe(
@@ -72,9 +74,11 @@ export async function runKeyframe(
         variant = autoResolveCostumeVariant(c, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`);
       }
       if (variant && variant.portraitImage) {
-        charRefs.push({ url: variant.portraitImage });
+        charRefs.push({ url: variant.portraitImage, charName: c.name });
       } else if (c.portraitImage) {
-        charRefs.push({ url: c.portraitImage });
+        charRefs.push({ url: c.portraitImage, charName: c.name });
+      } else if (c.turnaroundImage) {
+        charRefs.push({ url: c.turnaroundImage, cropMiddleThird: true, charName: c.name });
       }
     }
 
@@ -124,9 +128,16 @@ export async function runKeyframe(
       );
       const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
       const negPrompt = buildKeyframeNegativePrompt(presentChars, isChinese);
+      const prompt = buildKeyframePrompt(
+        shot,
+        ctx.characters,
+        ctx.style,
+        i > 0 ? result[i - 1] : undefined,
+        charRefs.map((cr) => cr.charName).filter(Boolean) as string[],
+      );
       const img = await providerRouter.generateImage({
         taskType: 'storyboard',
-        prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, i > 0 ? result[i - 1] : undefined),
+        prompt,
         negativePrompt: negPrompt,
         referenceImages,
         width: dims.w,
@@ -268,6 +279,7 @@ function buildKeyframePrompt(
   characters: CharacterAnchor[],
   style?: string,
   prevShot?: ShotSpec,
+  referenceCharNames?: string[],
 ): string {
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
   const presentChars = findMatchingCharacters(shot, characters);
@@ -280,7 +292,22 @@ function buildKeyframePrompt(
     `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
   );
 
-  // 2. 前后分镜接戏与空间连续性
+  // 2. 参考图身份映射（遵循 2026 多图合成规范，杜绝动物与拟人混淆、杜绝多余路人）
+  let refBindingText = '';
+  if (referenceCharNames && referenceCharNames.length > 0) {
+    if (referenceCharNames.length === 1) {
+      refBindingText = isChinese
+        ? `【参考图】严格以此参考图锁定角色【${referenceCharNames[0]}】的原始面貌体态与特征`
+        : `[Reference] Match character [${referenceCharNames[0]}] appearance strictly from the reference image`;
+    } else {
+      const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应角色【${name}】`).join('，');
+      refBindingText = isChinese
+        ? `【多图参考对应】${mappings}，严格按照各参考图还原体态外貌与色彩，画面中仅出现以上在场角色，严禁出现多余人物`
+        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, strict identity preservation`;
+    }
+  }
+
+  // 3. 前后分镜接戏与空间连续性
   let continuityText = '';
   if (prevShot) {
     const isSameScene = (prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId)
@@ -294,6 +321,7 @@ function buildKeyframePrompt(
 
   if (isChinese) {
     const parts = [
+      refBindingText,
       charDnaText,
       shot.videoPrompt,
       continuityText,
@@ -306,6 +334,7 @@ function buildKeyframePrompt(
   }
 
   const parts = [
+    refBindingText,
     charDnaText,
     shot.videoPrompt,
     continuityText,

@@ -19,13 +19,25 @@ export function buildCharacterDnaTokens(
   const appearance = (character.appearance || '').trim();
   const outfit = (costumeDesc || '').trim();
 
+  // 动物/宠物角色防拟人化与防兽人混淆保护
+  const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(name) ||
+    /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(appearance);
+  const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${name} ${appearance} ${outfit}`);
+
+  let zhMorphology = '';
+  let enMorphology = '';
+  if (isAnimal && !isExplicitAnthro) {
+    zhMorphology = '，真实自然动物形态（非人形、非兽人）';
+    enMorphology = ', natural quadruped animal form (non-humanoid, non-anthropomorphic)';
+  }
+
   // 中文 DNA 词组
   const zhOutfit = outfit ? `，身穿【${outfit}】` : '';
-  const zhTokens = `${name}（${appearance}${zhOutfit}）`;
+  const zhTokens = `${name}（${appearance}${zhMorphology}${zhOutfit}）`;
 
   // 英文 DNA 词组
   const enOutfit = outfit ? `, wearing ${outfit}` : '';
-  const enTokens = `${name} (${appearance}${enOutfit})`;
+  const enTokens = `${name} (${appearance}${enMorphology}${enOutfit})`;
 
   return {
     zh: zhTokens,
