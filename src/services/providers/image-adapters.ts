@@ -455,10 +455,19 @@ export class AgnesImageProvider extends BaseImageProvider {
       }
     }
 
+    // Agnes AI 官方标准分辨率对齐: 1024x1024 (方形), 768x1024 (竖版立绘), 1024x768 (横版场景)
+    let agnesSize = '1024x1024';
+    const ratio = width / height;
+    if (ratio > 1.3) {
+      agnesSize = '1024x768';
+    } else if (ratio < 0.8) {
+      agnesSize = '768x1024';
+    }
+
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
-      size: `${width}x${height}`,
+      size: agnesSize,
       n: 1,
       response_format: 'b64_json',
       extra_body: extraBody,
