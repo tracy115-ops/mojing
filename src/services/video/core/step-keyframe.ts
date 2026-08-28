@@ -259,6 +259,24 @@ export async function generateSingleKeyframe(
 import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters } from './character-dna';
 
 function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese: boolean): string {
+  const extraNegs: string[] = [];
+
+  for (const c of presentChars) {
+    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+    const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${c.name} ${c.appearance || ''}`);
+
+    if (isAnimal) {
+      if (isExplicitAnthro) {
+        extraNegs.push(isChinese ? '未穿衣的真实四足动物，普通宠物猫狗，普通野猫' : 'natural quadruped pet, naked animal, feral cat');
+      } else {
+        extraNegs.push(isChinese ? '兽人，拟人化人形，人类身体' : 'furry humanoid, anthropomorphic animal');
+      }
+    }
+  }
+
+  const extraStr = extraNegs.length > 0 ? `，${extraNegs.join('，')}` : '';
+
   if (presentChars.length === 0) {
     return isChinese
       ? '人物，角色，人类，女人，男人，人群，路人，多余人物，多头，多分身，分屏，三视图，文字，水印，签名'
@@ -266,12 +284,12 @@ function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese:
   }
   if (presentChars.length === 1) {
     return isChinese
-      ? '多个人物，第二个人，双人，多人，人群，路人，多余人物，复制人物，分身，多分屏，三视图，文字，水印，签名'
-      : '2people, multiple people, extra person, duplicate character, crowd, bystanders, 2persons, multi-character, split screen, text, watermark';
+      ? `多个人物，第二个人，双人，多人，人群，路人，多余人物，复制人物，分身，多分屏，三视图，文字，水印，签名${extraStr}`
+      : `2people, multiple people, extra person, duplicate character, crowd, bystanders, 2persons, multi-character, split screen, text, watermark${extraStr ? ', ' + extraStr : ''}`;
   }
   return isChinese
-    ? '额外多余人物，路人，无关人员，三视图，多分屏，文字，水印，签名'
-    : 'extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark';
+    ? `额外多余人物，路人，无关人员，第三人，三视图，多分屏，文字，水印，签名${extraStr}`
+    : `extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
 }
 
 function buildKeyframePrompt(
