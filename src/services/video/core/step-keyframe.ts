@@ -127,7 +127,11 @@ export async function runKeyframe(
         (shot.characterIds || []).some((sc: string) => sc === c.name || sc === c.id || (c.aliases || []).includes(sc)),
       );
       const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
-      const negPrompt = buildKeyframeNegativePrompt(presentChars, isChinese);
+      const negPrompt = buildKeyframeNegativePrompt(
+        presentChars,
+        isChinese,
+        `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
+      );
       const prompt = buildKeyframePrompt(
         shot,
         ctx.characters,
@@ -236,7 +240,11 @@ export async function generateSingleKeyframe(
   const prevShot = shotIndex > 0 ? allShots[shotIndex - 1] : undefined;
   const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
   const presentChars = findMatchingCharacters(shot, ctx.characters);
-  const negPrompt = buildKeyframeNegativePrompt(presentChars, isChinese);
+  const negPrompt = buildKeyframeNegativePrompt(
+    presentChars,
+    isChinese,
+    `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
+  );
   const img = await providerRouter.generateImage({
     taskType: 'storyboard',
     prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, prevShot),
@@ -256,9 +264,22 @@ export async function generateSingleKeyframe(
   );
 }
 
-import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters } from './character-dna';
+import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters, isCrowdScene } from './character-dna';
 
-function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese: boolean): string {
+function buildKeyframeNegativePrompt(
+  presentChars: CharacterAnchor[],
+  isChinese: boolean,
+  contextText = '',
+): string {
+  // 1. 如果分镜剧本或描述明确包含群体、街市、围观、大场面等群体情境：
+  // 绝对严禁将“人群、路人、多个人物、双人、多人”等加入负向词！确保背景人群自然生成！
+  if (isCrowdScene(contextText)) {
+    return isChinese
+      ? '分屏，三视图，多镜头拼接，文字，水印，签名，低质量，面部畸变，肢体变形'
+      : 'split screen, character sheet, collage, text, watermark, signature, bad anatomy, deformed face, deformed limbs';
+  }
+
+  // 2. 封闭/聚焦镜头（无群体描写）下的形态守卫与防前景幽灵角色控制
   const extraNegs: string[] = [];
 
   for (const c of presentChars) {
@@ -275,29 +296,6 @@ function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese:
     }
   }
 
-  // 统计在场人类角色数量
-  const humanCount = presentChars.filter((c) => {
-    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
-    const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${c.name} ${c.appearance || ''}`);
-    return !isAnimal || isExplicitAnthro;
-  }).length;
-
-  const femaleCount = presentChars.filter((c) => {
-    const isFemale = c.gender === 'female' || /(女|少女|女生|小师妹|姑娘|仙子|woman|girl|female)/i.test(`${c.name} ${c.appearance || ''}`);
-    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
-    return isFemale && !isAnimal;
-  }).length;
-
-  if (femaleCount === 1) {
-    extraNegs.push(isChinese ? '第二个女人，多名女性，双女人，额外女人，两位女性，女配角，路人女性' : 'second woman, 2women, two females, extra woman');
-  }
-
-  if (humanCount === 1) {
-    extraNegs.push(isChinese ? '第二个人类，双人人类，两个人，额外人类' : '2humans, two people, extra person');
-  }
-
   const extraStr = extraNegs.length > 0 ? `，${extraNegs.join('，')}` : '';
 
   if (presentChars.length === 0) {
@@ -307,12 +305,12 @@ function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese:
   }
   if (presentChars.length === 1) {
     return isChinese
-      ? `多个人物，第二个人，双人，多人，人群，路人，多余人物，复制人物，分身，多分屏，三视图，文字，水印，签名${extraStr}`
-      : `2people, multiple people, extra person, duplicate character, crowd, bystanders, 2persons, multi-character, split screen, text, watermark${extraStr ? ', ' + extraStr : ''}`;
+      ? `多头，多分身，分屏，三视图，文字，水印，签名，未提及的前景第二人${extraStr}`
+      : `split screen, character sheet, text, watermark, unmentioned extra foreground person${extraStr ? ', ' + extraStr : ''}`;
   }
   return isChinese
-    ? `第3人，第4人，额外多余人物，路人，无关人员，三视图，多分屏，文字，水印，签名${extraStr}`
-    : `3people, 4people, extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
+    ? `分屏，三视图，文字，水印，签名，未提及的前景额外第三人${extraStr}`
+    : `split screen, character sheet, text, watermark, unmentioned extra foreground character${extraStr ? ', ' + extraStr : ''}`;
 }
 
 function buildKeyframePrompt(
@@ -343,8 +341,8 @@ function buildKeyframePrompt(
     } else {
       const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应在场主体【${name}】`).join('，');
       refBindingText = isChinese
-        ? `【多图参考一一对应】${mappings}。画面中严格只允许出现上述${referenceCharNames.length}位对应主体，严禁凭空添加额外女性或男性人类，严禁将动物角色变异为人类`
-        : `[Strict Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}. Exactly ${referenceCharNames.length} entities only, strictly no extra human characters, no turning animals into humans`;
+        ? `【多图参考对应】${mappings}，画面前景主角严格按照各参考图还原体态外貌与色彩，主次层次分明`
+        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, foreground protagonists strictly match their corresponding reference images`;
     }
   }
 

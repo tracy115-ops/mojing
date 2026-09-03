@@ -126,6 +126,13 @@ export function findMatchingCharacters(
 }
 
 /**
+ * 智能判断当前分镜是否包含群体、路人、市集、军营、围观等多人/开放环境场景
+ */
+export function isCrowdScene(contextText = ''): boolean {
+  return /(人群|众人|大家|百姓|路人|街道|街市|市集|集市|集市上|热闹|喧闹|围观|众弟子|弟子们|同门|同窗|宾客|客官|商贾|百姓们|士兵|军队|看客|观众|走廊上的人|人山人海|人潮|百官|群臣|很多人|许多人|人来人往|大厅里的宾客|门派弟子|群像|crowd|bystanders|market|pedestrians|spectators|multitude|passersby|soldiers|army|people walking|gathering|audience)/i.test(contextText);
+}
+
+/**
  * 为在场角色生成联合 DNA 锁定词（严格限定人物数量，杜绝多余路人/幽灵人物）
  */
 export function buildMultiCharacterDnaTokens(
@@ -148,28 +155,25 @@ export function buildMultiCharacterDnaTokens(
     return isChinese ? dna.zh : dna.en;
   });
 
+  // 如果包含人群/大场面描写：明确前景主角与背景人群的主次关系，允许背景人群自然生成
+  if (isCrowdScene(contextText)) {
+    return isChinese
+      ? `【前景核心主角】聚焦在场主角：${parts.map((p, i) => `[主角${i + 1}: ${p}]`).join('、')}；【背景环境与人群】背景中自然融入剧情描写的场景人群与路人氛围，主次分明`
+      : `[Foreground Focus] Protagonists: ${parts.map((p, i) => `[Protagonist ${i + 1}: ${p}]`).join(', ')}; [Background Context] Natural crowd and environment as described, clear depth of field`;
+  }
+
+  // 封闭/聚焦镜头（无群体描写）
   if (characters.length === 1) {
     return parts[0];
   }
 
   if (characters.length === 2) {
-    const hasAnimalOrPet = characters.some((c) =>
-      /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '')
-    );
-
-    if (hasAnimalOrPet) {
-      return isChinese
-        ? `画面中严格仅有2个出场主体（严禁出现第3者，严禁额外多余人类）：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】`
-        : `Strictly exactly 2 entities in the scene (no third entity, no extra human): left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}]`;
-    }
-
     return isChinese
-      ? `画面中严格仅有2位角色（严禁多余路人）：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】，保持左右空间对齐与视线呼应`
-      : `Strictly exactly 2 characters (no extra people): left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}], maintaining left-right spatial alignment and mutual eye line`;
+      ? `【双主体对戏聚焦】画面核心为主体交互：[主体1: ${parts[0]}] 与 [主体2: ${parts[1]}]，专注呈现二者互动，主次分明`
+      : `Two subjects interaction: [Subject 1: ${parts[0]}] and [Subject 2: ${parts[1]}], clear interaction focus`;
   }
 
   return isChinese
-    ? `多角色同框（画面中严格仅有${characters.length}位主体，杜绝额外路人）：${parts.map((p, i) => `[角色${i + 1}: ${p}]`).join('；')}`
-    : `Group shot (strictly exactly ${characters.length} entities, no extra people): ${parts.map((p, i) => `[Character ${i + 1}: ${p}]`).join(', ')}`;
+    ? `多主体同框（在场核心主体）：${parts.map((p, i) => `[主体${i + 1}: ${p}]`).join('；')}`
+    : `Group shot (present focal subjects): ${parts.map((p, i) => `[Subject ${i + 1}: ${p}]`).join(', ')}`;
 }
