@@ -153,12 +153,23 @@ export function buildMultiCharacterDnaTokens(
   }
 
   if (characters.length === 2) {
+    const hasAnimalOrPet = characters.some((c) =>
+      /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '')
+    );
+
+    if (hasAnimalOrPet) {
+      return isChinese
+        ? `画面中严格仅有2个出场主体（严禁出现第3者，严禁额外多余人类）：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】`
+        : `Strictly exactly 2 entities in the scene (no third entity, no extra human): left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}]`;
+    }
+
     return isChinese
-      ? `双人同框（构图站位：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】，保持左右空间对齐与视线呼应）`
-      : `Two characters (spatial composition: left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}], maintaining left-right spatial alignment and mutual eye line)`;
+      ? `画面中严格仅有2位角色（严禁多余路人）：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】，保持左右空间对齐与视线呼应`
+      : `Strictly exactly 2 characters (no extra people): left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}], maintaining left-right spatial alignment and mutual eye line`;
   }
 
   return isChinese
-    ? `多角色同框：${parts.map((p, i) => `[角色${i + 1}: ${p}]`).join('；')}`
-    : `Group shot: ${parts.map((p, i) => `[Character ${i + 1}: ${p}]`).join(', ')}`;
+    ? `多角色同框（画面中严格仅有${characters.length}位主体，杜绝额外路人）：${parts.map((p, i) => `[角色${i + 1}: ${p}]`).join('；')}`
+    : `Group shot (strictly exactly ${characters.length} entities, no extra people): ${parts.map((p, i) => `[Character ${i + 1}: ${p}]`).join(', ')}`;
 }

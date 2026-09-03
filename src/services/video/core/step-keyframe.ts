@@ -275,6 +275,29 @@ function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese:
     }
   }
 
+  // 统计在场人类角色数量
+  const humanCount = presentChars.filter((c) => {
+    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+    const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${c.name} ${c.appearance || ''}`);
+    return !isAnimal || isExplicitAnthro;
+  }).length;
+
+  const femaleCount = presentChars.filter((c) => {
+    const isFemale = c.gender === 'female' || /(女|少女|女生|小师妹|姑娘|仙子|woman|girl|female)/i.test(`${c.name} ${c.appearance || ''}`);
+    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+    return isFemale && !isAnimal;
+  }).length;
+
+  if (femaleCount === 1) {
+    extraNegs.push(isChinese ? '第二个女人，多名女性，双女人，额外女人，两位女性，女配角，路人女性' : 'second woman, 2women, two females, extra woman');
+  }
+
+  if (humanCount === 1) {
+    extraNegs.push(isChinese ? '第二个人类，双人人类，两个人，额外人类' : '2humans, two people, extra person');
+  }
+
   const extraStr = extraNegs.length > 0 ? `，${extraNegs.join('，')}` : '';
 
   if (presentChars.length === 0) {
@@ -288,8 +311,8 @@ function buildKeyframeNegativePrompt(presentChars: CharacterAnchor[], isChinese:
       : `2people, multiple people, extra person, duplicate character, crowd, bystanders, 2persons, multi-character, split screen, text, watermark${extraStr ? ', ' + extraStr : ''}`;
   }
   return isChinese
-    ? `额外多余人物，路人，无关人员，第三人，三视图，多分屏，文字，水印，签名${extraStr}`
-    : `extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
+    ? `第3人，第4人，额外多余人物，路人，无关人员，三视图，多分屏，文字，水印，签名${extraStr}`
+    : `3people, 4people, extra person, crowd, bystanders, unwanted characters, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
 }
 
 function buildKeyframePrompt(
@@ -318,10 +341,10 @@ function buildKeyframePrompt(
         ? `【参考图】严格以此参考图锁定角色【${referenceCharNames[0]}】的原始面貌体态与特征`
         : `[Reference] Match character [${referenceCharNames[0]}] appearance strictly from the reference image`;
     } else {
-      const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应角色【${name}】`).join('，');
+      const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应在场主体【${name}】`).join('，');
       refBindingText = isChinese
-        ? `【多图参考对应】${mappings}，严格按照各参考图还原体态外貌与色彩，画面中仅出现以上在场角色，严禁出现多余人物`
-        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, strict identity preservation`;
+        ? `【多图参考一一对应】${mappings}。画面中严格只允许出现上述${referenceCharNames.length}位对应主体，严禁凭空添加额外女性或男性人类，严禁将动物角色变异为人类`
+        : `[Strict Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}. Exactly ${referenceCharNames.length} entities only, strictly no extra human characters, no turning animals into humans`;
     }
   }
 
