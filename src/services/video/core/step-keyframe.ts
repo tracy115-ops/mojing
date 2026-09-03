@@ -325,15 +325,36 @@ function buildKeyframePrompt(
     }
   }
 
-  // 3. 前后分镜接戏与空间连续性
+  // 3. 景别与构图自适应增强 (特写强化面部微表情/眼神光，全景强化全身比例与真实接地投影)
+  let framingText = '';
+  const promptLower = (shot.videoPrompt || '').toLowerCase();
+  const isCloseUp = /(特写|面部|脸部|微表情|眼神|头部特写|眼眸|close-up|closeup|face close)/i.test(promptLower);
+  const isWideShot = /(全景|远景|大全景|广角|全身|wide shot|long shot|full body)/i.test(promptLower);
+  const isMediumShot = /(中景|近景|半身|胸像|medium shot|waist up)/i.test(promptLower);
+
+  if (isCloseUp) {
+    framingText = isChinese
+      ? '【特写镜头景别】强化五官面部微表情，眼神聚焦清澈带有眼神光，发丝与皮肤纹理极其细腻，背景自然景深虚化'
+      : '[Close-up Framing] Enhanced subtle facial expression, clear eye contact with catchlights, extremely fine hair and skin textures, shallow depth of field';
+  } else if (isWideShot) {
+    framingText = isChinese
+      ? '【全景/远景景别】展现全身完整比例与站姿体态，脚踏实地并带有真实地面接触阴影(Contact Shadow)，环境空间透视恢弘自然'
+      : '[Wide-shot Framing] Full body proportions and posture, realistic ground contact shadow, grand spatial perspective';
+  } else if (isMediumShot) {
+    framingText = isChinese
+      ? '【中近景构图】半身肢体动作自然，衣褶与服饰细节分明，黄金比例构图'
+      : '[Medium-shot Framing] Natural upper body gesture, crisp clothing folds, golden ratio composition';
+  }
+
+  // 4. 前后分镜接戏与空间/光影连续性
   let continuityText = '';
   if (prevShot) {
     const isSameScene = (prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId)
       || (prevShot.location && shot.location && prevShot.location === shot.location);
     if (isSameScene) {
       continuityText = isChinese
-        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、主光源角度与动作走向'
-        : '[Shot Continuity] seamlessly inherits spatial position, primary light direction, and motion trajectory from previous shot';
+        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、同款色温与主光源投射角度、动作走向与氛围保持高度一致'
+        : '[Shot Continuity] seamlessly inherits spatial position, color temperature, key light direction, and motion trajectory from previous shot';
     }
   }
 
@@ -341,6 +362,7 @@ function buildKeyframePrompt(
     const parts = [
       refBindingText,
       charDnaText,
+      framingText,
       shot.videoPrompt,
       continuityText,
       shot.location ? `场景：${shot.location}` : '',
@@ -354,6 +376,7 @@ function buildKeyframePrompt(
   const parts = [
     refBindingText,
     charDnaText,
+    framingText,
     shot.videoPrompt,
     continuityText,
     shot.location ? `location: ${shot.location}` : '',

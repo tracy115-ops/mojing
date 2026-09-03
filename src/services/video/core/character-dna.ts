@@ -154,8 +154,8 @@ export function buildMultiCharacterDnaTokens(
 
   if (characters.length === 2) {
     return isChinese
-      ? `双人同框：[角色1: ${parts[0]}]；[角色2: ${parts[1]}]`
-      : `Two characters: [Character 1: ${parts[0]}], [Character 2: ${parts[1]}]`;
+      ? `双人同框（构图站位：左侧为主体【角色1: ${parts[0]}】，右侧为主体【角色2: ${parts[1]}】，保持左右空间对齐与视线呼应）`
+      : `Two characters (spatial composition: left side [Character 1: ${parts[0]}], right side [Character 2: ${parts[1]}], maintaining left-right spatial alignment and mutual eye line)`;
   }
 
   return isChinese

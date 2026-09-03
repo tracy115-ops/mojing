@@ -330,14 +330,18 @@ function buildEnhancedVideoPrompt(
   const presentChars = findMatchingCharacters(shot, characters);
 
   // 在 I2V (图生视频) 模式下，首帧已经包含角色的面部与服饰特征，不需要在提示词中重复堆叠外貌形容词，
-  // 提示词聚焦于“动作、神态与运镜”，防止视频模型重新“画蛇添足”导致融脸和服饰变色。
+  // 提示词聚焦于“动作、神态与运镜”，注入物理阻尼与微动锁定，防止视频模型产生肢体突变、融脸和服饰变色。
   // 仅在纯文生视频 (T2V) 模式下，才需要注入完整的角色 DNA 外貌。
   let charHeader = '';
+  let motionDamping = '';
   if (presentChars.length > 0) {
     if (isI2V) {
       charHeader = isChinese
-        ? `角色：${presentChars.map((c) => c.name).join('、')}`
-        : `Character: ${presentChars.map((c) => c.name).join(', ')}`;
+        ? `出场角色：${presentChars.map((c) => c.name).join('、')}`
+        : `Characters: ${presentChars.map((c) => c.name).join(', ')}`;
+      motionDamping = isChinese
+        ? '【动作连续性锁定】严格继承首帧起始姿态、衣着色彩与五官面貌，禁止面部形变与服饰突变，动作平缓舒展，呼吸与发丝微动，电影级高帧率平滑运动'
+        : '[Motion Continuity Lock] Strictly inherit initial posture, clothing color, and facial identity from the first frame. No face distortion, no clothing morphing, subtle breathing and smooth natural movement';
     } else {
       charHeader = buildMultiCharacterDnaTokens(
         presentChars,
@@ -367,6 +371,7 @@ function buildEnhancedVideoPrompt(
 
   return [
     charHeader,
+    motionDamping,
     basePrompt,
     audioCues,
     camera,
