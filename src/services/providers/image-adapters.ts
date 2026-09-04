@@ -486,9 +486,10 @@ export class AgnesImageProvider extends BaseImageProvider {
       body.return_base64 = true;
     }
 
-    if (request.negativePrompt) {
-      body.negative_prompt = request.negativePrompt;
-    }
+    // 注意: Agnes 官方 API 规范不支持 negative_prompt 字段，
+    // 在 text image 队列传递 negative_prompt 会导致 HTTP 400 错误 ("negative_prompt is not supported by text image queue")。
+    // 负向与解剖结构约束由各上游在 prompt 中以自然语言明确约束。
+
     if (request.seed !== undefined && request.seed !== null) {
       body.seed = request.seed;
     }
