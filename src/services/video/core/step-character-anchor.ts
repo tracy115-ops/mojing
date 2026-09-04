@@ -84,9 +84,11 @@ export async function runCharacterAnchor(
     let currentPortraitRaw = '';
     if (!portraitOk) {
       try {
+        const isChinese = detectInputLanguage(portraitPrompt) === 'zh';
         const img = await providerRouter.generateImage({
           taskType: 'character',
           prompt: portraitPrompt,
+          negativePrompt: buildPortraitNegativePrompt(c, isChinese),
           width: 768,
           height: 1152,
           style: ctx.style,
@@ -117,9 +119,12 @@ export async function runCharacterAnchor(
         if (v.id === 'default') continue; // default 已生成
         if (result[i].costumeVariants?.[j].portraitImage) continue;
         try {
+          const variantPrompt = buildPortraitPrompt(c, limited, ctx.style, v.description);
+          const isChinese = detectInputLanguage(variantPrompt) === 'zh';
           const img = await providerRouter.generateImage({
             taskType: 'character',
-            prompt: buildPortraitPrompt(c, limited, ctx.style, v.description),
+            prompt: variantPrompt,
+            negativePrompt: buildPortraitNegativePrompt(c, isChinese),
             width: 768,
             height: 1152,
             style: ctx.style,
@@ -154,10 +159,12 @@ export async function runCharacterAnchor(
         const turnaroundPrompt = customTurnaround && customTurnaround.trim()
           ? customTurnaround
           : buildTurnaroundPrompt(c, ctx.style, customPrompt);
+        const isChinese = detectInputLanguage(turnaroundPrompt) === 'zh';
 
         const img = await providerRouter.generateImage({
           taskType: 'character',
           prompt: turnaroundPrompt,
+          negativePrompt: buildTurnaroundNegativePrompt(c, isChinese),
           width: 1536,
           height: 1024,
           style: ctx.style,
@@ -200,9 +207,11 @@ export async function generateSingleCharacterPortrait(
   ctx: { style?: string; imageTier?: ModelTier; novelProjectId: string },
 ): Promise<string> {
   const portraitPrompt = buildPortraitPrompt(character, allCharacters, ctx.style);
+  const isChinese = detectInputLanguage(portraitPrompt) === 'zh';
   const img = await providerRouter.generateImage({
     taskType: 'character',
     prompt: portraitPrompt,
+    negativePrompt: buildPortraitNegativePrompt(character, isChinese),
     width: 768,
     height: 1152,
     style: ctx.style,
@@ -226,9 +235,11 @@ export async function generateSingleCharacterTurnaround(
     turnaroundRef = await readAsDataUri(character.portraitImage);
   }
   const turnaroundPrompt = buildTurnaroundPrompt(character, ctx.style);
+  const isChinese = detectInputLanguage(turnaroundPrompt) === 'zh';
   const img = await providerRouter.generateImage({
     taskType: 'character',
     prompt: turnaroundPrompt,
+    negativePrompt: buildTurnaroundNegativePrompt(character, isChinese),
     width: 1536,
     height: 1024,
     style: ctx.style,
@@ -300,6 +311,33 @@ export function getCharacterAestheticTag(fullText: string): string {
     : 'delicate East Asian facial features, fair porcelain skin, silky hair, elegant oriental aesthetic';
 }
 
+/**
+ * 构造角色立绘专属负向提示词：坚决杜绝三条腿、多肢体、肢体畸变、多余腿脚
+ */
+export function buildPortraitNegativePrompt(c: CharacterAnchor, isChinese: boolean): string {
+  const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+    /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+
+  if (isAnimal) {
+    return isChinese
+      ? '多余肢体，多条腿，畸形肢体，五条腿，六条腿，断肢，融化肢体，低质量，模糊，水印，文字，签名'
+      : 'extra limbs, extra legs, deformed limbs, duplicate legs, bad anatomy, mutation, mutated, low quality, watermark, text, signature';
+  }
+
+  return isChinese
+    ? '三条腿，第三条腿，多余的腿，多腿，畸形腿，畸形肢体，多肢体，多手臂，多手，多脚，肢体重复，骨骼畸形，断肢，浮空肢体，畸变人体，多头，双人，多个人物，分身，水印，文字，签名，低质量'
+    : 'three legs, 3 legs, extra legs, third leg, extra limbs, multiple legs, deformed legs, bad legs, malformed limbs, poorly drawn legs, cloned limbs, duplicate body parts, floating limbs, disconnected limbs, bad anatomy, mutation, mutated, extra feet, extra arms, extra hands, multiple people, 2people, watermark, text, signature, low quality';
+}
+
+/**
+ * 构造角色三视图专属负向提示词：坚决杜绝肢体畸变、三条腿、多臂
+ */
+export function buildTurnaroundNegativePrompt(c: CharacterAnchor, isChinese: boolean): string {
+  return isChinese
+    ? '三条腿，第三条腿，多余的腿，畸形腿，多肢体，多臂，多足，四条腿，骨骼畸变，肢体重复，断肢，低质量，文字，标签，水印，签名'
+    : 'three legs, 3 legs, extra legs, third leg, extra limbs, deformed legs, duplicate limbs, floating limbs, bad anatomy, extra feet, mutated legs, low quality, text, watermark, signature';
+}
+
 function buildPortraitPrompt(
   c: CharacterAnchor,
   _allChars: CharacterAnchor[],
@@ -309,15 +347,22 @@ function buildPortraitPrompt(
   const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
   const isChinese = detectInputLanguage(fullText) === 'zh';
   const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
+  const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+    /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
 
   if (isChinese) {
     const artTypeTag = isCartoonOrAnime
       ? '2D动漫单人角色立绘'
       : (style ? `${style}风格` : '高清写实角色立绘');
 
+    const anatomyTag = isAnimal
+      ? '标准自然体态，结构规范，无多余肢体'
+      : '标准人体结构，标准端正站姿，匀称双腿，双脚平稳着地，无多余肢体，严格仅有两条腿';
+
     const parts = [
       `${c.name}：${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
       '单人全身立绘，单人居中，从头到脚完整可见',
+      anatomyTag,
       '纯色干净简洁背景',
       artTypeTag,
     ].filter(Boolean);
@@ -328,9 +373,14 @@ function buildPortraitPrompt(
     ? '2D anime character portrait'
     : (style ? `${style} style` : 'realistic character portrait');
 
+  const anatomyTag = isAnimal
+    ? 'natural quadruped anatomy, well-structured body, no extra limbs'
+    : 'anatomically correct human structure, natural standing pose, well-proportioned two legs, standing firmly on two feet, exactly two legs, no extra limbs';
+
   const parts = [
     `${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
     'single centered full-body character portrait, fully visible from head to toe',
+    anatomyTag,
     'plain solid clean background',
     artTypeTag,
   ].filter(Boolean);

@@ -182,7 +182,8 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     try {
       const response = await providerRouter.generateImage({
         taskType: 'character',
-        prompt: `${character.appearance}, ${character.name}, wearing ${costume.description}, full body character design portrait, front view, preserve the exact face, hairstyle, age, and body proportions from the reference, clean neutral background`,
+        prompt: `${character.appearance}, ${character.name}, wearing ${costume.description}, full body character design portrait, front view, preserve the exact face, hairstyle, age, and body proportions from the reference, clean neutral background, standard anatomy, exactly two legs`,
+        negativePrompt: 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, watermark, text, signature',
         width: 768,
         height: 1152,
         style: metadata.style,
@@ -237,8 +238,11 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
       const response = await providerRouter.generateImage({
         taskType: 'character',
         prompt: isTurnaround
-          ? `${values.appearance}, ${values.name}, character turnaround sheet, front view, side view, back view, consistent facial features, clean neutral background`
-          : `${values.appearance}, ${values.name}, full body character design portrait, front view, clean neutral background, consistent proportions`,
+          ? `${values.appearance}, ${values.name}, character turnaround sheet, front view, side view, back view, consistent facial features, clean neutral background, standard anatomy`
+          : `${values.appearance}, ${values.name}, full body character design portrait, front view, clean neutral background, consistent proportions, standard anatomy, exactly two legs`,
+        negativePrompt: isTurnaround
+          ? 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, watermark, text, signature'
+          : 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, duplicate character, multiple people, watermark, text, signature',
         width: isTurnaround ? 1536 : 768,
         height: isTurnaround ? 1024 : 1152,
         style: metadata.style,
