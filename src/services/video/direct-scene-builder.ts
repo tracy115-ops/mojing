@@ -160,6 +160,8 @@ export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildConte
       defaultShotDuration: ctx.defaultShotDuration,
     });
 
+    const dialogueSpeakers = Array.from(new Set(dialogue.map((d) => d.speaker).filter(Boolean)));
+
     return {
       id: `shot_${Date.now()}_${index}`,
       index,
@@ -167,7 +169,7 @@ export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildConte
       narration,
       dialogue: dialogue.length > 0 ? dialogue : undefined,
       durationSeconds: durationSeconds as any,
-      characterIds: [],
+      characterIds: dialogueSpeakers,
     };
   });
 }

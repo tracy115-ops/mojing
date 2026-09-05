@@ -279,38 +279,48 @@ function buildKeyframeNegativePrompt(
       : 'split screen, character sheet, collage, text, watermark, signature, bad anatomy, deformed face, deformed limbs';
   }
 
-  // 2. 封闭/聚焦镜头（无群体描写）下的形态守卫与防前景幽灵角色控制
-  const extraNegs: string[] = [];
-
-  for (const c of presentChars) {
-    const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+  // 2. 区分人类与真实动物角色，封闭/聚焦镜头下的形态守卫与防幽灵角色控制
+  const isAnimal = (c: CharacterAnchor) => {
     const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${c.name} ${c.appearance || ''}`);
+    if (isExplicitAnthro) return false;
+    return /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
+      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
+  };
 
-    if (isAnimal) {
-      if (isExplicitAnthro) {
-        extraNegs.push(isChinese ? '未穿衣的真实四足动物，普通宠物猫狗，普通野猫' : 'natural quadruped pet, naked animal, feral cat');
-      } else {
-        extraNegs.push(isChinese ? '兽人，拟人化人形，人类身体' : 'furry humanoid, anthropomorphic animal');
-      }
-    }
+  const humanChars = presentChars.filter((c) => !isAnimal(c));
+  const animalChars = presentChars.filter((c) => isAnimal(c));
+
+  const extraNegs: string[] = [];
+  for (const c of animalChars) {
+    extraNegs.push(
+      isChinese
+        ? '兽人，拟人化人形，人类身体，人类大师，人类道士，人类道长，额外人类道姑'
+        : 'furry humanoid, anthropomorphic animal, human master, human monk, human Taoist, extra human priest',
+    );
   }
 
   const extraStr = extraNegs.length > 0 ? `，${extraNegs.join('，')}` : '';
 
-  if (presentChars.length === 0) {
+  if (humanChars.length === 0) {
     return isChinese
-      ? '人物，角色，人类，女人，男人，人群，路人，多余人物，多头，多分身，分屏，三视图，文字，水印，签名'
-      : 'person, human, people, man, woman, crowd, character, 1person, 2people, extra people, split screen, character sheet, text, watermark';
+      ? `人物，角色，人类，女人，男人，人群，路人，多余人物，多头，多分身，分屏，三视图，文字，水印，签名${extraStr}`
+      : `person, human, people, man, woman, crowd, character, 1person, 2people, extra people, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
   }
-  if (presentChars.length === 1) {
+
+  if (humanChars.length === 1) {
+    const isFemale = humanChars[0].gender === 'female' || /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹/i.test(humanChars[0].name);
+    const genderSpecificNeg = isFemale
+      ? (isChinese ? '第二个女人，双人女性，双女，两个女人，多余女人，人类道士，人类大师，人类道姑' : '2women, 2girls, two women, two girls, second woman, extra woman, human master, human monk')
+      : (isChinese ? '第二个男人，双人男性，双男，两个男人，多余男人，人类道士，人类大师' : '2men, 2boys, two men, two boys, second man, extra man, human master, human monk');
+
     return isChinese
-      ? `多头，多分身，分屏，三视图，文字，水印，签名，未提及的前景第二人${extraStr}`
-      : `split screen, character sheet, text, watermark, unmentioned extra foreground person${extraStr ? ', ' + extraStr : ''}`;
+      ? `多头，多分身，分屏，三视图，文字，水印，签名，未提及的前景第二人，多余人物，${genderSpecificNeg}${extraStr}`
+      : `split screen, character sheet, text, watermark, unmentioned extra foreground person, extra people, ${genderSpecificNeg}${extraStr ? ', ' + extraStr : ''}`;
   }
+
   return isChinese
-    ? `分屏，三视图，文字，水印，签名，未提及的前景额外第三人${extraStr}`
-    : `split screen, character sheet, text, watermark, unmentioned extra foreground character${extraStr ? ', ' + extraStr : ''}`;
+    ? `分屏，三视图，文字，水印，签名，未提及的前景额外第三人，多余人物，多余女人${extraStr}`
+    : `split screen, character sheet, text, watermark, unmentioned extra foreground character, 3people, extra woman, extra person${extraStr ? ', ' + extraStr : ''}`;
 }
 
 function buildKeyframePrompt(
@@ -336,13 +346,13 @@ function buildKeyframePrompt(
   if (referenceCharNames && referenceCharNames.length > 0) {
     if (referenceCharNames.length === 1) {
       refBindingText = isChinese
-        ? `【参考图】严格以此参考图锁定角色【${referenceCharNames[0]}】的原始面貌体态与特征`
-        : `[Reference] Match character [${referenceCharNames[0]}] appearance strictly from the reference image`;
+        ? `【单参考图对应】严格以此参考图锁定角色【${referenceCharNames[0]}】的原始面貌体态与服饰，全场严格仅有此1位主角，严禁添加任何未在参考图中的多余人物`
+        : `[Reference] Match character [${referenceCharNames[0]}] appearance strictly from the reference image, strictly NO unmentioned extra character`;
     } else {
       const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应在场主体【${name}】`).join('，');
       refBindingText = isChinese
-        ? `【多图参考对应】${mappings}，画面前景主角严格按照各参考图还原体态外貌与色彩，主次层次分明`
-        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, foreground protagonists strictly match their corresponding reference images`;
+        ? `【多图参考对应】${mappings}，全场画面严格仅有这${referenceCharNames.length}个在场主体，绝不允许出现任何参考图以外的第二女人或多余人物！画面主角严格按照各参考图还原体态外貌与色彩，主次层次分明`
+        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, exactly these ${referenceCharNames.length} subjects in the scene, strictly NO additional person outside reference images!`;
     }
   }
 

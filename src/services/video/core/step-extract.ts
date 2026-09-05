@@ -110,21 +110,50 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
     const sceneNameToId = new Map(scenes.map((s) => [s.name, s.id]));
     const charPlaceholderToName = parsed.characterIdMap ?? {};
     const scenePlaceholderToName = parsed.sceneIdMap ?? {};
-    const resolvedShots = input.shots?.map((sh) => ({
-      ...sh,
-      characterIds: sh.characterIds
+    const resolvedShots = input.shots?.map((sh) => {
+      let charIds = (sh.characterIds || [])
         .map((pid) => {
           const name = charPlaceholderToName[pid];
           return name ? nameToId.get(name) : undefined;
         })
-        .filter((x): x is string => !!x),
-      sceneId: sh.sceneId
+        .filter((x): x is string => !!x);
+
+      // 如果通过占位符未匹配到角色，通过画面提示词、原文本与对白智能语义回填 characterIds
+      if (charIds.length === 0 && characters.length > 0) {
+        const fullText = [
+          sh.videoPrompt || '',
+          sh.sourceText || '',
+          sh.narration || '',
+          sh.dialogue?.map((d) => d.speaker).join(' ') || '',
+        ].join(' ').toLowerCase();
+
+        const matched = new Set<string>();
+        for (const c of characters) {
+          const cName = c.name.toLowerCase();
+          const aliases = (c.aliases || []).map((a) => a.toLowerCase());
+          if (
+            (cName.length >= 2 && fullText.includes(cName)) ||
+            aliases.some((a) => a.length >= 2 && fullText.includes(a))
+          ) {
+            matched.add(c.id);
+          }
+        }
+        charIds = Array.from(matched);
+      }
+
+      const mappedSceneId = sh.sceneId
         ? (() => {
             const name = scenePlaceholderToName[sh.sceneId!];
             return name ? sceneNameToId.get(name) : sh.sceneId;
           })()
-        : sh.sceneId,
-    }));
+        : (scenes[0]?.id || sh.sceneId);
+
+      return {
+        ...sh,
+        characterIds: charIds,
+        sceneId: mappedSceneId,
+      };
+    });
 
     return { characters, scenes, props, resolvedShots };
   } catch (err) {
@@ -166,9 +195,8 @@ const SYSTEM_PROMPT_ZH = `你是剧本分析师。从给定文本中提取结构
 - characterIdMap / sceneIdMap 用于回填分镜里的占位 id
 - 道具只提取推动剧情的关键道具,不提取背景物件
 
-【服饰与特色设定必须 100% 严格忠实于原文，绝对禁止篡改】
-若原文中明确提及了角色的具体服装与造型（例如：JK裙/JK制服、水手服、现代服饰、西装、风衣、黄色古风僧袍、黑色圆墨镜、铠甲、特定颜色发饰丝带等），appearance 字段中必须 100% 优先并完整包含原文指定的服装与配饰！
-绝对严禁将现代服装/JK裙脑补篡改成古装或素色汉服！必须原汁原味忠实体现剧本的所有核心设定（如古风庭院中身穿JK裙的冲突美感）！
+【服饰与特色设定必须 100% 严格忠实于原文剧本，绝对禁止篡改或脑补】
+若原文中明确提及了角色的具体服装与造型（例如：淡青色长裙、古风襦裙、黄色僧袍、黑色圆墨镜、铠甲、现代西装、风衣等），appearance 字段中必须 100% 严格忠实采信原文指定的服装款式，绝不允许擅自更改，也绝对严禁凭空脑补原文未提及的现代短裙或异样服饰！
 
 【appearance 字段必须区分多角色 — 极重要】
 多个角色同时出现时,每个角色的 appearance **必须**写出可识别的、互不重叠的面部特征,
@@ -177,7 +205,7 @@ const SYSTEM_PROMPT_ZH = `你是剧本分析师。从给定文本中提取结构
 2. 肤色 + 明显的标记(如:苍白肤色/小麦色皮肤/雀斑/疤痕/痣)
 3. 发色 + 发长 + 发型(如:黑色齐刘海短发/银白色波浪长发/红色扎马尾)
 4. 体型 + 身高(如:瘦高/娇小/健壮)
-5. 服饰(必须严格包含原文指定服装，如 JK制服/黄色僧袍)
+5. 服饰(必须 100% 忠实原文指定的服装款式与色彩)
 6. 年龄感(如:20 岁出头/近 40 岁/少年)
 
 【动物 / 拟人化角色 / 灵兽 / 宠物 — 必须 100% 作为独立角色（character）提取】
