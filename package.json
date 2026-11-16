@@ -1,7 +1,7 @@
 {
   "name": "mojing",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -30,6 +30,7 @@
     "test:language-contract": "node --experimental-strip-types scripts/test-language-contract.mjs",
     "test:chapter-slicer": "node --experimental-strip-types scripts/test-chapter-slicer.mjs",
     "test:video-ui-e2e": "node scripts/run-video-ui-e2e.mjs",
+    "test:release-e2e": "node scripts/run-release-e2e.mjs",
     "test:studio": "node --experimental-strip-types scripts/test-video-studio.mjs",
     "test:image-mask": "node --experimental-strip-types scripts/test-image-mask.mjs",
     "test:image-mask-ui-e2e": "node scripts/run-image-mask-ui-e2e.mjs",

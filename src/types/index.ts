@@ -228,6 +228,8 @@ export interface ComicPanel {
 // ============================================================================
 
 export interface VideoMetadata {
+  /** Standalone videos retain their source for first-time planning and replanning. */
+  scriptText?: string;
   duration: number;
   resolution: string;
   style: string;

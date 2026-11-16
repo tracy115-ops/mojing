@@ -8,6 +8,15 @@
 
 .video-timeline-preview-grid > .ant-card {
   min-width: 0;
+  min-height: 0;
+}
+
+.video-timeline-preview-grid > .ant-card > .ant-card-head {
+  flex-shrink: 0;
+}
+
+.video-timeline-preview-grid > .ant-card > .ant-card-body {
+  min-height: 0;
 }
 
 @media (max-width: 900px) {

@@ -21,7 +21,7 @@ import type {
   VideoExecutionBinding,
 } from '@/types/video';
 import { DEFAULT_PIPELINE_OPTIONS } from '@/types/video';
-import type { NovelChapter, NovelMetadata } from '@/types';
+import type { NovelChapter, NovelMetadata, VideoMetadata } from '@/types';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { sliceChaptersWithLLM, type RawShot } from './chapter-slicer';
@@ -94,12 +94,13 @@ export class VideoPipeline {
     const videoProject = useVideoStore.getState().getProject(novelProjectId);
     if (!videoProject) return null;
 
-    // Direct 通道 / 纯视频项目: 无 novel 类型的项目元信息,直接用 videoStore 中的 spec/options 重建。
+    // Direct tasks resume from SceneSpec. Script-backed video projects must
+    // retain their source chapters so first-time planning and replanning work.
     const novelProject = useProjectStore
       .getState()
       .projects.find((p) => p.id === novelProjectId);
 
-    if (!novelProject || novelProject.type === 'video' || novelProjectId.startsWith('direct_')) {
+    if (!novelProject || novelProjectId.startsWith('direct_')) {
       return new VideoPipeline(
         {
           novelProjectId,
@@ -114,21 +115,28 @@ export class VideoPipeline {
       );
     }
 
-    const meta = novelProject.metadata as NovelMetadata | undefined;
+    const meta = novelProject.metadata as Partial<NovelMetadata> & Partial<VideoMetadata>;
     const seriesId = (meta as any)?.seriesId as string | undefined;
     const seriesProject = seriesId
       ? useProjectStore.getState().projects.find((project) => project.id === seriesId)
       : undefined;
     const seriesMetadata = seriesProject?.metadata as any;
-    const chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = (videoProject.selectedChapterIds ?? [])
-      .map((cid) => meta?.chapters?.find((c) => c.id === cid))
-      .filter((c): c is NovelChapter => !!c);
+    const sourceChapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = meta?.chapters?.length
+      ? meta.chapters
+      : novelProject.type === 'video' && meta?.scriptText?.trim()
+        ? [{ id: `${novelProjectId}_script`, order: 0, content: meta.scriptText }]
+        : [];
+    const chapters = videoProject.selectedChapterIds?.length
+      ? videoProject.selectedChapterIds
+        .map((cid) => sourceChapters.find((c) => c.id === cid))
+        .filter((c): c is Pick<NovelChapter, 'id' | 'order' | 'content'> => !!c)
+      : novelProject.type === 'video' ? sourceChapters : [];
 
     return new VideoPipeline(
       {
         novelProjectId,
         novelTitle: novelProject.title,
-        genre: meta?.genre || '',
+        genre: novelProject.type === 'video' ? 'script' : meta?.genre || '',
         style: meta?.style || '',
         chapters,
         spec: videoProject.spec,

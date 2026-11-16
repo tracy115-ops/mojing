@@ -31,6 +31,7 @@
 | [23-world-model-animation.md](./23-world-model-animation.md) | GLB 动作区间、倍速、延迟入场、循环／末帧保持与时间线动作条 |
 | [24-world-camera-monitor.md](./24-world-camera-monitor.md) | 双／四画面同步监看、独立机位截图、运镜采用与输出状态恢复 |
 | [25-world-frame-export.md](./25-world-frame-export.md) | 固定时间逐帧 MP4、原生编码核对、取消清理与仅重试编码 |
+| [26-release-e2e.md](./26-release-e2e.md) | 发布版从剧本到成片、原生导出、画布回流和退出重开的端到端验证 |
 
 ## 当前状态
 

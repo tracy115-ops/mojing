@@ -65,6 +65,16 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   const rawShots = project?.sceneSpec?.shots || (project?.shots as unknown as ShotSpec[]) || [];
   const rawClips = project?.clips || [];
   const finalVideoUrl = project?.finalVideoUrl;
+  const finalPreviewUrl = useMemo(() => {
+    if (!finalVideoUrl) return undefined;
+    const source = toWebviewUrl(resolveLocalPath(finalVideoUrl));
+    if (!/^(?:https?:\/\/asset\.localhost\/|asset:)/i.test(source)) return source;
+    // Recomposition overwrites final.mp4. Give each completed render a fresh
+    // playback URL so WebView2 cannot reuse cached ranges from the old movie.
+    const url = new URL(source);
+    url.searchParams.set('revision', project?.stages.composing?.completedAt ?? '');
+    return url.href;
+  }, [finalVideoUrl, project?.stages.composing?.completedAt]);
   const normalizedTimelineState = useMemo(
     () => normalizeTimelineState(project?.timelineState, rawShots.map((shot) => shot.id)),
     [project?.timelineState, rawShots],
@@ -426,12 +436,12 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           {previewMode === 'master' ? (
             finalVideoUrl ? (
               <video
-                key={finalVideoUrl}
-                src={toWebviewUrl(resolveLocalPath(finalVideoUrl))}
+                key={finalPreviewUrl}
+                src={finalPreviewUrl}
                 controls
                 playsInline
                 preload="metadata"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               />
             ) : (
               <div style={{ textAlign: 'center', color: '#94a3b8', padding: 12 }}>
@@ -483,7 +493,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                 controls
                 playsInline
                 preload="metadata"
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               />
             ) : (
               <div style={{ textAlign: 'center', color: '#94a3b8' }}>
@@ -500,7 +510,8 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
         <Card
           size="small"
           title={t('video.timeline.selectedShotSettings')}
-          style={{ height: '100%', overflowY: 'auto', borderRadius: 8 }}
+          style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 8 }}
+          styles={{ body: { flex: 1, overflowY: 'auto' } }}
         >
           {currentSelected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -583,8 +594,8 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
       {/* ── 中下部：多轨时间轴可视化展示 ── */}
       <div style={{
         flex: 1,
-        minHeight: 0,
-        background: '#fff',
+        minHeight: 180,
+        background: 'var(--bg-container)',
         border: '1px solid var(--border-secondary, #e2e8f0)',
         borderRadius: 8,
         display: 'flex',
@@ -647,7 +658,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                   flexShrink: 0,
                   border: isSelected ? '2px solid var(--accent-primary)' : '1px solid var(--border-secondary)',
                   borderRadius: 8,
-                  background: item.enabled ? '#fff' : '#f8fafc',
+                  background: item.enabled ? 'var(--bg-container)' : 'var(--bg-secondary)',
                   opacity: item.enabled ? 1 : 0.5,
                   padding: 8,
                   cursor: 'pointer',
@@ -664,7 +675,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                     <Tag color={isSelected ? 'blue' : 'default'} style={{ margin: 0, fontSize: 10, lineHeight: '18px' }}>
                       {t('video.timeline.shotOrder', { index: index + 1 })}
                     </Tag>
-                    <Text style={{ fontSize: 10, color: '#64748b' }}>
+                    <Text style={{ fontSize: 10, color: 'var(--text-secondary)' }}>
                       <ClockCircleOutlined style={{ marginRight: 2 }} />
                       {duration}s
                     </Text>
@@ -730,7 +741,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                 </div>
 
                 {/* 角色与台词摘要 */}
-                <div style={{ fontSize: 11, color: '#64748b' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
                     <FileTextOutlined style={{ fontSize: 10 }} />
                     <Text style={{ fontSize: 11, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

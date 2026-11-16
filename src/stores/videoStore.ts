@@ -762,6 +762,10 @@ export const useVideoStore = create<VideoStoreState>()(
             finalVideoUrl: url,
             finalDurationSeconds: meta?.durationSeconds ?? proj.finalDurationSeconds,
             finalSizeBytes: meta?.sizeBytes ?? proj.finalSizeBytes,
+            stages: {
+              ...proj.stages,
+              composing: { ...proj.stages.composing, stage: 'composing', status: 'completed', progress: 1, completedAt: now(), error: undefined },
+            },
             currentStage: 'complete',
           }),
         },
@@ -857,10 +861,19 @@ export const useVideoStore = create<VideoStoreState>()(
       const shotIds = proj.sceneSpec?.shots?.map((shot) => shot.id) ?? proj.shots.map((shot) => shot.id);
       const current = normalizeTimelineState(proj.timelineState, shotIds);
       const timelineState = normalizeTimelineState({ ...current, ...patch }, shotIds);
+      if (JSON.stringify(current) === JSON.stringify(timelineState)) return s;
       return {
         projects: {
           ...s.projects,
-          [novelProjectId]: touch({ ...proj, timelineState }),
+          [novelProjectId]: touch({
+            ...proj,
+            timelineState,
+            finalVideoUrl: undefined,
+            finalDurationSeconds: undefined,
+            finalSizeBytes: undefined,
+            stages: { ...proj.stages, composing: { stage: 'composing', status: 'pending', progress: 0 } },
+            currentStage: proj.currentStage === 'complete' ? 'composing' : proj.currentStage,
+          }),
         },
       };
     });

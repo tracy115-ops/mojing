@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
-import { mkdtemp, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, access, readFile, mkdir, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname, basename } from 'node:path';
 import { createServer } from 'node:net';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { createWorld, createWorldObject, addWorldPath } from '../src/services/video-studio/document.ts';
 
 // Use the release executable, real WebView2, real Tauri IPC and real FFmpeg.
 // A unique WebView2 profile keeps all fixture state separate from user projects.
 const executable = resolve(process.argv[2] || 'src-tauri/target/release/mojing.exe');
+const version = JSON.parse(await readFile('package.json', 'utf8')).version;
 await access(executable);
 const root = await mkdtemp(join(tmpdir(), 'mojing-desktop-export-'));
+const artifactsDir = resolve('artifacts', `world-desktop-e2e-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+await mkdir(artifactsDir, { recursive: true });
 const server = createServer(); await new Promise(ok => server.listen(0, '127.0.0.1', ok));
 const port = server.address().port; await new Promise(ok => server.close(ok));
 const run = promisify(execFile), delay = ms => new Promise(ok => setTimeout(ok, ms));
@@ -69,7 +74,7 @@ try {
   });
   await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
   await waitFor('!!window.__TAURI__?.core?.invoke', 'real Tauri API');
-  assert.equal(await evaluate('window.__TAURI__.app.getVersion()'), '0.3.0');
+  assert.equal(await evaluate('window.__TAURI__.app.getVersion()'), version);
   appData = await evaluate('window.__TAURI__.path.appDataDir()');
   assert.equal((await evaluate('window.__TAURI__.core.invoke("ffmpeg_probe")')).available, true);
   await evaluate(helpers);
@@ -100,7 +105,19 @@ try {
   const info = JSON.parse(stdout), stream = info.streams[0];
   assert.equal(stream.codec_name, 'h264'); assert.equal(stream.width, 1280); assert.equal(stream.height, 720); assert.equal(stream.pix_fmt, 'yuv420p'); assert.equal(stream.nb_read_frames, '24'); assert.equal(stream.avg_frame_rate, '24/1'); assert.equal(Number(info.format.duration), 1);
   assert.equal(state.state.assets[0].url, output); assert.deepEqual(state.state.worlds[0], world);
-  const shot = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(join(tmpdir(), 'mojing-030-desktop-export.png'), Buffer.from(shot.data, 'base64'));
+  await copyFile(output, join(artifactsDir, 'world-offline.mp4'));
+  const frames = [], frameStats = [];
+  for (const [index, seconds] of [.2, .7].entries()) {
+    const { stdout } = await run('ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', output, '-frames:v', '1', '-vf', 'scale=320:180', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'], { windowsHide: true, encoding: 'buffer' });
+    await writeFile(join(artifactsDir, `frame-${index}.png`), stdout);
+    const stats = (await sharp(stdout).stats()).channels.map(c => ({ mean: c.mean, stddev: c.stdev }));
+    assert.ok(stats.some(c => c.stddev > 5), 'world output contains a visible scene');
+    frameStats.push(stats);
+    frames.push(await sharp(stdout).removeAlpha().raw().toBuffer());
+  }
+  const frameDifference = frames[0].reduce((sum, value, index) => sum + Math.abs(value - frames[1][index]), 0) / frames[0].length;
+  assert.ok(frameDifference > 2, 'two camera shots produce different rendered frames');
+  const shot = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(join(artifactsDir, 'world-export.png'), Buffer.from(shot.data, 'base64'));
   await evaluate('[...document.querySelectorAll(".world-offline-modal button")].find(b=>b.textContent.replace(/\\s/g,"")==="关闭").click()');
   await waitFor('!document.querySelector(".world-offline-modal")', 'export dialog close');
   await click('[data-testid=studio-nav-assets]'); await waitFor('document.querySelector("[data-testid=studio-assets] video")?.readyState>=1', 'real asset-protocol MP4 playback');
@@ -110,12 +127,16 @@ try {
   await call('Page.reload'); await waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'packaged reload'); await click('button[aria-label="视频工坊"]');
   await waitFor('document.querySelector("[data-testid=studio-assets] video")?.readyState>=1', 'persisted disk video after reload');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: 'passed', desktopVersion: '0.3.0', frames: 24, nativeIPC: true, playback: true, reload: true, blockedExternal: blocked.length, screenshot: join(tmpdir(), 'mojing-030-desktop-export.png') }));
+  const playback = await call('Page.captureScreenshot', { format: 'png' }); await writeFile(join(artifactsDir, 'world-library.png'), Buffer.from(playback.data, 'base64'));
+  const report = { result: 'passed', desktopVersion: version, executableSHA256: createHash('sha256').update(await readFile(executable)).digest('hex'), frames: 24, frameStats, frameDifference, nativeIPC: true, playback: true, reload: true, blockedExternal: blocked.length, info, output: artifactsDir };
+  await writeFile(join(artifactsDir, 'report.json'), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report));
 } catch (error) {
+  await writeFile(join(artifactsDir, 'report.json'), JSON.stringify({ result: 'failed', desktopVersion: version, error: String(error), errors }, null, 2));
   if (socket?.readyState === WebSocket.OPEN) {
     console.error('Desktop diagnostic:', await evaluate('document.body.innerText.slice(-2600)').catch(() => 'unavailable'));
     const shot = await call('Page.captureScreenshot', { format: 'png' }).catch(() => null);
-    if (shot) await writeFile(join(tmpdir(), 'mojing-030-desktop-failure.png'), Buffer.from(shot.data, 'base64'));
+    if (shot) await writeFile(join(artifactsDir, 'failure.png'), Buffer.from(shot.data, 'base64'));
   }
   console.error('Runtime errors:', errors); throw error;
 } finally {
