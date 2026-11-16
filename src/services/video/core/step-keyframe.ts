@@ -1,32 +1,59 @@
-// step-keyframe.ts — 步 9:镜头关键帧生成
-// 对 ShotSpec[] 生成每镜关键帧。referenceImages 拼接:
-//   - 在场角色立绘(对应 costumeVariant;无 variant 时用 default)
-//   - 场景背景图
-// 失败回退:该镜 keyframeImage 留空,步 10 走 T2V。
+// Keyframe generation. The planner owns visual wording; this module owns
+// canonical reference selection, ordering, validation, and persistence.
 
 import { providerRouter } from '@/services/providers';
+import { fingerprintPayload } from '@/services/providers/generation-snapshot';
 import type {
   ShotSpec,
   CharacterAnchor,
   SceneAnchor,
   AspectRatio,
   ModelTier,
+  ShotReferenceAsset,
+  ShotReferenceTransport,
+  ShotGenerationExecutionContext,
 } from '@/types/video';
+import type { GenerationReferenceInput, ImageReferenceCapability } from '@/types/providers';
 import { saveAsset, readAsDataUri } from '../asset-store';
+import { getEffectiveShotSeed, getSubjectContinuityShot, shotsShareScene } from './shot-continuity';
+import { ENVIRONMENT_REFERENCE_VERSION } from './step-scene-image';
+import { logger } from '@/services/log';
+import {
+  buildExactSubjectConstraint,
+  buildMultiCharacterDnaTokens,
+  buildOffscreenBindingText,
+  buildSubjectExclusionPrompt,
+  findMatchingCharacters,
+} from './character-dna';
+import { hasCurrentTurnaround, resolveCharacterReferenceImage } from './character-asset-binding';
+import { fingerprintShotInputs } from './shot-generation-receipt';
+import { updateShotGenerationPlan } from './shot-generation-plan';
+import {
+  chooseImageReferenceStrategy,
+  shouldPreferContinuityReference,
+} from './reference-strategy';
 
 export interface KeyframeResult {
   shots: ShotSpec[];
-  /** 生成失败的 shotId 列表,UI 用于标黄 */
   failedShotIds: string[];
 }
 
 interface CollectedRef {
-  /** 原始 URL/data URI */
   url: string;
-  /** 三视图立绘:需要裁出中间 1/3 作为 reference */
   cropMiddleThird?: boolean;
-  /** 角色名称，供提示词与参考图绑定 */
   charName?: string;
+  kind: ShotReferenceAsset['kind'];
+  label: string;
+  characterId?: string;
+  subjectIds?: string[];
+  omittedReason?: string;
+}
+
+interface PreparedReferences {
+  candidates: CollectedRef[];
+  sent: CollectedRef[];
+  payloads: string[];
+  transport: ShotReferenceTransport;
 }
 
 export async function runKeyframe(
@@ -37,425 +64,916 @@ export async function runKeyframe(
     aspectRatio: AspectRatio;
     style?: string;
     imageTier: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
     novelProjectId: string;
-    /** 系列上一集的收束关键帧，只影响本集第一镜。 */
     openingReferenceImage?: string;
+    seed?: number;
+    requireCharacterReferences?: boolean;
     shouldAbort?: () => boolean;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<KeyframeResult> {
   if (!shots.length) return { shots, failedShotIds: [] };
+  if (ctx.requireCharacterReferences) assertCharacterReferences(shots, ctx.characters);
 
-  const dims = aspectRatioToDims(ctx.aspectRatio);
-  const charById = new Map(ctx.characters.map((c) => [c.id, c]));
-  const sceneById = new Map(ctx.scenes.map((s) => [s.id, s]));
-
-  const result: ShotSpec[] = shots.map((s) => ({ ...s }));
+  const dimensions = aspectRatioToDims(ctx.aspectRatio);
+  const sceneById = new Map(ctx.scenes.map((scene) => [scene.id, scene]));
+  const result = shots.map((shot) => ({ ...shot }));
   const failedShotIds: string[] = [];
   let done = 0;
   let okCount = 0;
   let lastErr: unknown = null;
-  const total = shots.length;
 
-  for (let i = 0; i < shots.length; i++) {
-    if (ctx.shouldAbort?.()) {
-      break;
-    }
-    const shot = shots[i];
-    const charRefs: CollectedRef[] = [];
-    const sceneRefs: CollectedRef[] = [];
-
-    // 收集在场角色立绘（支持 ID / 名称 / 别名 / 正文与 Prompt 语义深度匹配）
-    const presentChars = findMatchingCharacters(shot, ctx.characters);
-    for (const c of presentChars) {
-      const variantId = shot.costumeVariantRefs?.[c.id] || shot.costumeVariantRefs?.[c.name];
-      let variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-      if (!variant && c.costumeVariants?.length) {
-        variant = autoResolveCostumeVariant(c, `${shot.sourceText || ''} ${shot.videoPrompt || ''}`);
-      }
-      if (variant && variant.portraitImage) {
-        charRefs.push({ url: variant.portraitImage, charName: c.name });
-      } else if (c.portraitImage) {
-        charRefs.push({ url: c.portraitImage, charName: c.name });
-      } else if (c.turnaroundImage) {
-        charRefs.push({ url: c.turnaroundImage, cropMiddleThird: true, charName: c.name });
-      }
-    }
-
-    // 场景背景图
-    if (shot.sceneId) {
-      const sc = sceneById.get(shot.sceneId);
-      if (sc?.backgroundImage) sceneRefs.push({ url: sc.backgroundImage });
-    }
-
-    // 顺序优化(核心关键):
-    // 1. 角色立绘必须排在最前面(Index 0)！锁定人物人脸与服饰细节。
-    // 2. 前一镜头关键帧(若存在且同一场景)跟在后面，确保空间光源与动作接戏连贯。
-    // 3. 场景背景图跟在末尾提供环境调性。
-    const prevKeyframeRef: CollectedRef[] = (i > 0 && result[i - 1]?.keyframeImage)
-      ? [{ url: result[i - 1].keyframeImage! }]
+  for (let index = 0; index < shots.length; index++) {
+    if (ctx.shouldAbort?.()) break;
+    const shot = shots[index];
+    const requestedImageModel = getParameterModel(shot.imageParameters) ?? ctx.imageModel;
+    const imageCapabilities = providerRouter.getImageCapabilities(
+      'storyboard',
+      requestedImageModel,
+      ctx.imageEndpointId,
+    );
+    const presentCharacters = findMatchingCharacters(shot, ctx.characters);
+    const characterRefs = collectCharacterReferences(shot, presentCharacters);
+    const customRefs = collectCustomReferences(shot);
+    const manualShotRef = collectManualShotReference(shot, presentCharacters);
+    const sceneRefs = collectSceneReferences(shot, sceneById);
+    const continuityShot = getSubjectContinuityShot(result, shot);
+    const previousKeyframeImage = continuityShot?.keyframeImage;
+    const continuityRefs: CollectedRef[] = previousKeyframeImage
+      ? [{
+          url: previousKeyframeImage,
+          kind: 'previous',
+          subjectIds: presentCharacters.map((character) => character.id),
+          label: `shot ${continuityShot?.index === undefined ? '' : continuityShot.index + 1} subject continuity frame`,
+        }]
       : [];
-
-    const episodeOpeningRef: CollectedRef[] = i === 0 && ctx.openingReferenceImage
-      ? [{ url: ctx.openingReferenceImage }]
+    const openingRefs: CollectedRef[] = index === 0
+      && characterRefs.length === 0
+      && continuityRefs.length === 0
+      && ctx.openingReferenceImage
+      ? [{ url: ctx.openingReferenceImage, kind: 'opening', label: 'episode opening reference' }]
       : [];
-    const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
-
-    // 立绘/背景图在 store 里是 webview URL(http://asset.localhost/...),
-    // Agnes / 多数 provider 的 image 字段只接受 base64 data URI 或纯 base64。
-    // 这里统一读盘转成 data URI — 已经是 data URI 的会原样返回。
-    // 三视图立绘先转 data URI,再裁出中间 1/3 作为 reference(让 provider 拿到正视图)。
-    const referenceImages: string[] = [];
-    for (const ref of rawReferences) {
-      const dataUri = await readAsDataUri(ref.url);
-      if (ref.cropMiddleThird) {
-        const cropped = await cropMiddleThird(dataUri).catch((err) => {
-          console.warn('keyframe: cropMiddleThird failed, fallback to full image', err);
-          return dataUri;
-        });
-        referenceImages.push(cropped);
-      } else {
-        referenceImages.push(dataUri);
-      }
-    }
+    const preferContinuityReference = shouldPreferContinuityReference({
+      hasMatchingContinuityShot: !!continuityShot,
+      continuityReferenceCount: continuityRefs.length,
+      hasManualShotReference: manualShotRef.length > 0 || !!shot.previsReferenceImage,
+    });
+    assertMultiSubjectReferenceStrategy(
+      shot,
+      presentCharacters,
+      imageCapabilities.references,
+      manualShotRef.length > 0,
+    );
+    const providerReferences = manualShotRef.length > 0
+      ? manualShotRef
+      : selectReferenceCandidates(
+          shot,
+          continuityShot,
+          characterRefs,
+          customRefs,
+          continuityRefs,
+          sceneRefs,
+          openingRefs,
+          imageCapabilities.references.supportsReferenceRoles,
+          preferContinuityReference,
+        );
+    const resolvedReferences = await resolveProviderReferences(
+      providerReferences,
+      manualShotRef.length > 0
+        ? manualShotRef
+        : preferContinuityReference
+          ? continuityRefs
+          : characterRefs,
+      presentCharacters,
+      imageCapabilities.references,
+      providerReferences.length === 1 && providerReferences[0].kind === 'previous',
+    );
+    const preparedReferences = await prepareReferencePayloads(
+      resolvedReferences.candidates,
+      resolvedReferences.required,
+      imageCapabilities.references,
+      ctx.requireCharacterReferences ?? false,
+    );
+    assertReferencePayloads(shot, presentCharacters, preparedReferences);
+    const referenceAssets = buildReferenceAssets(
+      shot.id,
+      preparedReferences.candidates,
+      preparedReferences,
+    );
+    result[index].referenceAssets = referenceAssets;
 
     try {
-      if (i > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-      }
-      const primaryChar = ctx.characters.find((c) =>
-        (shot.characterIds || []).some((sc: string) => sc === c.name || sc === c.id || (c.aliases || []).includes(sc)),
-      );
-      const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
-      const negPrompt = buildKeyframeNegativePrompt(
-        presentChars,
-        isChinese,
-        `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
-      );
-      const prompt = buildKeyframePrompt(
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, 800));
+      const prompt = buildKeyframeInput(
         shot,
-        ctx.characters,
-        ctx.style,
-        i > 0 ? result[i - 1] : undefined,
-        charRefs.map((cr) => cr.charName).filter(Boolean) as string[],
+        presentCharacters,
+        preparedReferences.sent,
+        preparedReferences.transport,
+        preferContinuityReference,
       );
-      const img = await providerRouter.generateImage({
+      void logger.info(
+        `[keyframe] shot=${shot.index + 1}/${shots.length} `
+          + `subjects=${presentCharacters.map((character) => character.id).join('|') || '-'} `
+          + `refs=characters:${characterRefs.length},custom:${customRefs.length},previous:${continuityRefs.length},opening:${openingRefs.length},scene:${sceneRefs.length},`
+          + `sent=${preparedReferences.sent.length},payloads=${preparedReferences.payloads.length},transport=${preparedReferences.transport},max=${imageCapabilities.references.maxImages},`
+          + `order=${preparedReferences.candidates.map((reference, refIndex) => `${refIndex + 1}:${reference.kind}:${reference.characterId ?? reference.label}:${reference.url === preparedReferences.sent.find((item) => item === reference)?.url ? 'sent' : 'omitted'}`).join('|')}`,
+        'pipeline',
+      );
+      const image = await providerRouter.generateImage({
         taskType: 'storyboard',
+        sourceLabel: `${shot.id}:keyframe`,
         prompt,
-        negativePrompt: negPrompt,
-        referenceImages,
-        width: dims.w,
-        height: dims.h,
+        negativePrompt: mergeNegativePrompts(shot.imageNegativePrompt),
+        parameters: shot.imageParameters,
+        aspectRatio: ctx.aspectRatio,
+        referenceImages: preparedReferences.payloads,
+        referenceSlots: buildGenerationReferenceInputs(shot.id, preparedReferences),
+        width: dimensions.w,
+        height: dimensions.h,
         style: ctx.style,
-        seed: primaryChar?.seed,
+        endpointId: ctx.imageEndpointId,
+        model: requestedImageModel,
+        seed: getEffectiveShotSeed(shot, ctx.seed),
       });
-      result[i].keyframeImage = await saveAsset(
+      const seed = getEffectiveShotSeed(shot, ctx.seed);
+      const executionContext = buildKeyframeExecutionContext({
+        provider: image.provider,
+        model: image.model,
+        endpointId: image.endpointId ?? ctx.imageEndpointId,
+      }, { ...ctx, seed });
+      result[index].seed = seed;
+      result[index].keyframeGenerationContext = executionContext;
+      result[index].keyframeInputFingerprint = fingerprintShotInputs(
+        shot,
+        'keyframe',
+        referenceAssets,
+        executionContext,
+      );
+      const keyframeImage = await saveAsset(
         ctx.novelProjectId,
         'keyframe',
-        img.imageData,
-        `keyframe_shot_${i + 1}`,
+        image.imageData,
+        `keyframe_shot_${index + 1}`,
       );
+      result[index].keyframeImage = keyframeImage;
+      result[index].generationPlan = updateShotGenerationPlan(result[index], {
+        keyframe: {
+          promptFingerprint: fingerprintPayload(prompt),
+          inputFingerprint: result[index].keyframeInputFingerprint,
+          executionContext,
+          requestSnapshot: image.requestSnapshot,
+          responseSnapshot: image.responseSnapshot,
+          references: referenceAssets,
+          outputUrl: keyframeImage,
+        },
+      });
       okCount++;
     } catch (err) {
       console.warn(`keyframe: failed for shot ${shot.id}`, err);
       lastErr = err;
       failedShotIds.push(shot.id);
-      // keyframeImage 留空,步 10 自动走 T2V
     }
     done++;
-    onProgress?.(done, total);
+    onProgress?.(done, shots.length);
   }
 
-  if (okCount === 0 && total > 0) {
+  if (ctx.requireCharacterReferences && failedShotIds.length > 0) {
     const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
-    throw new Error(`所有 ${total} 个镜头关键帧都生成失败。最近一次错误:${reason}`);
+    throw new Error(`Keyframe generation failed for ${failedShotIds.length} shot(s): ${reason}`);
   }
-
+  if (okCount === 0 && shots.length > 0) {
+    const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
+    throw new Error(`All ${shots.length} keyframe generations failed: ${reason}`);
+  }
   return { shots: result, failedShotIds };
 }
 
 export async function generateSingleKeyframe(
   shot: ShotSpec,
   shotIndex: number,
-  allShots: ShotSpec[],
+  _allShots: ShotSpec[],
   ctx: {
     characters: CharacterAnchor[];
     scenes: SceneAnchor[];
     aspectRatio: AspectRatio;
     style?: string;
     imageTier: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
     novelProjectId: string;
     openingReferenceImage?: string;
+    seed?: number;
+    requireCharacterReferences?: boolean;
+    /** A rendered tail is stronger continuity evidence than an older still. */
+    continuityReferenceImage?: string;
+    continuityReferenceShotIndex?: number;
+    /** Use the rendered tail as the single authoritative visual input. */
+    preferContinuityReference?: boolean;
   },
-): Promise<string> {
-  const dims = aspectRatioToDims(ctx.aspectRatio);
-  const charById = new Map(ctx.characters.map((c) => [c.id, c]));
-  const sceneById = new Map(ctx.scenes.map((s) => [s.id, s]));
-
-  const charRefs: CollectedRef[] = [];
-  const sceneRefs: CollectedRef[] = [];
-
-  for (const charId of shot.characterIds) {
-    const c = charById.get(charId);
-    if (!c) continue;
-    const variantId = shot.costumeVariantRefs?.[charId];
-    const variant = variantId ? c.costumeVariants?.find((v) => v.id === variantId) : undefined;
-    if (variant) {
-      if (variant.portraitImage) {
-        charRefs.push({ url: variant.portraitImage });
-      }
-    } else if (c.portraitImage) {
-      charRefs.push({ url: c.portraitImage });
-    }
-  }
-
-  if (shot.sceneId) {
-    const sc = sceneById.get(shot.sceneId);
-    if (sc?.backgroundImage) sceneRefs.push({ url: sc.backgroundImage });
-  }
-
-  const prevKeyframeRef: CollectedRef[] = (shotIndex > 0 && allShots[shotIndex - 1]?.keyframeImage)
-    ? [{ url: allShots[shotIndex - 1].keyframeImage! }]
-    : [];
-
-  const episodeOpeningRef: CollectedRef[] = shotIndex === 0 && ctx.openingReferenceImage
-    ? [{ url: ctx.openingReferenceImage }]
-    : [];
-  const rawReferences: CollectedRef[] = [...charRefs, ...episodeOpeningRef, ...prevKeyframeRef, ...sceneRefs];
-
-  const referenceImages: string[] = [];
-  for (const ref of rawReferences) {
-    const dataUri = await readAsDataUri(ref.url);
-    if (ref.cropMiddleThird) {
-      const cropped = await cropMiddleThird(dataUri).catch((err) => {
-        console.warn('keyframe: cropMiddleThird failed, fallback to full image', err);
-        return dataUri;
-      });
-      referenceImages.push(cropped);
-    } else {
-      referenceImages.push(dataUri);
-    }
-  }
-
-  const prevShot = shotIndex > 0 ? allShots[shotIndex - 1] : undefined;
-  const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
-  const presentChars = findMatchingCharacters(shot, ctx.characters);
-  const negPrompt = buildKeyframeNegativePrompt(
-    presentChars,
-    isChinese,
-    `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
+): Promise<{
+  imagePath: string;
+  seed?: number;
+  referenceAssets: ShotReferenceAsset[];
+  inputFingerprint: string;
+  executionContext: ShotGenerationExecutionContext;
+  generationPlan: NonNullable<ShotSpec['generationPlan']>;
+}> {
+  if (ctx.requireCharacterReferences) assertCharacterReferences([shot], ctx.characters);
+  const dimensions = aspectRatioToDims(ctx.aspectRatio);
+  const sceneById = new Map(ctx.scenes.map((scene) => [scene.id, scene]));
+  const requestedImageModel = getParameterModel(shot.imageParameters) ?? ctx.imageModel;
+  const imageCapabilities = providerRouter.getImageCapabilities(
+    'storyboard',
+    requestedImageModel,
+    ctx.imageEndpointId,
   );
-  const img = await providerRouter.generateImage({
-    taskType: 'storyboard',
-    prompt: buildKeyframePrompt(shot, ctx.characters, ctx.style, prevShot),
-    negativePrompt: negPrompt,
-    referenceImages,
-    width: dims.w,
-    height: dims.h,
-    style: ctx.style,
-    seed: presentChars[0]?.seed,
-  });
+  const presentCharacters = findMatchingCharacters(shot, ctx.characters);
+  const characterRefs = collectCharacterReferences(shot, presentCharacters);
+  const customRefs = collectCustomReferences(shot);
+  const manualShotRef = collectManualShotReference(shot, presentCharacters);
+  const sceneRefs = collectSceneReferences(shot, sceneById);
+  const continuityShot = getSubjectContinuityShot(_allShots, shot);
+  const previousKeyframeImage = ctx.continuityReferenceImage || continuityShot?.keyframeImage;
+  const continuityRefs: CollectedRef[] = previousKeyframeImage
+    ? [{
+        url: previousKeyframeImage,
+        kind: 'previous',
+        subjectIds: presentCharacters.map((character) => character.id),
+        label: ctx.continuityReferenceImage
+          ? `rendered tail frame from shot ${(ctx.continuityReferenceShotIndex ?? continuityShot?.index ?? 0) + 1}`
+          : `shot ${continuityShot?.index === undefined ? '' : continuityShot.index + 1} subject continuity frame`,
+      }]
+      : [];
+  const openingRefs: CollectedRef[] = shotIndex === 0
+    && characterRefs.length === 0
+    && continuityRefs.length === 0
+    && ctx.openingReferenceImage
+    ? [{ url: ctx.openingReferenceImage, kind: 'opening', label: 'episode opening reference' }]
+    : [];
+  assertMultiSubjectReferenceStrategy(
+    shot,
+    presentCharacters,
+    imageCapabilities.references,
+    manualShotRef.length > 0,
+  );
+  const providerReferences = manualShotRef.length > 0
+    ? manualShotRef
+    : selectReferenceCandidates(
+        shot,
+        continuityShot,
+        characterRefs,
+        customRefs,
+        continuityRefs,
+        sceneRefs,
+        openingRefs,
+        imageCapabilities.references.supportsReferenceRoles,
+        ctx.preferContinuityReference === true && !!ctx.continuityReferenceImage && !shot.previsReferenceImage,
+      );
+  const requiredReferences = manualShotRef.length > 0
+    ? manualShotRef
+    : ctx.preferContinuityReference === true && !!ctx.continuityReferenceImage && !shot.previsReferenceImage
+      ? continuityRefs
+      : characterRefs;
+  const resolvedReferences = await resolveProviderReferences(
+    providerReferences,
+    requiredReferences,
+    presentCharacters,
+    imageCapabilities.references,
+    providerReferences.length === 1 && providerReferences[0].kind === 'previous',
+  );
+  const preparedReferences = await prepareReferencePayloads(
+    resolvedReferences.candidates,
+    resolvedReferences.required,
+    imageCapabilities.references,
+    ctx.requireCharacterReferences ?? false,
+  );
+  assertReferencePayloads(shot, presentCharacters, preparedReferences);
 
-  return await saveAsset(
+  void logger.info(
+    `[keyframe] shot=${shot.index + 1}/${_allShots.length} `
+      + `subjects=${presentCharacters.map((character) => character.id).join('|') || '-'} `
+      + `refs=characters:${characterRefs.length},custom:${customRefs.length},previous:${continuityRefs.length},opening:${openingRefs.length},scene:${sceneRefs.length},`
+      + `sent=${preparedReferences.sent.length},payloads=${preparedReferences.payloads.length},transport=${preparedReferences.transport},max=${imageCapabilities.references.maxImages},`
+      + `order=${preparedReferences.candidates.map((reference, refIndex) => `${refIndex + 1}:${reference.kind}:${reference.characterId ?? reference.label}:${reference.url === preparedReferences.sent.find((item) => item === reference)?.url ? 'sent' : 'omitted'}`).join('|')}`,
+    'pipeline',
+  );
+  const image = await providerRouter.generateImage({
+    taskType: 'storyboard',
+    sourceLabel: `${shot.id}:keyframe`,
+    prompt: buildKeyframeInput(
+      shot,
+      presentCharacters,
+      preparedReferences.sent,
+      preparedReferences.transport,
+      ctx.preferContinuityReference === true && !!ctx.continuityReferenceImage && !shot.previsReferenceImage,
+    ),
+    negativePrompt: mergeNegativePrompts(shot.imageNegativePrompt),
+    parameters: shot.imageParameters,
+    aspectRatio: ctx.aspectRatio,
+    referenceImages: preparedReferences.payloads,
+    referenceSlots: buildGenerationReferenceInputs(shot.id, preparedReferences),
+    width: dimensions.w,
+    height: dimensions.h,
+    style: ctx.style,
+    endpointId: ctx.imageEndpointId,
+    model: requestedImageModel,
+    seed: getEffectiveShotSeed(shot, ctx.seed),
+  });
+  const seed = getEffectiveShotSeed(shot, ctx.seed);
+  const imagePath = await saveAsset(
     ctx.novelProjectId,
     'keyframe',
-    img.imageData,
+    image.imageData,
     `keyframe_shot_${shotIndex + 1}`,
   );
+  const referenceAssets = buildReferenceAssets(shot.id, preparedReferences.candidates, preparedReferences);
+  const executionContext = buildKeyframeExecutionContext({
+    provider: image.provider,
+    model: image.model,
+    endpointId: image.endpointId ?? ctx.imageEndpointId,
+  }, {
+    ...ctx,
+    seed,
+    continuity: ctx.continuityReferenceImage
+      ? {
+          source: 'previous_tail',
+          sourceShotId: continuityShot?.id,
+          appliedTo: 'keyframe',
+        }
+      : undefined,
+  });
+  const generationPlan = updateShotGenerationPlan(shot, {
+    keyframe: {
+      promptFingerprint: fingerprintPayload(buildKeyframeInput(
+        shot,
+        presentCharacters,
+        preparedReferences.sent,
+        preparedReferences.transport,
+        ctx.preferContinuityReference === true && !!ctx.continuityReferenceImage && !shot.previsReferenceImage,
+      )),
+      inputFingerprint: fingerprintShotInputs(
+        shot,
+        'keyframe',
+        referenceAssets,
+        executionContext,
+      ),
+      executionContext,
+      requestSnapshot: image.requestSnapshot,
+      responseSnapshot: image.responseSnapshot,
+      references: referenceAssets,
+      outputUrl: imagePath,
+    },
+  });
+  return {
+    imagePath,
+    seed,
+    referenceAssets,
+    inputFingerprint: generationPlan.keyframe?.inputFingerprint ?? '',
+    executionContext,
+    generationPlan,
+  };
 }
 
-import { buildMultiCharacterDnaTokens, autoResolveCostumeVariant, findMatchingCharacters, isCrowdScene } from './character-dna';
+function buildKeyframeExecutionContext(
+  capabilities: { provider: string; model: string; endpointId?: string },
+  ctx: {
+    aspectRatio: AspectRatio;
+    style?: string;
+    seed?: number;
+    continuity?: ShotGenerationExecutionContext['continuity'];
+  },
+): ShotGenerationExecutionContext {
+  return {
+    provider: capabilities.provider,
+    model: capabilities.model,
+    endpointId: capabilities.endpointId,
+    seed: ctx.seed,
+    aspectRatio: ctx.aspectRatio,
+    ...(ctx.continuity ? { continuity: ctx.continuity } : {}),
+  };
+}
 
-function buildKeyframeNegativePrompt(
-  presentChars: CharacterAnchor[],
-  isChinese: boolean,
-  contextText = '',
-): string {
-  // 1. 如果分镜剧本或描述明确包含群体、街市、围观、大场面等群体情境：
-  // 绝对严禁将“人群、路人、多个人物、双人、多人”等加入负向词！确保背景人群自然生成！
-  if (isCrowdScene(contextText)) {
-    return isChinese
-      ? '分屏，三视图，多镜头拼接，文字，水印，签名，低质量，面部畸变，肢体变形'
-      : 'split screen, character sheet, collage, text, watermark, signature, bad anatomy, deformed face, deformed limbs';
+function getParameterModel(parameters?: Record<string, unknown>): string | undefined {
+  const model = parameters?.model;
+  return typeof model === 'string' && model.trim() ? model.trim() : undefined;
+}
+
+function selectReferenceCandidates(
+  shot: ShotSpec,
+  continuityShot: ShotSpec | undefined,
+  characterRefs: CollectedRef[],
+  customRefs: CollectedRef[],
+  continuityRefs: CollectedRef[],
+  sceneRefs: CollectedRef[],
+  openingRefs: CollectedRef[],
+  supportsReferenceRoles?: boolean,
+  preferContinuityReference = false,
+): CollectedRef[] {
+  if (preferContinuityReference && continuityRefs.length > 0) {
+    // A rendered tail already contains the current subjects, their wardrobe,
+    // pose, lighting, and composition. Mixing it with portraits creates a
+    // second identity authority and is a common source of duplicated subjects.
+    return dedupeReferences(continuityRefs);
   }
 
-  // 2. 区分人类与真实动物角色，封闭/聚焦镜头下的形态守卫与防幽灵角色控制
-  const isAnimal = (c: CharacterAnchor) => {
-    const isExplicitAnthro = /(兽人|拟人|妖怪|化形|半人|人身|anthro|furry|humanoid)/i.test(`${c.name} ${c.appearance || ''}`);
-    if (isExplicitAnthro) return false;
-    return /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-      /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
-  };
+  // Character references are the identity authority. A previous keyframe is
+  // useful for pose and layout, but it is a weaker identity source and can
+  // carry accidental wardrobe or subject drift into the next shot.
+  if (characterRefs.length > 0) {
+    if (supportsReferenceRoles !== true) {
+      return dedupeReferences([...characterRefs, ...customRefs.filter(isPrevisReference)]);
+    }
+    return dedupeReferences([...characterRefs, ...customRefs, ...continuityRefs, ...sceneRefs, ...openingRefs]);
+  }
 
-  const humanChars = presentChars.filter((c) => !isAnimal(c));
-  const animalChars = presentChars.filter((c) => isAnimal(c));
+  if (continuityRefs.length > 0) {
+    // Providers without semantic slots receive only the prior frame; the shot
+    // description remains responsible for establishing the current setting.
+    if (supportsReferenceRoles !== true) return dedupeReferences([...continuityRefs, ...customRefs]);
+    return dedupeReferences(continuityShot && shotsShareScene(continuityShot, shot)
+      ? [...continuityRefs, ...customRefs]
+      : [...continuityRefs, ...customRefs, ...sceneRefs]);
+  }
 
-  const extraNegs: string[] = [];
-  for (const c of animalChars) {
-    extraNegs.push(
-      isChinese
-        ? '兽人，拟人化人形，人类身体，人类大师，人类道士，人类道长，额外人类道姑'
-        : 'furry humanoid, anthropomorphic animal, human master, human monk, human Taoist, extra human priest',
+  return dedupeReferences([...customRefs, ...sceneRefs, ...openingRefs]);
+}
+
+function collectCharacterReferences(shot: ShotSpec, characters: CharacterAnchor[]): CollectedRef[] {
+  return characters.flatMap((character) => {
+    const variantId = shot.costumeVariantRefs?.[character.id] || shot.costumeVariantRefs?.[character.name];
+    const resolved = resolveCharacterReferenceImage(character, variantId);
+    if (!resolved) return [];
+    const variantLabel = variantId && resolved.source === 'variant' ? ' (' + variantId + ')' : '';
+    return [{
+      url: resolved.imageUrl,
+      charName: character.name,
+      kind: 'character' as const,
+      cropMiddleThird: resolved.source === 'turnaround',
+      label: character.name + variantLabel,
+      characterId: character.id,
+    }];
+  });
+}
+
+function collectCustomReferences(shot: ShotSpec): CollectedRef[] {
+  const userReferences: CollectedRef[] = (shot.customReferenceImages ?? [])
+    .map((url, index) => ({
+      url,
+      kind: 'custom' as const,
+      label: `user reference ${index + 1}`,
+    }))
+    .filter((reference) => !!reference.url);
+  return shot.previsReferenceImage
+    ? [{ url: shot.previsReferenceImage, kind: 'custom', label: '3D previs: composition and camera only' }, ...userReferences]
+    : userReferences;
+}
+
+function isPrevisReference(reference: CollectedRef): boolean {
+  return reference.kind === 'custom' && reference.label === '3D previs: composition and camera only';
+}
+
+function collectManualShotReference(
+  shot: ShotSpec,
+  presentCharacters: CharacterAnchor[],
+): CollectedRef[] {
+  const image = shot.manualReferenceImage?.trim();
+  if (!image) return [];
+  return [{
+    url: image,
+    kind: 'custom',
+    label: 'human-approved shot reference',
+    subjectIds: presentCharacters.map((character) => character.id),
+  }];
+}
+
+function assertMultiSubjectReferenceStrategy(
+  shot: ShotSpec,
+  presentCharacters: CharacterAnchor[],
+  capability: ImageReferenceCapability,
+  hasManualShotReference: boolean,
+): void {
+  if (presentCharacters.length <= 1) return;
+  if (!capability.supported || capability.maxImages <= 0) {
+    throw new Error(
+      `Shot ${shot.index + 1} contains ${presentCharacters.length} visible subjects, `
+        + 'but the selected image model does not support reference images',
+    );
+  }
+  if (presentCharacters.length > capability.maxImages && !hasManualShotReference) {
+    if (capability.supportsReferenceRoles !== true && capability.maxImages >= 1) return;
+    throw new Error(
+      `Shot ${shot.index + 1} contains ${presentCharacters.length} visible subjects, `
+        + `but the selected image model accepts at most ${capability.maxImages} reference image(s). `
+        + 'Upload one human-approved shot reference image containing the visible subjects, or choose a model with a larger reference capacity.',
+    );
+  }
+}
+
+interface ResolvedProviderReferences {
+  candidates: CollectedRef[];
+  required: CollectedRef[];
+}
+
+function resolveProviderReferences(
+  candidates: CollectedRef[],
+  requiredReferences: CollectedRef[],
+  presentCharacters: CharacterAnchor[],
+  capability: ImageReferenceCapability,
+  hasSingleCompleteReference: boolean,
+): ResolvedProviderReferences {
+  const eligible = candidates.filter((reference) => !reference.omittedReason);
+  const strategy = chooseImageReferenceStrategy({
+    candidateCount: eligible.length,
+    visibleSubjectCount: presentCharacters.length,
+    hasManualShotReference: candidates.some((reference) => reference.label === 'human-approved shot reference'),
+    hasSingleCompleteReference,
+    capability,
+  });
+
+  if (strategy === 'blocked') {
+    if (presentCharacters.length > 0) {
+      throw new Error('This image model cannot reliably bind multiple visible subjects from separate reference images. Upload one approved whole-shot reference image or choose a model with semantic subject slots.');
+    }
+    return { candidates, required: requiredReferences };
+  }
+  return { candidates, required: requiredReferences };
+}
+
+function dedupeReferences(references: CollectedRef[]): CollectedRef[] {
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    if (seen.has(reference.url)) return false;
+    seen.add(reference.url);
+    return true;
+  });
+}
+
+function collectSceneReferences(
+  shot: ShotSpec,
+  sceneById: Map<string, SceneAnchor>,
+): CollectedRef[] {
+  const scene = shot.sceneId ? sceneById.get(shot.sceneId) : undefined;
+  if (!scene?.backgroundImage) return [];
+  return [{
+    url: scene.backgroundImage,
+    kind: 'scene',
+    label: scene.name,
+    omittedReason: scene.backgroundReferenceRole === 'environment_only'
+      && scene.backgroundReferenceVersion === ENVIRONMENT_REFERENCE_VERSION
+      ? undefined
+      : 'background is not verified as environment-only',
+  }];
+}
+
+async function prepareReferencePayloads(
+  candidates: CollectedRef[],
+  requiredCharacterRefs: CollectedRef[],
+  capability: {
+    supported: boolean;
+    maxImages: number;
+    supportsReferenceRoles?: boolean;
+  },
+  requireCharacterReferences: boolean,
+): Promise<PreparedReferences> {
+  if (candidates.length === 0) return { candidates, sent: [], payloads: [], transport: 'direct' };
+
+  if (!capability.supported || capability.maxImages <= 0) {
+    if (candidates.some(isPrevisReference)) throw new Error('The selected image model cannot accept the explicit 3D composition reference');
+    if (requireCharacterReferences && requiredCharacterRefs.length > 0) {
+      throw new Error('The selected image model does not support character reference images for this shot');
+    }
+    return { candidates, sent: [], payloads: [], transport: 'direct' };
+  }
+
+  if (requiredCharacterRefs.length > capability.maxImages) {
+    throw new Error(
+      `The selected image model accepts at most ${capability.maxImages} reference image(s), `
+        + `but this shot requires ${requiredCharacterRefs.length} visible subject reference(s)`,
     );
   }
 
-  const extraStr = extraNegs.length > 0 ? `，${extraNegs.join('，')}` : '';
-
-  if (humanChars.length === 0) {
-    return isChinese
-      ? `人物，角色，人类，女人，男人，人群，路人，多余人物，多头，多分身，分屏，三视图，文字，水印，签名${extraStr}`
-      : `person, human, people, man, woman, crowd, character, 1person, 2people, extra people, split screen, character sheet, text, watermark${extraStr ? ', ' + extraStr : ''}`;
+  const eligibleCandidates = candidates.filter((reference) => !reference.omittedReason);
+  const compositionReferences = eligibleCandidates.filter(isPrevisReference);
+  if (requiredCharacterRefs.length + compositionReferences.length > capability.maxImages) {
+    throw new Error('This image model has no remaining reference slot for the explicit 3D composition. Choose a model with more image references.');
+  }
+  // Untyped image endpoints do not preserve the meaning of slot 2, slot 3,
+  // etc. For a multi-subject shot, however, dropping required subjects is a
+  // deterministic quality failure. Send all required subject images first
+  // and omit unrelated scene/continuity material from the untyped request.
+  const rankedCandidates = capability.supportsReferenceRoles === true
+    ? eligibleCandidates
+    : [
+        ...eligibleCandidates.filter((reference) => reference.kind === 'character'),
+        ...eligibleCandidates.filter((reference) => reference.kind !== 'character'),
+      ];
+  const sentCandidates = capability.supportsReferenceRoles === true
+    ? rankedCandidates.slice(0, capability.maxImages)
+    : requiredCharacterRefs.length > 1
+      ? [
+          ...rankedCandidates
+            .filter((reference) => reference.kind === 'character')
+            .slice(0, capability.maxImages),
+          ...rankedCandidates
+            .filter((reference) => reference.kind !== 'character')
+            .slice(0, Math.max(0, capability.maxImages - requiredCharacterRefs.length)),
+        ]
+      : selectUntypedAuthoritativeReferences(rankedCandidates);
+  if (compositionReferences.some((reference) => !sentCandidates.includes(reference))) {
+    throw new Error('The explicit 3D composition could not be included in this image request');
+  }
+  const omitted = capability.supportsReferenceRoles === true
+    ? rankedCandidates.slice(sentCandidates.length)
+    : rankedCandidates.filter((reference) => !sentCandidates.includes(reference));
+  for (const reference of omitted) {
+    reference.omittedReason = capability.supportsReferenceRoles === true
+      ? 'model reference limit'
+      : 'provider does not preserve semantic reference roles; one authoritative image was selected';
   }
 
-  if (humanChars.length === 1) {
-    const isFemale = humanChars[0].gender === 'female' || /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹/i.test(humanChars[0].name);
-    const genderSpecificNeg = isFemale
-      ? (isChinese ? '第二个女人，双人女性，双女，两个女人，多余女人，人类道士，人类大师，人类道姑' : '2women, 2girls, two women, two girls, second woman, extra woman, human master, human monk')
-      : (isChinese ? '第二个男人，双人男性，双男，两个男人，多余男人，人类道士，人类大师' : '2men, 2boys, two men, two boys, second man, extra man, human master, human monk');
-
-    return isChinese
-      ? `多头，多分身，分屏，三视图，文字，水印，签名，未提及的前景第二人，多余人物，${genderSpecificNeg}${extraStr}`
-      : `split screen, character sheet, text, watermark, unmentioned extra foreground person, extra people, ${genderSpecificNeg}${extraStr ? ', ' + extraStr : ''}`;
+  const sent: CollectedRef[] = [];
+  const payloads: string[] = [];
+  for (const reference of sentCandidates) {
+    let dataUri = await readAsDataUri(reference.url);
+    if (reference.cropMiddleThird) {
+      dataUri = await cropMiddleThird(dataUri).catch((err) => {
+        console.warn('keyframe: front crop failed; using full reference', err);
+        return dataUri;
+      });
+    }
+    if (!isUsableImagePayload(dataUri)) {
+      const reason = 'image payload could not be read';
+      if (isPrevisReference(reference)) throw new Error(`The 3D composition reference ${reason}`);
+      if (reference.characterId && requireCharacterReferences) {
+        throw new Error(`Reference image for character ${reference.characterId} ${reason}`);
+      }
+      reference.omittedReason = reason;
+      continue;
+    }
+    sent.push(reference);
+    payloads.push(dataUri);
   }
 
-  return isChinese
-    ? `分屏，三视图，文字，水印，签名，未提及的前景额外第三人，多余人物，多余女人${extraStr}`
-    : `split screen, character sheet, text, watermark, unmentioned extra foreground character, 3people, extra woman, extra person${extraStr ? ', ' + extraStr : ''}`;
+  return {
+    candidates,
+    sent,
+    payloads,
+    transport: capability.supportsReferenceRoles === true ? 'direct' : 'direct_untyped',
+  };
 }
 
-function buildKeyframePrompt(
+/**
+ * An untyped image endpoint has no semantic role guarantee. For one subject,
+ * prefer the strongest identity reference; for a shot without subjects, use
+ * continuity/custom/environment material as a single authoritative source.
+ * Multi-subject selection is handled by prepareReferencePayloads so required
+ * identities are never silently dropped.
+ */
+function selectUntypedAuthoritativeReferences(candidates: CollectedRef[]): CollectedRef[] {
+  const composition = candidates.filter(isPrevisReference);
+  const character = candidates.find((reference) => reference.kind === 'character');
+  if (character) return [character, ...composition];
+  const continuity = candidates.find((reference) => reference.kind === 'previous');
+  if (continuity) return [continuity, ...composition];
+  const custom = candidates.find((reference) => reference.kind === 'custom');
+  if (custom) return [custom];
+  const opening = candidates.find((reference) => reference.kind === 'opening');
+  if (opening) return [opening];
+  return candidates.length > 0 ? [candidates[0]] : [];
+}
+
+function buildGenerationReferenceInputs(
+  shotId: string,
+  prepared: PreparedReferences,
+): GenerationReferenceInput[] {
+  return prepared.sent.flatMap((reference, index) => {
+    const image = prepared.payloads[index];
+    if (!image) return [];
+    return [{
+      id: `${shotId}:reference:${index + 1}`,
+      role: referenceRole(reference.kind),
+      image,
+      label: reference.label,
+      subjectId: reference.characterId,
+      subjectIds: reference.subjectIds,
+    }];
+  });
+}
+
+function referenceRole(kind: ShotReferenceAsset['kind']): GenerationReferenceInput['role'] {
+  switch (kind) {
+    case 'character': return 'subject';
+    case 'scene': return 'environment';
+    case 'previous': return 'continuity';
+    case 'opening': return 'opening';
+    case 'keyframe': return 'first_frame';
+    case 'custom': return 'custom';
+  }
+}
+
+function buildReferenceAssets(
+  shotId: string,
+  candidates: CollectedRef[],
+  prepared: PreparedReferences,
+): ShotReferenceAsset[] {
+  return candidates.map((reference, index) => {
+    const sentIndex = prepared.sent.indexOf(reference);
+    const providerIndex = sentIndex;
+    const omittedReason = reference.omittedReason;
+    return {
+      id: `${shotId}_reference_${index + 1}`,
+      kind: reference.kind,
+      label: reference.label,
+      imageUrl: reference.url,
+      characterId: reference.characterId,
+      sentToProvider: sentIndex >= 0,
+      providerIndex: providerIndex >= 0 ? providerIndex : undefined,
+      transport: sentIndex >= 0 ? prepared.transport : undefined,
+      subjectIds: reference.subjectIds,
+      omittedReason: sentIndex >= 0 ? undefined : (omittedReason || 'not selected for provider request'),
+      payloadFingerprint: sentIndex >= 0
+        ? fingerprintPayload(prepared.payloads[sentIndex])
+        : undefined,
+    };
+  });
+}
+
+function assertReferencePayloads(
   shot: ShotSpec,
-  characters: CharacterAnchor[],
-  style?: string,
-  prevShot?: ShotSpec,
-  referenceCharNames?: string[],
-): string {
-  const isChinese = /[\u4e00-\u9fa5]/.test(shot.videoPrompt);
-  const presentChars = findMatchingCharacters(shot, characters);
-
-  // 1. 角色外貌特征（忠实保留原貌与变装）
-  const charDnaText = buildMultiCharacterDnaTokens(
-    presentChars,
-    shot.costumeVariantRefs,
-    isChinese,
-    `${shot.sourceText || ''} ${shot.videoPrompt || ''}`,
+  presentCharacters: CharacterAnchor[],
+  prepared: PreparedReferences,
+): void {
+  const expectedIds = new Set(presentCharacters.map((character) => character.id));
+  const actualIds = new Set(
+    prepared.sent.flatMap((reference) => reference.kind === 'character'
+      ? (reference.characterId ? [reference.characterId] : [])
+      : (reference.subjectIds ?? [])),
   );
+  const missingIds = [...expectedIds].filter((id) => !actualIds.has(id));
+  if (missingIds.length > 0) {
+    const missingNames = presentCharacters
+      .filter((character) => missingIds.includes(character.id))
+      .map((character) => character.name);
+    throw new Error(
+      `Shot ${shot.index + 1} has incomplete character references: expected ${presentCharacters.length}, `
+        + `received ${prepared.sent.length}${missingNames.length ? `; missing ${missingNames.join(', ')}` : ''}`,
+    );
+  }
+  const expectedPayloads = prepared.sent.length;
+  if (expectedPayloads !== prepared.payloads.length) {
+    throw new Error(
+      `Shot ${shot.index + 1} reference payload count mismatch: expected ${expectedPayloads}, received ${prepared.payloads.length}`,
+    );
+  }
+  if (prepared.payloads.some((image) => !isUsableImagePayload(image))) {
+    throw new Error(`Shot ${shot.index + 1} contains an unreadable local reference payload`);
+  }
+}
 
-  // 2. 参考图身份映射（遵循 2026 多图合成规范，杜绝动物与拟人混淆、杜绝多余路人）
-  let refBindingText = '';
-  if (referenceCharNames && referenceCharNames.length > 0) {
-    if (referenceCharNames.length === 1) {
-      refBindingText = isChinese
-        ? `【单参考图对应】严格以此参考图锁定角色【${referenceCharNames[0]}】的原始面貌体态与服饰，全场严格仅有此1位主角，严禁添加任何未在参考图中的多余人物`
-        : `[Reference] Match character [${referenceCharNames[0]}] appearance strictly from the reference image, strictly NO unmentioned extra character`;
-    } else {
-      const mappings = referenceCharNames.map((name, idx) => `图${idx + 1}对应在场主体【${name}】`).join('，');
-      refBindingText = isChinese
-        ? `【多图参考对应】${mappings}，全场画面严格仅有这${referenceCharNames.length}个在场主体，绝不允许出现任何参考图以外的第二女人或多余人物！画面主角严格按照各参考图还原体态外貌与色彩，主次层次分明`
-        : `[Reference Mapping] ${referenceCharNames.map((name, idx) => `Image ${idx + 1} is [${name}]`).join(', ')}, exactly these ${referenceCharNames.length} subjects in the scene, strictly NO additional person outside reference images!`;
+function assertCharacterReferences(shots: ShotSpec[], characters: CharacterAnchor[]): void {
+  for (const shot of shots) {
+    const declaredRefs = (Array.isArray(shot.visibleCharacterIds)
+      ? shot.visibleCharacterIds
+      : shot.characterIds || [])
+      .map((reference) => reference.trim())
+      .filter(Boolean);
+    const presentCharacters = findMatchingCharacters(shot, characters);
+    const matchedRefs = new Set<string>();
+    for (const character of presentCharacters) {
+      matchedRefs.add(normalizeReference(character.id));
+      matchedRefs.add(normalizeReference(character.name));
+      for (const alias of character.aliases || []) matchedRefs.add(normalizeReference(alias));
+    }
+    const unresolved = declaredRefs.filter((reference) => !matchedRefs.has(normalizeReference(reference)));
+    const missingImages = presentCharacters.filter((character) => {
+      const variantId = shot.costumeVariantRefs?.[character.id] || shot.costumeVariantRefs?.[character.name];
+      const variant = variantId
+        ? character.costumeVariants?.find((item) => item.id === variantId)
+        : undefined;
+      return !variant?.portraitImage && !character.portraitImage && !hasCurrentTurnaround(character);
+    }).map((character) => character.name);
+    const missing = [...unresolved, ...missingImages];
+    if (missing.length > 0) {
+      throw new Error(`Shot ${shot.index + 1} is missing character references: ${Array.from(new Set(missing)).join(', ')}`);
     }
   }
+}
 
-  // 3. 景别与构图自适应增强 (特写强化面部微表情/眼神光，全景强化全身比例与真实接地投影)
-  let framingText = '';
-  const promptLower = (shot.videoPrompt || '').toLowerCase();
-  const isCloseUp = /(特写|面部|脸部|微表情|眼神|头部特写|眼眸|close-up|closeup|face close)/i.test(promptLower);
-  const isWideShot = /(全景|远景|大全景|广角|全身|wide shot|long shot|full body)/i.test(promptLower);
-  const isMediumShot = /(中景|近景|半身|胸像|medium shot|waist up)/i.test(promptLower);
+function normalizeReference(value: string): string {
+  return value.normalize('NFKC').trim().toLocaleLowerCase().replace(/[\s._-]/g, '');
+}
 
-  if (isCloseUp) {
-    framingText = isChinese
-      ? '【特写镜头景别】强化五官面部微表情，眼神聚焦清澈带有眼神光，发丝与皮肤纹理极其细腻，背景自然景深虚化'
-      : '[Close-up Framing] Enhanced subtle facial expression, clear eye contact with catchlights, extremely fine hair and skin textures, shallow depth of field';
-  } else if (isWideShot) {
-    framingText = isChinese
-      ? '【全景/远景景别】展现全身完整比例与站姿体态，脚踏实地并带有真实地面接触阴影(Contact Shadow)，环境空间透视恢弘自然'
-      : '[Wide-shot Framing] Full body proportions and posture, realistic ground contact shadow, grand spatial perspective';
-  } else if (isMediumShot) {
-    framingText = isChinese
-      ? '【中近景构图】半身肢体动作自然，衣褶与服饰细节分明，黄金比例构图'
-      : '[Medium-shot Framing] Natural upper body gesture, crisp clothing folds, golden ratio composition';
-  }
-
-  // 4. 前后分镜接戏与空间/光影连续性
-  let continuityText = '';
-  if (prevShot) {
-    const isSameScene = (prevShot.sceneId && shot.sceneId && prevShot.sceneId === shot.sceneId)
-      || (prevShot.location && shot.location && prevShot.location === shot.location);
-    if (isSameScene) {
-      continuityText = isChinese
-        ? '【镜头接戏连贯】承接上一镜头的环境空间位置、同款色温与主光源投射角度、动作走向与氛围保持高度一致'
-        : '[Shot Continuity] seamlessly inherits spatial position, color temperature, key light direction, and motion trajectory from previous shot';
+/** Describe the semantic mapping between declared references and provider payloads. */
+function buildReferenceBindingText(
+  references: CollectedRef[],
+  transport: ShotReferenceTransport,
+): string {
+  if (!references.length) return '';
+  const subjectOrdinals = new Map<string, number>();
+  for (const reference of references) {
+    const ids = reference.characterId ? [reference.characterId] : reference.subjectIds ?? [];
+    for (const id of ids) {
+      if (!subjectOrdinals.has(id)) subjectOrdinals.set(id, subjectOrdinals.size + 1);
     }
   }
-
-  if (isChinese) {
-    const parts = [
-      refBindingText,
-      charDnaText,
-      framingText,
-      shot.videoPrompt,
-      continuityText,
-      shot.location ? `场景：${shot.location}` : '',
-      shot.cameraMovement ? `镜头：${shot.cameraMovement}` : '',
-      shot.mood ? `氛围：${shot.mood}` : '',
-      style ? `${style}风格` : '电影写实风格',
-    ].filter(Boolean);
-    return parts.join('，');
+  const tileLines = references.map((reference, index) => {
+    const subjectOrdinal = (reference.characterId
+      ? [reference.characterId]
+      : reference.subjectIds ?? [])
+      .map((id) => subjectOrdinals.get(id))
+      .filter((ordinal): ordinal is number => ordinal !== undefined)
+      .map((ordinal) => `S${ordinal}`)
+      .join(',');
+    const binding = subjectOrdinal ? ` -> ${subjectOrdinal}` : '';
+    return `slot ${index + 1}: ${reference.kind}/${reference.characterId ?? reference.label}${binding}`;
+  });
+  if (transport === 'direct_untyped') {
+    return [
+      '[Unbound reference inputs]',
+      'The provider receives these images in order, but this model does not guarantee semantic role binding. Preserve every required visible subject as a distinct entity; do not merge, duplicate, or transfer identities between visible subjects.',
+      ...tileLines.map((line) => line.replace(/^slot/, 'input')),
+      'For a multi-subject shot, the required subject inputs are sent together and unrelated environment inputs may be omitted to protect subject identity.',
+    ].join('\n');
   }
+  return [
+    '[Reference slots]',
+    ...tileLines,
+    'Use each character slot only for that subject. Never transfer a character slot\'s clothing, colors, accessories, face, hair, or body traits to another subject.',
+  ].join('\n');
+}
 
-  const parts = [
-    refBindingText,
-    charDnaText,
-    framingText,
-    shot.videoPrompt,
-    continuityText,
-    shot.location ? `location: ${shot.location}` : '',
-    shot.cameraMovement ? `camera: ${shot.cameraMovement}` : '',
-    shot.mood ? `mood: ${shot.mood}` : '',
-    style ? `${style} style` : 'cinematic style',
-  ].filter(Boolean);
+function buildKeyframeInput(
+  shot: ShotSpec,
+  visibleCharacters: CharacterAnchor[],
+  references: CollectedRef[],
+  transport: ShotReferenceTransport,
+  continuityReferenceAuthoritative = false,
+): string {
+  const hasCharacterReference = references.some((reference) => reference.kind === 'character');
+  const stillPrompt = shot.imagePrompt?.trim() || shot.startState?.trim() || shot.sourceText?.trim();
+  if (!stillPrompt) {
+    throw new Error(`Shot ${shot.index + 1} has no dedicated keyframe prompt or still-state source`);
+  }
+  return [
+    // A keyframe is a still-state input. Legacy shots may not have imagePrompt;
+    // sourceText is a safer static fallback than a motion timeline.
+    stillPrompt,
+    shot.startState?.trim() ? `[First-frame state] ${shot.startState.trim()}` : '',
+    '[Shot composition scope] Treat the shot description as composition, pose, action, camera, lighting, and environment guidance. It is not authoritative for a subject\'s identity or wardrobe.',
+    buildExactSubjectConstraint(visibleCharacters),
+    buildReferenceBindingText(references, transport),
+    references.some(isPrevisReference)
+      ? '[3D previs authority] The input labeled 3D previs defines camera, framing, screen positions, scale, occlusion, and pose only. Replace its mannequins with the bound character identities and wardrobe. Do not copy mannequin materials, marker letters, grid lines, or editor overlays into the final image.'
+      : '',
+    continuityReferenceAuthoritative
+      ? '[Continuity authority] The supplied rendered tail is the authoritative visual state for this shot. Preserve the same visible subjects and identity while adapting only the requested composition, pose, action, or camera change. Do not introduce a second copy of any subject from an older portrait or reference.'
+      : '',
+    buildMultiCharacterDnaTokens(visibleCharacters, shot.costumeVariantRefs, {
+      referenceBound: hasCharacterReference,
+    }),
+    buildOffscreenBindingText(shot),
+    '[Subject authority] Bound subject records and their assigned reference tiles are authoritative. If the shot description or a negative constraint conflicts with a bound subject record, preserve the bound record.',
+  ].filter(Boolean).join('\n\n');
+}
 
-  return parts.join(', ');
+function mergeNegativePrompts(plannedPrompt?: string): string | undefined {
+  const parts = [plannedPrompt?.trim(), buildSubjectExclusionPrompt()].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
+function isUsableImagePayload(value: string): boolean {
+  return /^data:image\/[\w.+-]+;base64,/i.test(value)
+    || (/^https?:\/\//i.test(value) && !/^https?:\/\/asset\.localhost\//i.test(value))
+    || /^[A-Za-z0-9+/\s]+=*$/.test(value);
 }
 
 function aspectRatioToDims(ar: AspectRatio): { w: number; h: number } {
   switch (ar) {
-    case '16:9':
-      return { w: 1280, h: 720 };
-    case '9:16':
-      return { w: 720, h: 1280 };
-    case '1:1':
-      return { w: 1024, h: 1024 };
+    case '16:9': return { w: 1280, h: 720 };
+    case '9:16': return { w: 720, h: 1280 };
+    case '1:1': return { w: 1024, h: 1024 };
   }
 }
 
-/**
- * 三视图立绘(横向 1536×1024,正/侧/背 三视图并排)裁出中间 1/3(正视图)。
- * 输入必须是 data URI(`data:image/...;base64,...`)。
- *
- * 用 webview 里的 Image + Canvas API 完成,失败抛错(调用方有 fallback)。
- */
 async function cropMiddleThird(dataUri: string): Promise<string> {
-  const img = await loadImage(dataUri);
-  const sw = Math.floor(img.width / 3);
-  const sh = img.height;
-  const sx = sw; // 中间 1/3 的 x 起点
+  const image = await loadImage(dataUri);
+  const width = Math.floor(image.width / 3);
   const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx2d = canvas.getContext('2d');
-  if (!ctx2d) throw new Error('canvas 2d context unavailable');
-  ctx2d.drawImage(img, sx, 0, sw, sh, 0, 0, sw, sh);
-  // PNG 无损,避免 JPEG 压缩损失 reference 细节
+  canvas.width = width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('canvas 2d context unavailable');
+  context.drawImage(image, width, 0, width, image.height, 0, 0, width, image.height);
   return canvas.toDataURL('image/png');
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(new Error(`image load failed: ${String(e)}`));
-    img.src = src;
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('reference image could not be loaded'));
+    image.src = src;
   });
 }

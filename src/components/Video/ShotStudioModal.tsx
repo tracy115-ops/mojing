@@ -12,27 +12,36 @@
 //    - 底部动作：【✨ 立即生成本镜】
 // 4. 右栏：多版本历史记录画廊 (Version Gallery)，支持择优一键设为生效
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Modal, Row, Col, Typography, Space, Button, Input, Select, Tag,
-  Card, Tooltip, Divider, Image, message, Popconfirm, Spin, Empty,
-  Radio, Segmented,
+  Card, Tooltip, Image, message, Popconfirm, Empty,
+  Segmented,
 } from 'antd';
 import {
   VideoCameraOutlined, PictureOutlined, AudioOutlined,
   PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined,
-  ThunderboltOutlined, CheckCircleOutlined, ReloadOutlined,
-  UploadOutlined, PlayCircleOutlined, EyeOutlined, CheckOutlined,
-  AppstoreOutlined, ClockCircleOutlined, InfoCircleOutlined,
+  ThunderboltOutlined, CheckCircleOutlined,
+  UploadOutlined, PlayCircleOutlined, CheckOutlined,
+  AppstoreOutlined, InfoCircleOutlined,
 } from '@ant-design/icons';
-import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
-import { useSettingsStore } from '@/stores/settingsStore';
-import type { ShotSpec, GeneratedClip, VideoProjectState, AspectRatio } from '@/types/video';
-import { saveAsset, toWebviewUrl, resolveLocalPath, isValidVideoClip } from '@/services/video/asset-store';
+import { useProviderStore } from '@/stores/providerStore';
+import { providerRouter } from '@/services/providers';
+import type { AspectRatio } from '@/types/video';
+import { saveAsset, toWebviewUrl, resolveLocalPath } from '@/services/video/asset-store';
 import { generateSingleKeyframe } from '@/services/video/core/step-keyframe';
 import { generateSingleVideoClip } from '@/services/video/core/step-video-gen';
 import { generateSingleTTS } from '@/services/video/core/step-tts';
+import { planVideoPrompt } from '@/services/video/core/prompt-enricher';
+import { updateShotGenerationPlan } from '@/services/video/core/shot-generation-plan';
+import {
+  getVideoParameter,
+  getVideoResolutionTiers,
+  normalizeNumberForParameter,
+  resolutionForAspect,
+} from '@/services/video/core/video-capability-utils';
+import './ShotStudioModal.css';
 
 function readBlobAsDataUri(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -43,37 +52,31 @@ function readBlobAsDataUri(file: File): Promise<string> {
   });
 }
 
-const CAMERA_PRESETS = [
-  { label: '🎬 希区柯克变焦', tag: '希区柯克推拉变焦，背景戏剧性形变拉伸，人物焦点清晰' },
-  { label: '🔄 360°环绕运镜', tag: '360度电影级平滑环绕运镜，光影在人物轮廓流动' },
-  { label: '🏃 电影级跟随', tag: '平滑跟随运镜，景深虚化，增强第一视角沉浸感' },
-  { label: '✨ 丁达尔光影', tag: '金色丁达尔光束穿透，空气中微尘粒子漂浮，电影级氛围' },
-  { label: '🦅 航拍大远景', tag: '宏大高空航拍全景，广角大景深，气势磅礴' },
-  { label: '⏳ 慢动作特写', tag: '高帧率慢动作特写镜头，微表情与发丝动态细腻呈现' },
-];
-
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
 
 export interface ShotStudioWorkspaceProps {
   pipelineId?: string;
+  initialShotId?: string;
   showHeader?: boolean;
   onClose?: () => void;
 }
 
 export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
   pipelineId: initialPipelineId,
+  initialShotId,
   showHeader = true,
   onClose,
 }) => {
-  const { t } = useTranslation();
-  const { projects, updateSceneSpecShot, addSceneSpecShot, deleteSceneSpecShot, addShotVersion, selectShotVersion, addClip } = useVideoStore();
+  const { projects, updateSceneSpecShot, addSceneSpecShot, deleteSceneSpecShot, addShotVersion, selectShotVersion, addClip, setClips } = useVideoStore();
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
   const currentPipelineId = initialPipelineId || activePipelineId || Object.keys(projects)[0];
   const [selectedProjectId, setSelectedProjectId] = useState<string>(currentPipelineId);
 
   const project = projects[selectedProjectId] || projects[currentPipelineId];
   const allProjects = useMemo(() => Object.values(projects), [projects]);
+  const activeImageEndpoint = useProviderStore((s) => s.getActiveEndpoint('image'));
+  const activeVideoEndpoint = useProviderStore((s) => s.getActiveEndpoint('video'));
 
   const shots = useMemo(() => project?.sceneSpec?.shots || [], [project]);
   const characters = useMemo(() => project?.sceneSpec?.characters || [], [project]);
@@ -81,21 +84,74 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
 
   // 当前选中的分镜 ID
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null);
+  useEffect(() => {
+    setSelectedShotId((current) => {
+      if (initialShotId && shots.some((shot) => shot.id === initialShotId)) return initialShotId;
+      if (current && shots.some((shot) => shot.id === current)) return current;
+      return shots[0]?.id ?? null;
+    });
+  }, [initialShotId, selectedProjectId, shots]);
   const activeShot = useMemo(() => {
     if (!shots.length) return null;
     return shots.find((s) => s.id === selectedShotId) || shots[0];
   }, [shots, selectedShotId]);
+  const activeClip = useMemo(
+    () => (activeShot ? project?.clips.find((clip) => clip.shotId === activeShot.id) : undefined),
+    [activeShot?.id, project?.clips],
+  );
+  const actualVideoReferences = activeClip?.videoReferenceAssets ?? [];
+  const actualVideoReferenceCount = actualVideoReferences.filter((asset) => asset.sentToProvider !== false).length;
+  const activeReferenceSlotCount = useMemo(() => {
+    if (!activeShot) return 0;
+    return new Set([
+      ...(activeShot.referenceAssets ?? []).map((asset) => asset.imageUrl),
+      ...(activeShot.customReferenceImages ?? []),
+      ...(activeShot.keyframeImage ? [activeShot.keyframeImage] : []),
+    ].filter(Boolean)).size;
+  }, [activeShot]);
 
-  // 创作模式：'video' | 'extend' | 'keyframe'
-  const [studioMode, setStudioMode] = useState<'video' | 'extend' | 'keyframe'>('video');
+  const updateCustomReferenceImages = (shotId: string, images: string[]) => {
+    const normalizedImages = [...new Set(images.filter(Boolean))];
+    updateSceneSpecShot(selectedProjectId, shotId, {
+      customReferenceImages: normalizedImages.length > 0 ? normalizedImages : undefined,
+      // Any reference change invalidates the derived still and clip.
+      keyframeImage: undefined,
+      referenceAssets: undefined,
+    });
+    const latestProject = useVideoStore.getState().getProject(selectedProjectId);
+    if (latestProject?.clips.some((clip) => clip.shotId === shotId)) {
+      setClips(selectedProjectId, latestProject.clips.filter((clip) => clip.shotId !== shotId));
+    }
+  };
+
+  // 创作模式：视频生成或关键帧生成
+  const [studioMode, setStudioMode] = useState<'video' | 'keyframe'>('video');
 
   // 生成参数
   const [videoGenMode, setVideoGenMode] = useState<'reference' | 'text' | 'first_last'>('reference');
-  const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
-  const [durationSec, setDurationSec] = useState<number>(4);
+  const [resolutionTierId, setResolutionTierId] = useState('720p');
+  const [durationSec, setDurationSec] = useState<number>(5);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>(project?.spec?.aspectRatio || '16:9');
-  const [audioMode, setAudioMode] = useState<'with_audio' | 'silent'>('with_audio');
   const [seed, setSeed] = useState<number>(-1);
+
+  const videoCapabilities = useMemo(() => {
+    try {
+      return providerRouter.getVideoCapabilities(
+        'clip',
+        project?.executionBinding?.video?.model,
+        project?.executionBinding?.video?.endpointId ?? activeVideoEndpoint?.id,
+      );
+    } catch {
+      return undefined;
+    }
+  }, [activeVideoEndpoint?.id, project?.executionBinding?.video?.endpointId, project?.executionBinding?.video?.model]);
+  const resolutionTiers = useMemo(
+    () => getVideoResolutionTiers(videoCapabilities),
+    [videoCapabilities?.model, videoCapabilities?.endpointId, videoCapabilities?.resolutionTiers],
+  );
+  const selectedResolutionTier = resolutionTiers.find((tier) => tier.id === resolutionTierId) ?? resolutionTiers[0];
+  const durationParameter = getVideoParameter(videoCapabilities, 'durationSeconds');
+  const durationOptions = durationParameter?.allowedValues ?? [];
 
   // 加载状态
   const [generating, setGenerating] = useState(false);
@@ -103,6 +159,35 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
   const [generatingTTS, setGeneratingTTS] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    setAspectRatio(project?.spec?.aspectRatio || '16:9');
+  }, [selectedProjectId, project?.spec?.aspectRatio]);
+
+  useEffect(() => {
+    setResolutionTierId((current) => resolutionTiers.some((tier) => tier.id === current)
+      ? current
+      : resolutionTiers[0]?.id ?? '');
+  }, [resolutionTiers]);
+
+  useEffect(() => {
+    const supportsMode = (mode: typeof videoGenMode) => mode === 'text'
+      || (mode === 'reference' && videoCapabilities?.references.supportsSubjectReferences === true)
+      || (mode === 'first_last' && videoCapabilities?.references.supportsFirstFrame === true);
+    setVideoGenMode((current) => supportsMode(current)
+      ? current
+      : videoCapabilities?.references.supportsFirstFrame
+        ? 'first_last'
+        : videoCapabilities?.references.supportsSubjectReferences
+          ? 'reference'
+          : 'text');
+  }, [videoCapabilities?.model, videoCapabilities?.endpointId, videoCapabilities?.references.supportsFirstFrame, videoCapabilities?.references.supportsSubjectReferences]);
+
+  useEffect(() => {
+    if (!activeShot) return;
+    setDurationSec(normalizeNumberForParameter(activeShot.durationSeconds, durationParameter, durationOptions[0] ?? 5));
+    setSeed(typeof activeShot.seed === 'number' ? activeShot.seed : -1);
+  }, [activeShot?.id, activeShot?.durationSeconds, activeShot?.seed, durationParameter?.key, durationOptions.join(',')]);
 
   // 素材选择弹窗
   const [assetSelectModalOpen, setAssetSelectModalOpen] = useState(false);
@@ -113,19 +198,23 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
 
   if (!project) return null;
 
-  // --- 智能 AI 重构分秒时间轴提示词 ---
-  const handleAIOptimizeTimelinePrompt = () => {
+  // --- AI prompt planning uses shot facts plus the active provider contract. ---
+  const handleAIOptimizeTimelinePrompt = async () => {
     if (!activeShot) return;
     setOptimizingPrompt(true);
     try {
-      const orig = activeShot.videoPrompt || activeShot.sourceText || '';
-      const dur = activeShot.durationSeconds || 4;
-      const t1 = Math.max(1, Math.floor(dur * 0.25));
-      const t2 = Math.max(t1 + 1, Math.floor(dur * 0.75));
-
-      const optimized = `建立镜头，呈现${activeShot.location || '主体环境'}的生动情境。时间轴：[0-${t1}]秒，摄像机平滑推近，展现环境主光影与角色初始状态；[${t1}-${t2}]秒，${activeShot.characterIds?.length ? activeShot.characterIds.join('与') : '主体'}执行主要动作，神态自然流动；[${t2}-${dur}]秒，动作平稳收尾，光影氛围升华。总时长${dur}秒，8K电影级质感，光影层次丰富。`;
-      
-      updateSceneSpecShot(selectedProjectId, activeShot.id, { videoPrompt: optimized });
+      const plan = await planVideoPrompt({
+        shot: activeShot,
+        style: project.sceneSpec?.meta.style || project.spec?.style,
+        requestedAspectRatio: aspectRatio,
+        durationSeconds: activeShot.durationSeconds,
+        endpointId: activeVideoEndpoint?.id,
+      });
+      updateSceneSpecShot(selectedProjectId, activeShot.id, {
+        videoPrompt: plan.prompt,
+        videoNegativePrompt: plan.negativePrompt,
+        videoParameters: plan.parameters,
+      });
       message.success('已自动重构为工业级分秒时间轴分段规范！');
     } catch {
       message.error('重构提示词失败');
@@ -177,8 +266,8 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
   const handleAddShot = () => {
     const newIndex = shots.length;
     addSceneSpecShot(selectedProjectId, {
-      sourceText: `新镜头 ${newIndex + 1}`,
-      videoPrompt: `建立镜头。时间轴：[0-1]秒，摄像机推进；[1-3]秒，人物动作演进；[3-4]秒，定格光影。总时长4秒，写实电影风格。`,
+      sourceText: '',
+      videoPrompt: '',
       durationSeconds: 5,
       characters: [],
       characterIds: [],
@@ -194,8 +283,8 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
     const temp = reordered[index];
     reordered[index] = reordered[targetIndex];
     reordered[targetIndex] = temp;
-    reordered.forEach((s, idx) => { s.index = idx; });
-    useVideoStore.getState().setSceneSpec(selectedProjectId, { ...project.sceneSpec!, shots: reordered });
+    const reindexed = reordered.map((shot, idx) => ({ ...shot, index: idx }));
+    useVideoStore.getState().setSceneSpec(selectedProjectId, { ...project.sceneSpec!, shots: reindexed });
   };
 
   // --- 删除镜头 ---
@@ -232,7 +321,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
     try {
       if (studioMode === 'keyframe') {
         // 生成关键帧
-        const keyframeUrl = await generateSingleKeyframe(
+        const keyframeResult = await generateSingleKeyframe(
           activeShot,
           activeShot.index,
           shots,
@@ -240,11 +329,26 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
             characters,
             scenes,
             aspectRatio,
-            style: project.spec?.bgmStyle || 'cinematic',
+            style: project.sceneSpec?.meta.style || project.spec?.style || 'cinematic',
             imageTier: project.spec?.imageTier || 'value',
+            imageEndpointId: activeImageEndpoint?.id,
             novelProjectId: selectedProjectId,
+            seed: seed >= 0 ? seed : undefined,
+            requireCharacterReferences: characters.length > 0,
           },
         );
+        const keyframeUrl = keyframeResult.imagePath;
+        updateSceneSpecShot(selectedProjectId, activeShot.id, {
+          keyframeImage: keyframeUrl,
+          referenceAssets: keyframeResult.referenceAssets,
+          keyframeInputFingerprint: keyframeResult.inputFingerprint,
+          keyframeGenerationContext: keyframeResult.executionContext,
+          generationPlan: keyframeResult.generationPlan,
+        });
+        const latestProject = useVideoStore.getState().getProject(selectedProjectId);
+        if (latestProject?.clips.some((clip) => clip.shotId === activeShot.id)) {
+          setClips(selectedProjectId, latestProject.clips.filter((clip) => clip.shotId !== activeShot.id));
+        }
 
         const versionItem = {
           id: `kf_${Date.now()}`,
@@ -252,39 +356,81 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
           url: keyframeUrl,
           createdAt: new Date().toLocaleTimeString(),
           prompt: activeShot.videoPrompt,
+          seed: keyframeResult.seed,
+          inputFingerprint: keyframeResult.inputFingerprint,
+          imageReferenceAssets: keyframeResult.referenceAssets,
+          imageGenerationContext: keyframeResult.executionContext,
+          generationPlan: keyframeResult.generationPlan,
+          reviewStatus: 'unreviewed' as const,
         };
         addShotVersion(selectedProjectId, activeShot.id, versionItem);
         message.success(`分镜 ${activeShot.index + 1} 关键帧生成成功！`);
       } else {
         // 生成视频 / 延长视频
-        const isExtendMode = studioMode === 'extend';
+        const generationShot = {
+          ...activeShot,
+          durationSeconds: (durationSec as any) || activeShot.durationSeconds,
+        };
         const clip = await generateSingleVideoClip(
-          { ...activeShot, durationSeconds: (durationSec as any) || activeShot.durationSeconds },
+          generationShot,
           {
             spec: {
-              resolution: resolution === '720p' ? '1280x720' : '1920x1080',
+              resolution: resolutionForAspect(
+                aspectRatio,
+                selectedResolutionTier ?? { id: '720p', shortEdge: 720 },
+              ),
               fps: 24,
+              aspectRatio,
               videoTier: project.spec?.videoTier || 'value',
             },
             characters,
             allShots: shots,
             novelProjectId: selectedProjectId,
+            requireKeyframeForI2V: videoGenMode === 'first_last',
+            controlMode: videoGenMode === 'first_last' ? 'keyframe' : videoGenMode,
+            endpointId: activeVideoEndpoint?.id,
+            imageEndpointId: activeImageEndpoint?.id,
+            seed: seed >= 0 ? seed : undefined,
           },
           videoGenMode !== 'text',
         );
 
         addClip(selectedProjectId, clip);
+        const generationPlan = updateShotGenerationPlan(generationShot, {
+          video: {
+            inputFingerprint: clip.inputFingerprint,
+            executionContext: clip.generationContext,
+            controlMode: clip.videoControlMode,
+            referenceMode: clip.videoReferenceMode,
+            references: clip.videoReferenceAssets ?? [],
+            outputUrl: clip.videoUrl,
+          },
+        });
         const versionItem = {
           id: `clip_${Date.now()}`,
           type: 'video' as const,
           url: clip.videoUrl,
           createdAt: new Date().toLocaleTimeString(),
-          prompt: `${isExtendMode ? '【延展视频】' : ''}${activeShot.videoPrompt}`,
+          prompt: activeShot.videoPrompt,
+          seed: clip.seed,
+          provider: clip.provider,
           model: clip.model,
           durationSeconds: clip.durationSeconds,
+          inputFingerprint: clip.inputFingerprint,
+          generationContext: clip.generationContext,
+          videoReferenceAssets: clip.videoReferenceAssets,
+          videoReferenceMode: clip.videoReferenceMode,
+          videoControlMode: clip.videoControlMode,
+          lastFrameImage: clip.lastFrameImage,
+          thumbnailUrl: clip.thumbnailUrl,
+          hasAudio: clip.hasAudio,
+          generationPlan,
+          qualityReview: clip.qualityReview,
+          visualReview: clip.visualReview,
+          reviewStatus: 'unreviewed' as const,
         };
         addShotVersion(selectedProjectId, activeShot.id, versionItem);
-        message.success(`分镜 ${activeShot.index + 1} ${isExtendMode ? '延展视频' : '视频'}生成成功！`);
+        message.success(`分镜 ${activeShot.index + 1} 视频生成成功！`);
       }
     } catch (err) {
       message.error(`生成失败: ${String(err)}`);
@@ -294,9 +440,9 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
   };
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="shot-studio-workspace" style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {showHeader && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0 10px 0', flexShrink: 0 }}>
+        <div className="shot-studio-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0 10px 0', flexShrink: 0 }}>
           <Space size="middle">
             <Title level={4} style={{ margin: 0 }}>🎬 分镜精修工作台</Title>
             {/* 顶栏多集快速切换 */}
@@ -322,11 +468,11 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
           </Space>
         </div>
       )}
-      <Row gutter={12} style={{ flex: 1, minHeight: 0 }}>
+      <Row className="shot-studio-layout" gutter={12} style={{ flex: 1, minHeight: 0 }}>
         {/* ==================================================================== */}
         {/* 左栏：分镜列表侧边栏 (Shot List Sidebar)                             */}
         {/* ==================================================================== */}
-        <Col span={5} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Col xs={24} lg={5} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -391,7 +537,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
         {/* ==================================================================== */}
         {/* 中栏：沉浸式单镜精修与生成控制区                                     */}
         {/* ==================================================================== */}
-        <Col span={13} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Col xs={24} lg={13} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -409,7 +555,6 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                   onChange={(val) => setStudioMode(val as any)}
                   options={[
                     { label: '视频创作', value: 'video', icon: <VideoCameraOutlined /> },
-                    { label: '延长视频', value: 'extend', icon: <ReloadOutlined /> },
                     { label: '分镜图创作', value: 'keyframe', icon: <PictureOutlined /> },
                   ]}
                 />
@@ -448,7 +593,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                           </Space>
                           <Space size={6}>
                             <Tag style={{ margin: 0, fontSize: 10 }}>时长: {activeShot.durationSeconds || 4}s</Tag>
-                            <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>{resolution}</Tag>
+                            <Tag color="blue" style={{ margin: 0, fontSize: 10 }}>{selectedResolutionTier?.label ?? selectedResolutionTier?.id}</Tag>
                           </Space>
                         </div>
                         <div style={{
@@ -495,10 +640,10 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                 })()}
 
                 {/* ── 1. 素材槽位区 (Asset Slots) ── */}
-                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-base, rgba(255,255,255,0.08))' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div className="shot-studio-reference-section" style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-base, rgba(255,255,255,0.08))' }}>
+                  <div className="shot-studio-reference-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                     <Text strong style={{ fontSize: 12 }}>
-                      🖼️ 参考素材槽位 (图片 {(activeShot.customReferenceImages?.length || (activeShot.keyframeImage ? 1 : 0))}/9 · 音频 {activeShot.audioTrack ? '1/1' : '0/1'})
+                      🖼️ 参考素材槽位 (素材 {activeReferenceSlotCount}/9 · 视频实际发送 {actualVideoReferenceCount} 张 · 音频 {activeShot.audioTrack ? '1/1' : '0/1'})
                     </Text>
                     <Space size="small">
                       <Button size="small" icon={<AppstoreOutlined />} onClick={() => setAssetSelectModalOpen(true)}>
@@ -518,15 +663,26 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
-                    {/* 已绑定的关键帧/参考图 */}
+                    {/* 本次关键帧生成实际发送的自动参考 */}
+                    {activeShot.referenceAssets?.map((asset) => (
+                      <Tooltip key={asset.id} title={asset.sentToProvider === false ? `未发送：${asset.omittedReason || asset.label}` : `自动参考：${asset.label}`}>
+                        <div style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, overflow: 'hidden', border: `1px solid ${asset.sentToProvider === false ? '#8c8c8c' : '#52c41a'}`, opacity: asset.sentToProvider === false ? 0.65 : 1, flexShrink: 0 }}>
+                          <Image src={toWebviewUrl(asset.imageUrl)} width={72} height={72} style={{ objectFit: 'cover' }} />
+                          <Tag color={asset.sentToProvider === false ? 'default' : asset.kind === 'character' ? 'green' : 'gold'} style={{ position: 'absolute', bottom: 2, left: 2, maxWidth: 68, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, fontSize: 9, padding: '0 2px' }}>
+                            {asset.sentToProvider === false ? '未发送' : asset.label}
+                          </Tag>
+                        </div>
+                      </Tooltip>
+                    ))}
+                    {/* 已生成的关键帧 */}
                     {activeShot.keyframeImage && (
-                      <div style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, overflow: 'hidden', border: '1.5px solid #1677ff' }}>
+                      <div style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, overflow: 'hidden', border: '1.5px solid #1677ff', flexShrink: 0 }}>
                         <Image src={toWebviewUrl(activeShot.keyframeImage)} width={72} height={72} style={{ objectFit: 'cover' }} />
                         <Tag color="blue" style={{ position: 'absolute', bottom: 2, left: 2, margin: 0, fontSize: 9, padding: '0 2px' }}>关键帧</Tag>
                       </div>
                     )}
                     {activeShot.customReferenceImages?.map((imgUrl, i) => (
-                      <div key={i} style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.2)' }}>
+                      <div key={i} style={{ position: 'relative', width: 72, height: 72, borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.2)', flexShrink: 0 }}>
                         <Image src={toWebviewUrl(imgUrl)} width={72} height={72} style={{ objectFit: 'cover' }} />
                         <Button
                           size="small"
@@ -535,13 +691,13 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                           icon={<DeleteOutlined />}
                           style={{ position: 'absolute', top: 0, right: 0, background: 'rgba(0,0,0,0.6)', padding: 0, height: 18, width: 18 }}
                           onClick={() => {
-                            const filtered = activeShot.customReferenceImages?.filter((_, idx) => idx !== i);
-                            updateSceneSpecShot(selectedProjectId, activeShot.id, { customReferenceImages: filtered });
+                            const filtered = activeShot.customReferenceImages?.filter((_, idx) => idx !== i) || [];
+                            updateCustomReferenceImages(activeShot.id, filtered);
                           }}
                         />
                       </div>
                     ))}
-                    {(!activeShot.keyframeImage && (!activeShot.customReferenceImages || activeShot.customReferenceImages.length === 0)) && (
+                    {(!activeShot.keyframeImage && (!activeShot.customReferenceImages || activeShot.customReferenceImages.length === 0) && (!activeShot.referenceAssets || activeShot.referenceAssets.length === 0)) && (
                       <div
                         onClick={() => setAssetSelectModalOpen(true)}
                         style={{
@@ -554,6 +710,45 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {activeClip && (
+                    <div className="shot-reference-audit">
+                      <div className="shot-reference-audit-header">
+                        <Space size={6}>
+                          <Text strong style={{ fontSize: 12 }}>视频请求实际参考</Text>
+                          <Tag color={activeClip.videoReferenceMode === 'i2v' ? 'green' : 'default'} style={{ margin: 0 }}>
+                            {activeClip.videoReferenceMode === 'i2v' ? 'I2V' : 'T2V'}
+                          </Tag>
+                        </Space>
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {actualVideoReferenceCount}/{actualVideoReferences.length} 张已发送
+                        </Text>
+                      </div>
+                      {actualVideoReferences.length > 0 ? (
+                        <div className="shot-reference-audit-list">
+                          {actualVideoReferences.map((asset) => {
+                            const sent = asset.sentToProvider !== false;
+                            return (
+                              <Tooltip key={asset.id} title={sent ? `已发送到视频模型${typeof asset.providerIndex === 'number' ? ` · 槽位 ${asset.providerIndex + 1}` : ''}` : `未发送：${asset.omittedReason || '模型合同未接收该参考'}`}>
+                                <div className={`shot-reference-audit-item ${sent ? 'is-sent' : 'is-omitted'}`}>
+                                  <Image
+                                    src={toWebviewUrl(resolveLocalPath(asset.imageUrl))}
+                                    width={48}
+                                    height={48}
+                                    preview
+                                    style={{ objectFit: 'cover' }}
+                                  />
+                                  <span>{sent ? asset.label : '未发送'}</span>
+                                </div>
+                              </Tooltip>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <Text type="secondary" style={{ fontSize: 11 }}>本次视频请求没有图像参考，实际使用纯文本模式。</Text>
+                      )}
+                    </div>
+                  )}
 
                   {/* 🎙️ 音频配音槽位 */}
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border-base, rgba(255,255,255,0.1))', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -606,30 +801,11 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                     </Button>
                   </div>
 
-                  {/* 🎬 运镜与光影快捷模板库 */}
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-                    {CAMERA_PRESETS.map((p, idx) => (
-                      <Tag
-                        key={idx}
-                        color="blue"
-                        style={{ cursor: 'pointer', margin: 0, fontSize: 11, padding: '1px 6px', borderRadius: 4 }}
-                        onClick={() => {
-                          const current = activeShot.videoPrompt || '';
-                          const updated = current ? `${current}；${p.tag}` : p.tag;
-                          updateSceneSpecShot(selectedProjectId, activeShot.id, { videoPrompt: updated });
-                          message.info(`已追加运镜指令: ${p.label}`);
-                        }}
-                      >
-                        {p.label}
-                      </Tag>
-                    ))}
-                  </div>
-
                   <TextArea
                     rows={4}
                     value={activeShot.videoPrompt}
                     onChange={(e) => updateSceneSpecShot(selectedProjectId, activeShot.id, { videoPrompt: e.target.value })}
-                    placeholder="建立镜头，[主体/场景]。时间轴：[0-1]秒，[摄像机动作]；[1-3]秒，[主体动作演进]；[3-4]秒，[收尾与光影]。总时长4秒，电影级光影。"
+                    placeholder="描述本镜头的画面、动作、运动和镜头变化..."
                     style={{ fontSize: 12, lineHeight: 1.6 }}
                   />
                 </div>
@@ -647,7 +823,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                 {/* ── 4. 生成参数控制矩阵 (Generation Parameters) ── */}
                 <Card size="small" style={{ background: 'rgba(255,255,255,0.02)' }} styles={{ body: { padding: '10px 12px' } }}>
                   <Row gutter={[12, 10]}>
-                    <Col span={8}>
+                    <Col xs={24} sm={8}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>创作模式</Text>
                       <Select
                         size="small"
@@ -655,13 +831,13 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                         value={videoGenMode}
                         onChange={(val) => setVideoGenMode(val)}
                         options={[
-                          { label: '参考生视频 (I2V)', value: 'reference' },
+                          { label: '参考生视频 (I2V)', value: 'reference', disabled: videoCapabilities?.references.supportsSubjectReferences !== true },
                           { label: '纯文生视频 (T2V)', value: 'text' },
-                          { label: '首尾关键帧插值', value: 'first_last' },
+                          { label: '首尾关键帧插值', value: 'first_last', disabled: videoCapabilities?.references.supportsFirstFrame !== true },
                         ]}
                       />
                     </Col>
-                    <Col span={8}>
+                    <Col xs={24} sm={8}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>视频时长</Text>
                       <Select
                         size="small"
@@ -671,15 +847,12 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                           setDurationSec(val);
                           updateSceneSpecShot(selectedProjectId, activeShot.id, { durationSeconds: val as any });
                         }}
-                        options={[
-                          { label: '3 秒 (快速特写)', value: 3 },
-                          { label: '4 秒 (标准分镜)', value: 4 },
-                          { label: '5 秒 (标准叙事)', value: 5 },
-                          { label: '10 秒 (超长连续)', value: 10 },
-                        ]}
+                        options={durationOptions.length > 0
+                          ? durationOptions.map((value) => ({ label: `${value}s`, value }))
+                          : [{ label: `${durationSec}s`, value: durationSec }]}
                       />
                     </Col>
-                    <Col span={8}>
+                    <Col xs={24} sm={8}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>画幅比例</Text>
                       <Select
                         size="small"
@@ -693,33 +866,20 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                         ]}
                       />
                     </Col>
-                    <Col span={8}>
+                    <Col xs={24} sm={8}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>分辨率</Text>
                       <Select
                         size="small"
                         style={{ width: '100%', marginTop: 2 }}
-                        value={resolution}
-                        onChange={(val) => setResolution(val)}
-                        options={[
-                          { label: '720P 高清', value: '720p' },
-                          { label: '1080P 超清', value: '1080p' },
-                        ]}
+                        value={selectedResolutionTier?.id}
+                        onChange={(val) => setResolutionTierId(val)}
+                        options={resolutionTiers.map((tier) => ({
+                          label: tier.label ?? tier.id,
+                          value: tier.id,
+                        }))}
                       />
                     </Col>
-                    <Col span={8}>
-                      <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>声音模式</Text>
-                      <Select
-                        size="small"
-                        style={{ width: '100%', marginTop: 2 }}
-                        value={audioMode}
-                        onChange={(val) => setAudioMode(val)}
-                        options={[
-                          { label: '有声 (自带配音)', value: 'with_audio' },
-                          { label: '无声 (纯画面)', value: 'silent' },
-                        ]}
-                      />
-                    </Col>
-                    <Col span={8}>
+                    <Col xs={24} sm={8}>
                       <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>随机种子 (Seed)</Text>
                       <Input
                         size="small"
@@ -748,8 +908,6 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                       ? 'AI 正在渲染生成中...'
                       : studioMode === 'keyframe'
                       ? `✨ 生成分镜 ${activeShot.index + 1} 关键帧`
-                      : studioMode === 'extend'
-                      ? `✨ 生成分镜 ${activeShot.index + 1} 延展视频`
                       : `✨ 生成分镜 ${activeShot.index + 1} 视频片段`}
                   </Button>
                 </div>
@@ -763,7 +921,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
         {/* ==================================================================== */}
         {/* 右栏：多版本历史记录画廊 (Version Gallery)                           */}
         {/* ==================================================================== */}
-        <Col span={6} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Col xs={24} lg={6} style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <Card
             size="small"
             style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
@@ -882,7 +1040,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                 onClick={() => {
                   if (!activeShot || !c.portraitImage) return;
                   const updated = [...(activeShot.customReferenceImages || []), c.portraitImage];
-                  updateSceneSpecShot(selectedProjectId, activeShot.id, { customReferenceImages: updated });
+                  updateCustomReferenceImages(activeShot.id, updated);
                   setAssetSelectModalOpen(false);
                   message.success(`已绑定角色【${c.name}】立绘`);
                 }}
@@ -907,7 +1065,7 @@ export const ShotStudioWorkspace: React.FC<ShotStudioWorkspaceProps> = ({
                 onClick={() => {
                   if (!activeShot || !s.backgroundImage) return;
                   const updated = [...(activeShot.customReferenceImages || []), s.backgroundImage];
-                  updateSceneSpecShot(selectedProjectId, activeShot.id, { customReferenceImages: updated });
+                  updateCustomReferenceImages(activeShot.id, updated);
                   setAssetSelectModalOpen(false);
                   message.success(`已绑定场景【${s.name}】背景`);
                 }}

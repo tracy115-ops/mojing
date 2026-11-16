@@ -49,6 +49,23 @@
     overflow: hidden;
   }
 
+  /* Keep transient feedback out of the production header and primary controls. */
+  .ant-message {
+    position: fixed !important;
+    top: auto !important;
+    right: 16px !important;
+    bottom: 48px !important;
+    left: auto !important;
+    width: min(480px, calc(100vw - 32px)) !important;
+    transform: none !important;
+    text-align: right !important;
+  }
+
+  .ant-message-notice {
+    margin-bottom: 8px;
+    text-align: left;
+  }
+
   .app-loading-shell {
     width: 100%;
     min-height: 100vh;
@@ -136,6 +153,15 @@
     color: #fff;
   }
 
+  .ws-titlebar-nav {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .ws-nav-tab {
+    min-width: 0;
+  }
+
   .ws-body {
     display: flex;
     flex: 1;
@@ -170,6 +196,16 @@
     min-height: 0;
   }
 
+  .ws-view-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-height: 160px;
+    color: var(--text-secondary);
+  }
+
   .ws-statusbar {
     display: flex;
     align-items: center;
@@ -187,6 +223,31 @@
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  @media (max-width: 560px) {
+    .ws-titlebar {
+      padding: 0 4px;
+    }
+
+    .ws-nav-tab {
+      width: 34px;
+      min-width: 34px;
+      flex: 0 0 34px;
+      padding: 4px !important;
+    }
+
+    .ws-nav-label {
+      display: none;
+    }
+
+    .ws-titlebar-window-controls {
+      gap: 0 !important;
+    }
+
+    .ws-titlebar-window-controls .ws-titlebar-btn {
+      width: 28px;
+    }
   }
 
 /* === Unlayered styles — highest cascade priority ===

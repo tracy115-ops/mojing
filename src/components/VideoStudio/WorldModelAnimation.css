@@ -1,0 +1,8 @@
+.world-model-animation { display: flex; flex-direction: column; gap: 10px; min-width: 0; grid-column: 1 / -1; padding-block: 10px; border-block: 1px solid var(--border-secondary); }
+.world-model-animation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.world-model-animation-fields label { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--text-secondary); }
+.world-model-animation-fields .ant-input-number { width: 100%; }
+.world-model-animation .ant-typography { font-size: 12px; }
+.world-engine-track.world-model-animation-track { min-height: 32px; }
+.world-engine-track.world-model-animation-track > div { margin-top: 0; height: 24px; }
+.world-engine-track.world-model-animation-track .world-model-animation-span { top: 1px; height: 22px; padding: 0 6px; border: 1px solid var(--accent-primary); border-radius: var(--radius-sm); transform: none; color: var(--text-primary); background: color-mix(in srgb, var(--accent-primary) 18%, var(--bg-container)); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }

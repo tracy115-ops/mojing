@@ -48,6 +48,7 @@ import type {
   TTSProviderId,
   ApiEndpoint,
 } from '@/types/providers';
+import { parseEndpointGenerationCapabilities } from '@/services/providers/provider-capabilities';
 
 const LLM_PROVIDER_OPTIONS: { value: LLMProviderId; label: string }[] = [
   { value: 'deepseek', label: 'DeepSeek (深度求索 - 推荐)' },
@@ -146,7 +147,7 @@ const PROVIDER_MODEL_SUGGESTIONS: Record<string, string[]> = {
   vidu: ['vidu-1.5', 'vidu-1.0'],
   pika: ['pika-1.5', 'pika-1.0'],
   'agnes-video': ['agnes-video-2.5', 'agnes-video-2.5-flash', 'agnes-video-v2.0'],
-  'doubao-video': ['doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128'],
+  'doubao-video': ['doubao-seedance-2-5-260628', 'doubao-seedance-2-5-flash-261115', 'doubao-seedance-2-0-260128', 'doubao-seedance-2-0-fast-260128'],
   'minimax-video': ['video-01', 'video-01-live'],
   cogvideo: ['cogvideox_5b', 'cogvideox_flash'],
   '302ai-video': ['kling-302', 'sora-302', 'runway-302'],
@@ -406,6 +407,9 @@ const ProviderSettings: React.FC = () => {
       baseUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
       modelsStr: endpoint.models ? endpoint.models.join(', ') : '',
+      generationCapabilitiesJson: endpoint.generationCapabilities
+        ? JSON.stringify(endpoint.generationCapabilities, null, 2)
+        : '',
     });
     setAddModalOpen(true);
   }, [form]);
@@ -421,6 +425,16 @@ const ProviderSettings: React.FC = () => {
       let models = values.modelsStr
         ? values.modelsStr.split(',').map((s: string) => s.trim()).filter(Boolean)
         : [];
+
+      let generationCapabilities: ApiEndpoint['generationCapabilities'];
+      if (addCategory === 'image' || addCategory === 'video') {
+        try {
+          generationCapabilities = parseEndpointGenerationCapabilities(values.generationCapabilitiesJson);
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : 'Invalid generation capability contract');
+          return;
+        }
+      }
       
       // 智能默认填充模型，不卡用户
       if (models.length === 0 && !isEdge) {
@@ -434,6 +448,7 @@ const ProviderSettings: React.FC = () => {
           baseUrl,
           apiKey,
           models,
+          generationCapabilities,
           category: addCategory,
         });
         if (addCategory === 'llm' && config.llm.endpointId === editingEndpoint.id) {
@@ -450,6 +465,7 @@ const ProviderSettings: React.FC = () => {
           baseUrl,
           apiKey,
           models,
+          generationCapabilities,
           enabled: true,
           category: addCategory,
         });
@@ -1060,6 +1076,19 @@ const ProviderSettings: React.FC = () => {
               tooltip="可直接输入具体模型名称，例如 deepseek-chat, gpt-4o 等"
             >
               <Input placeholder="可留空，系统将自动使用该服务商推荐默认模型" />
+            </Form.Item>
+          )}
+
+          {(addCategory === 'llm' || addCategory === 'image' || addCategory === 'video') && (
+            <Form.Item
+              name="generationCapabilitiesJson"
+              label={t('provider.generationCapabilities')}
+              tooltip={t('provider.generationCapabilitiesHint')}
+            >
+              <Input.TextArea
+                autoSize={{ minRows: 3, maxRows: 10 }}
+                placeholder={t('provider.generationCapabilitiesPlaceholder')}
+              />
             </Form.Item>
           )}
 

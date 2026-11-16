@@ -11,24 +11,27 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Drawer, Typography, Button, Space, Slider, Tag, Tooltip, message,
-  Card, Popconfirm, Spin, Select, Divider, Switch, Empty, Segmented,
+  Card, Divider, Switch, Empty, Segmented,
 } from 'antd';
 import {
-  PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined,
+  PlayCircleOutlined,
   SoundOutlined, VideoCameraOutlined, FileTextOutlined,
-  ClockCircleOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined,
-  CheckOutlined, UndoOutlined, SettingOutlined, EyeOutlined,
-  DownloadOutlined, RocketOutlined, ThunderboltOutlined,
+  ClockCircleOutlined, ArrowUpOutlined, ArrowDownOutlined,
+  DownloadOutlined, RocketOutlined, SearchOutlined,
 } from '@ant-design/icons';
-import { useTranslation } from '@/i18n';
 import { useVideoStore } from '@/stores/videoStore';
+import { useTranslation } from '@/i18n';
 import type { ShotSpec, GeneratedClip, VideoProjectState } from '@/types/video';
+import { normalizeTimelineState } from '@/services/video/core/timeline-state';
 import { runCompose } from '@/services/video/core/step-compose';
 import { runFromStage } from '@/services/video/core/pipeline-runner';
+import { isShotAssemblyReady } from '@/services/video/core/shot-production-contract';
+import { resolveAssemblyQualityRequirements } from '@/services/video/core/quality-policy';
 import { toWebviewUrl, resolveLocalPath } from '@/services/video/asset-store';
 import ExportVideoModal from './ExportVideoModal';
+import './VideoTimelineDrawer.css';
 
-const { Text, Title, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
 
 interface TimelineShotItem {
   id: string;
@@ -43,57 +46,89 @@ interface TimelineShotItem {
 export interface VideoTimelineWorkspaceProps {
   pipelineId?: string;
   project?: VideoProjectState;
-  showHeader?: boolean;
   onClose?: () => void;
+  onOpenScript?: () => void;
+  onOpenShotStudio?: () => void;
 }
 
 export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   pipelineId,
   project: projectProp,
-  showHeader = true,
   onClose,
+  onOpenScript,
+  onOpenShotStudio,
 }) => {
   const { t } = useTranslation();
   const storeProject = useVideoStore((s) => (pipelineId ? s.projects[pipelineId] : undefined));
-  const project = projectProp || storeProject;
-  const rawShots = project?.sceneSpec?.shots || [];
+  const setTimelineState = useVideoStore((s) => s.setTimelineState);
+  const project = storeProject || projectProp;
+  const rawShots = project?.sceneSpec?.shots || (project?.shots as unknown as ShotSpec[]) || [];
   const rawClips = project?.clips || [];
   const finalVideoUrl = project?.finalVideoUrl;
+  const normalizedTimelineState = useMemo(
+    () => normalizeTimelineState(project?.timelineState, rawShots.map((shot) => shot.id)),
+    [project?.timelineState, rawShots],
+  );
 
   // 时间轴内部镜头列表状态（支持用户重新排序与启用状态微调）
   const [timelineShots, setTimelineShots] = useState<TimelineShotItem[]>([]);
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [bgmVolume, setBgmVolume] = useState<number>(30);
   const [dialogueVolume, setDialogueVolume] = useState<number>(100);
   const [isRecomposing, setIsRecomposing] = useState(false);
   const [isBatchRendering, setIsBatchRendering] = useState(false);
   const [previewMode, setPreviewMode] = useState<'master' | 'single'>('master');
   const [exportOpen, setExportOpen] = useState(false);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
-  // 初始化时间轴数据
+  const persistTimeline = (items: TimelineShotItem[], nextDialogueVolume = dialogueVolume) => {
+    if (!pipelineId) return;
+    setTimelineState(pipelineId, {
+      shotOrder: items.map((item) => item.id),
+      disabledShotIds: items.filter((item) => !item.enabled).map((item) => item.id),
+      trims: Object.fromEntries(items.map((item) => [item.id, {
+        startSeconds: item.trimStartSeconds,
+        endSeconds: item.trimEndSeconds,
+      }])),
+      dialogueVolume: nextDialogueVolume / 100,
+    });
+  };
+
+  // 初始化时间轴数据，优先恢复项目中已保存的非破坏性编辑。
   useEffect(() => {
-    const initialItems: TimelineShotItem[] = rawShots.map((s, idx) => {
+    const initialItems: TimelineShotItem[] = normalizedTimelineState.shotOrder
+      .map((shotId) => rawShots.find((shot) => shot.id === shotId))
+      .filter((shot): shot is ShotSpec => !!shot)
+      .map((s, idx) => {
       const clip = rawClips.find((c) => c.shotId === s.id);
+      const duration = Math.max(1, clip?.durationSeconds || s.durationSeconds || 5);
+      const trim = normalizedTimelineState.trims[s.id];
+      const trimStartSeconds = Math.min(trim?.startSeconds || 0, Math.max(0, duration - 1));
+      const trimEndSeconds = Math.min(
+        trim?.endSeconds || 0,
+        Math.max(0, duration - trimStartSeconds - 1),
+      );
       return {
         id: s.id,
         index: idx,
         shot: s,
         clip,
-        enabled: true,
-        trimStartSeconds: 0,
-        trimEndSeconds: 0,
+        enabled: !normalizedTimelineState.disabledShotIds.includes(s.id),
+        trimStartSeconds,
+        trimEndSeconds,
       };
     });
     setTimelineShots(initialItems);
-    if (initialItems.length > 0 && !selectedShotId) {
-      setSelectedShotId(initialItems[0].id);
+    setDialogueVolume(Math.round(normalizedTimelineState.dialogueVolume * 100));
+    setSelectedShotId((current) => (
+      current && initialItems.some((item) => item.id === current)
+        ? current
+        : initialItems[0]?.id || null
+    ));
+    if (pipelineId && JSON.stringify(project?.timelineState) !== JSON.stringify(normalizedTimelineState)) {
+      setTimelineState(pipelineId, normalizedTimelineState);
     }
-  }, [rawShots, rawClips]);
+  }, [normalizedTimelineState, pipelineId, project?.timelineState, rawClips, rawShots, setTimelineState]);
 
   // 计算时间轴总时长与已就绪片段统计
   const totalDuration = useMemo(() => {
@@ -106,51 +141,94 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
       }, 0);
   }, [timelineShots]);
 
-  const readyClipsCount = useMemo(() => {
-    return rawClips.filter((c) => c.videoUrl && !c.videoUrl.startsWith('video_')).length;
-  }, [rawClips]);
+  const readyClipsCount = useMemo(() => (
+    timelineShots.filter((item) => item.enabled && item.clip?.videoUrl && !item.clip.videoUrl.startsWith('video_')).length
+  ), [timelineShots]);
 
-  const totalShotsCount = rawShots.length;
+  const totalShotsCount = timelineShots.filter((item) => item.enabled).length;
+  const keyframeShotsCount = timelineShots.filter((item) => item.enabled && !!item.shot.keyframeImage).length;
+  const allKeyframesReady = totalShotsCount > 0 && keyframeShotsCount === totalShotsCount;
+  const canBatchRender = timelineShots.length > 0 && allKeyframesReady && readyClipsCount < totalShotsCount;
+  const assemblyRequirements = resolveAssemblyQualityRequirements(project?.options);
+  const assemblyReadyCount = timelineShots.filter((item) => item.enabled && isShotAssemblyReady(
+    item.shot,
+    item.clip,
+    assemblyRequirements,
+  )).length;
+  const canCompose = totalShotsCount > 0 && assemblyReadyCount === totalShotsCount;
+  const hasShots = timelineShots.length > 0;
+  const openPrerequisite = () => {
+    if (!hasShots) onOpenScript?.();
+    else onOpenShotStudio?.();
+  };
 
   const currentSelected = useMemo(() => {
     return timelineShots.find((item) => item.id === selectedShotId) || timelineShots[0];
   }, [timelineShots, selectedShotId]);
+  const currentSelectedDuration = currentSelected
+    ? Math.max(1, currentSelected.clip?.durationSeconds || currentSelected.shot.durationSeconds || 5)
+    : 1;
+  const currentTrimRange: [number, number] = currentSelected
+    ? [
+        currentSelected.trimStartSeconds,
+        Math.max(currentSelected.trimStartSeconds, currentSelectedDuration - currentSelected.trimEndSeconds),
+      ]
+    : [0, 1];
 
   // 上移分镜顺序
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
-    setTimelineShots((prev) => {
-      const copy = [...prev];
-      const temp = copy[index - 1];
-      copy[index - 1] = copy[index];
-      copy[index] = temp;
-      return copy;
-    });
+    const copy = [...timelineShots];
+    const temp = copy[index - 1];
+    copy[index - 1] = copy[index];
+    copy[index] = temp;
+    const next = copy.map((item, itemIndex) => ({ ...item, index: itemIndex }));
+    setTimelineShots(next);
+    persistTimeline(next);
   };
 
   // 下移分镜顺序
   const handleMoveDown = (index: number) => {
     if (index >= timelineShots.length - 1) return;
-    setTimelineShots((prev) => {
-      const copy = [...prev];
-      const temp = copy[index + 1];
-      copy[index + 1] = copy[index];
-      copy[index] = temp;
-      return copy;
-    });
+    const copy = [...timelineShots];
+    const temp = copy[index + 1];
+    copy[index + 1] = copy[index];
+    copy[index] = temp;
+    const next = copy.map((item, itemIndex) => ({ ...item, index: itemIndex }));
+    setTimelineShots(next);
+    persistTimeline(next);
   };
 
   // 切换分镜启用状态
   const handleToggleEnable = (id: string) => {
-    setTimelineShots((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item)),
-    );
+    const next = timelineShots.map((item) => (item.id === id ? { ...item, enabled: !item.enabled } : item));
+    setTimelineShots(next);
+    persistTimeline(next);
+  };
+
+  const handleTrimChange = (id: string, range: number[]) => {
+    if (range.length < 2) return;
+    const item = timelineShots.find((candidate) => candidate.id === id);
+    if (!item) return;
+    const duration = Math.max(1, item.clip?.durationSeconds || item.shot.durationSeconds || 5);
+    const startSeconds = Math.max(0, Math.min(range[0], duration - 1));
+    const endSeconds = Math.max(0, Math.min(duration - range[1], duration - startSeconds - 1));
+    const next = timelineShots.map((candidate) => (
+      candidate.id === id ? { ...candidate, trimStartSeconds: startSeconds, trimEndSeconds: endSeconds } : candidate
+    ));
+    setTimelineShots(next);
+    persistTimeline(next);
+  };
+
+  const handleDialogueVolumeChange = (value: number) => {
+    setDialogueVolume(value);
+    persistTimeline(timelineShots, value);
   };
 
   // 试听单独配音
   const handlePlayDialogue = (audioUrl?: string) => {
     if (!audioUrl) {
-      message.warning('该镜头尚未生成对白配音音频');
+      message.warning(t('video.timeline.dialogueMissing'));
       return;
     }
     if (audioPreviewRef.current) {
@@ -158,21 +236,27 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
       audioPreviewRef.current.play().catch((err) => {
         console.warn('Audio play failed:', err);
       });
-      message.info('正在试听该镜头角色配音...');
+      message.info(t('video.timeline.dialoguePlaying'));
     }
   };
 
   // 批量渲染视频片段并自动执行多轨合成
   const handleBatchRenderAndCompose = async () => {
     if (!pipelineId) return;
+    if (!canBatchRender) {
+      if (hasShots && onOpenShotStudio) onOpenShotStudio();
+      else if (!hasShots && onOpenScript) onOpenScript();
+      else message.warning(hasShots ? t('video.timeline.renderPrerequisite') : t('video.timeline.scriptPrerequisite'));
+      return;
+    }
     setIsBatchRendering(true);
-    message.loading('正在批量生成分镜视频并自动执行多轨合成成片...', 2.5);
+    message.loading(t('video.timeline.batchRenderStarting'), 2.5);
     try {
       await runFromStage(pipelineId, 'video_generation');
-      message.success('分镜视频渲染与成片合成完毕！');
+      message.success(t('video.timeline.batchRenderSuccess'));
       setPreviewMode('master');
     } catch (err) {
-      message.error(`视频渲染失败: ${err instanceof Error ? err.message : String(err)}`);
+      message.error(t('video.timeline.videoRenderFailed', { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setIsBatchRendering(false);
     }
@@ -181,14 +265,19 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
   // 基于当前时间轴重新合成成片
   const handleRecompose = async () => {
     if (!pipelineId || !project) return;
+    if (!canCompose) {
+      message.warning(t('video.timeline.composePrerequisite'));
+      onOpenShotStudio?.();
+      return;
+    }
     const activeItems = timelineShots.filter((item) => item.enabled && item.clip?.videoUrl);
     if (activeItems.length === 0) {
-      message.error('请至少保留一个已生成有效视频片段的镜头进行合成');
+      message.error(t('video.timeline.validClipRequired'));
       return;
     }
 
     setIsRecomposing(true);
-    message.loading('正在根据调整后的时间轴重新合成成片...', 2);
+    message.loading(t('video.timeline.recomposeStarting'), 2);
 
     try {
       const orderedClips = activeItems.map((item) => item.clip!);
@@ -199,6 +288,16 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
         clips: orderedClips,
         shots: orderedShots,
         hardcodeSubtitles: project.spec?.hardcodeSubtitles ?? true,
+        timelineState: {
+          shotOrder: activeItems.map((item) => item.id),
+          disabledShotIds: [],
+          trims: Object.fromEntries(activeItems.map((item) => [item.id, {
+            startSeconds: item.trimStartSeconds,
+            endSeconds: item.trimEndSeconds,
+          }])),
+          dialogueVolume: dialogueVolume / 100,
+        },
+        assemblyRequirements,
       });
 
       if (composeRes?.finalVideoUrl) {
@@ -206,18 +305,18 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           durationSeconds: composeRes.durationSeconds,
           sizeBytes: composeRes.sizeBytes,
         });
-        message.success('时间轴重新合成成功！已更新最终成片。');
+        message.success(t('video.timeline.recomposeSuccess'));
         setPreviewMode('master');
       }
     } catch (err) {
-      message.error(`重新合成失败: ${err instanceof Error ? err.message : String(err)}`);
+      message.error(t('video.timeline.recomposeFailed', { error: err instanceof Error ? err.message : String(err) }));
     } finally {
       setIsRecomposing(false);
     }
   };
 
   return (
-    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 16px', background: 'var(--bg-secondary, #f8fafc)', gap: 12, overflowY: 'auto', overflowX: 'hidden' }}>
+    <div className="video-timeline-workspace" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 16px', background: 'var(--bg-secondary, #f8fafc)', gap: 12, overflowY: 'auto', overflowX: 'hidden' }}>
       {/* 隐藏的音频试听播放器 */}
       <audio ref={audioPreviewRef} style={{ display: 'none' }} />
 
@@ -226,64 +325,74 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        background: 'var(--bg-elevated, #ffffff)',
+        background: 'var(--bg-container)',
         padding: '8px 12px',
         borderRadius: 8,
         border: '1px solid var(--border-secondary, #e2e8f0)',
         flexShrink: 0,
       }}>
         <Space size={8} wrap>
-          <VideoCameraOutlined style={{ color: 'var(--color-primary, #3b82f6)' }} />
+          <VideoCameraOutlined style={{ color: 'var(--accent-primary)' }} />
           <Text strong style={{ fontSize: 14 }}>
-            多轨时间轴剪辑台 (Timeline Workspace)
+            {t('video.timeline.workspaceTitle')}
           </Text>
-          <Tag color="blue">总时长: {totalDuration.toFixed(1)} 秒</Tag>
-          <Tag color="purple">有效分镜: {timelineShots.filter((s) => s.enabled).length}/{timelineShots.length}</Tag>
+          <Tag color="blue">{t('video.timeline.totalDuration', { value: totalDuration.toFixed(1) })}</Tag>
+          <Tag color="purple">{t('video.timeline.enabledShots', { enabled: totalShotsCount, total: timelineShots.length })}</Tag>
+          <Tag color={allKeyframesReady ? 'green' : 'orange'}>
+            {t('video.timeline.keyframeCoverage', { ready: keyframeShotsCount, total: totalShotsCount })}
+          </Tag>
           {finalVideoUrl ? (
-            <Tag color="success">✓ 最终成片已就绪</Tag>
+            <Tag color="success">{t('video.timeline.finalReady')}</Tag>
           ) : (
-            <Tag color="warning">待多轨合成</Tag>
+            <Tag color="warning">{t('video.timeline.awaitingCompose')}</Tag>
           )}
         </Space>
 
         <Space size={8} wrap>
-          {readyClipsCount < totalShotsCount && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<RocketOutlined />}
-              loading={isBatchRendering}
-              onClick={handleBatchRenderAndCompose}
-              style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
-            >
-              🚀 渲染分镜视频并合成
-            </Button>
+          {!canCompose && (
+            <Tooltip title={canBatchRender ? t('video.timeline.renderMissingHint') : hasShots ? t('video.timeline.renderPrerequisite') : t('video.timeline.scriptPrerequisite')}>
+              <Button
+                type={canBatchRender ? 'primary' : 'default'}
+                size="small"
+                icon={canBatchRender ? <RocketOutlined /> : <VideoCameraOutlined />}
+                loading={isBatchRendering}
+                disabled={!canBatchRender && !(hasShots ? onOpenShotStudio : onOpenScript)}
+                onClick={handleBatchRenderAndCompose}
+              >
+                {canBatchRender ? t('video.timeline.renderMissing') : hasShots ? t('video.timeline.goToShots') : t('video.timeline.goToScript')}
+              </Button>
+            </Tooltip>
           )}
-          <Button
-            type="primary"
-            size="small"
-            icon={<PlayCircleOutlined />}
-            loading={isRecomposing}
-            onClick={handleRecompose}
-            style={{ background: '#10b981', borderColor: '#10b981' }}
-          >
-            ⚡ {finalVideoUrl ? '重新多轨合成' : '一键多轨合成成片'}
-          </Button>
+          <Tooltip title={canCompose ? t('video.timeline.composeReadyHint') : t('video.timeline.composePrerequisite')}>
+            <span>
+              <Button
+                data-testid="video-timeline-compose"
+                type="primary"
+                size="small"
+                icon={<PlayCircleOutlined />}
+                loading={isRecomposing}
+                disabled={!canCompose}
+                onClick={handleRecompose}
+              >
+                {finalVideoUrl ? t('video.timeline.recompose') : t('video.timeline.compose')}
+              </Button>
+            </span>
+          </Tooltip>
           {finalVideoUrl && (
             <Button
               size="small"
               icon={<DownloadOutlined />}
               onClick={() => setExportOpen(true)}
             >
-              导出 MP4
+              {t('video.timeline.exportMp4')}
             </Button>
           )}
-          {onClose && <Button size="small" onClick={onClose}>关闭</Button>}
+          {onClose && <Button size="small" onClick={onClose}>{t('video.timeline.close')}</Button>}
         </Space>
       </div>
 
       {/* ── 顶部：双栏预览与微调控制区 ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '460px 1fr', gap: 16, height: 270, flexShrink: 0 }}>
+      <div className="video-timeline-preview-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 460px) minmax(0, 1fr)', gap: 16, height: 270, flexShrink: 0 }}>
         {/* 左侧：成片大屏监视器 / 单镜片段切换播放器 */}
         <Card
           size="small"
@@ -294,8 +403,8 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                 value={previewMode}
                 onChange={(val) => setPreviewMode(val as 'master' | 'single')}
                 options={[
-                  { label: '🎬 最终成片监视器', value: 'master' },
-                  { label: `🔍 镜头 #${currentSelected ? currentSelected.index + 1 : 1} 片段`, value: 'single' },
+                  { label: <><VideoCameraOutlined /> {t('video.timeline.previewMaster')}</>, value: 'master' },
+                  { label: <><SearchOutlined /> {t('video.timeline.previewShot', { index: currentSelected ? currentSelected.index + 1 : 1 })}</>, value: 'single' },
                 ]}
               />
               {previewMode === 'master' && finalVideoUrl && (
@@ -304,9 +413,9 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                   type="primary"
                   icon={<DownloadOutlined />}
                   onClick={() => setExportOpen(true)}
-                  style={{ background: '#10b981', borderColor: '#10b981', fontSize: 11, height: 22 }}
+                  style={{ fontSize: 11, height: 22 }}
                 >
-                  导出 MP4
+                  {t('video.timeline.exportMp4')}
                 </Button>
               )}
             </div>
@@ -328,34 +437,40 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
               <div style={{ textAlign: 'center', color: '#94a3b8', padding: 12 }}>
                 <VideoCameraOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#38bdf8' }} />
                 <Text style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 4 }}>
-                  {readyClipsCount >= totalShotsCount && totalShotsCount > 0
-                    ? `全部分镜已就绪 (${readyClipsCount}/${totalShotsCount})，尚未合成成片`
-                    : `分镜视频待渲染（已完成 ${readyClipsCount}/${totalShotsCount} 个分镜）`}
+                  {canCompose
+                    ? t('video.timeline.allShotsReady', { ready: readyClipsCount, total: totalShotsCount })
+                    : canBatchRender
+                      ? t('video.timeline.renderProgress', { ready: readyClipsCount, total: totalShotsCount })
+                      : hasShots ? t('video.timeline.renderPrerequisite') : t('video.timeline.scriptPrerequisite')}
                 </Text>
                 <Text style={{ color: '#94a3b8', fontSize: 11, display: 'block', marginBottom: 12 }}>
-                  {readyClipsCount >= totalShotsCount && totalShotsCount > 0
-                    ? '点击下方按钮快速通过 FFmpeg 压制音轨与字幕生成完整成片'
-                    : '点击下方按钮启动视频生成并自动执行多轨合成'}
+                  {canCompose
+                    ? t('video.timeline.composeHint')
+                    : canBatchRender
+                      ? t('video.timeline.renderMissingHint')
+                      : hasShots ? t('video.timeline.shotStudioHint') : t('video.timeline.scriptStudioHint')}
                 </Text>
-                {readyClipsCount >= totalShotsCount && totalShotsCount > 0 ? (
+                {canCompose ? (
                   <Button
                     type="primary"
                     icon={<PlayCircleOutlined />}
                     loading={isRecomposing}
                     onClick={handleRecompose}
-                    style={{ background: '#10b981', borderColor: '#10b981' }}
                   >
-                    ⚡ 立即多轨合成成片
+                    {t('video.timeline.compose')}
                   </Button>
-                ) : (
+                ) : canBatchRender ? (
                   <Button
                     type="primary"
                     icon={<RocketOutlined />}
                     loading={isBatchRendering}
                     onClick={handleBatchRenderAndCompose}
-                    style={{ background: 'linear-gradient(135deg, #1677ff 0%, #722ed1 100%)', border: 'none' }}
                   >
-                    🚀 一键渲染视频并合成成片
+                    {t('video.timeline.renderMissing')}
+                  </Button>
+                ) : (
+                  <Button type="primary" icon={<VideoCameraOutlined />} onClick={openPrerequisite} disabled={hasShots ? !onOpenShotStudio : !onOpenScript}>
+                    {hasShots ? t('video.timeline.goToShots') : t('video.timeline.goToScript')}
                   </Button>
                 )}
               </div>
@@ -373,7 +488,9 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
             ) : (
               <div style={{ textAlign: 'center', color: '#94a3b8' }}>
                 <VideoCameraOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block' }} />
-                <Text style={{ color: '#94a3b8', fontSize: 12 }}>镜头 #{currentSelected ? currentSelected.index + 1 : 1} 尚未生成独立视频片段</Text>
+                <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                  {t('video.timeline.singleClipMissing', { index: currentSelected ? currentSelected.index + 1 : 1 })}
+                </Text>
               </div>
             )
           )}
@@ -382,21 +499,21 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
         {/* 右侧：分镜属性微调面板 */}
         <Card
           size="small"
-          title="当前选中分镜微调与全局音轨参数"
+          title={t('video.timeline.selectedShotSettings')}
           style={{ height: '100%', overflowY: 'auto', borderRadius: 8 }}
         >
           {currentSelected ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
-                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>画面提示词 (Video Prompt):</Text>
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>{t('video.timeline.visualPrompt')}:</Text>
                 <Paragraph style={{ margin: 0, fontSize: 12, color: 'var(--text-primary)' }} ellipsis={{ rows: 2 }}>
-                  {currentSelected.shot.videoPrompt || currentSelected.shot.sourceText || '无提示词'}
+                  {currentSelected.shot.videoPrompt || currentSelected.shot.sourceText || t('video.timeline.noPrompt')}
                 </Paragraph>
               </div>
 
               {currentSelected.shot.sourceText && (
                 <div>
-                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>角色对白与台词:</Text>
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 600 }}>{t('video.timeline.dialogueLabel')}:</Text>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(0,0,0,0.03)', padding: '4px 8px', borderRadius: 4, marginTop: 2 }}>
                     <Text style={{ fontSize: 12, flex: 1 }}>{currentSelected.shot.sourceText}</Text>
                     {currentSelected.shot.audioTrack && (
@@ -405,9 +522,9 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                         type="text"
                         icon={<SoundOutlined />}
                         onClick={() => handlePlayDialogue(currentSelected.shot.audioTrack)}
-                        style={{ color: '#1677ff' }}
+                        style={{ color: 'var(--accent-primary)' }}
                       >
-                        试听配音
+                        {t('video.timeline.playDialogue')}
                       </Button>
                     )}
                   </div>
@@ -416,38 +533,49 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
 
               <Divider style={{ margin: '4px 0' }} />
 
-              {/* 全局音量控制 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                    <Text>角色对白人声音量:</Text>
-                    <Text strong>{dialogueVolume}%</Text>
-                  </div>
-                  <Slider
-                    min={0}
-                    max={150}
-                    value={dialogueVolume}
-                    onChange={setDialogueVolume}
-                    style={{ margin: '6px 0 0 0' }}
-                  />
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <Text>{t('video.timeline.dialogueVolume')}</Text>
+                  <Text strong>{dialogueVolume}%</Text>
                 </div>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                    <Text>背景音乐 (BGM) 音量:</Text>
-                    <Text strong>{bgmVolume}%</Text>
-                  </div>
-                  <Slider
-                    min={0}
-                    max={100}
-                    value={bgmVolume}
-                    onChange={setBgmVolume}
-                    style={{ margin: '6px 0 0 0' }}
-                  />
+                <Slider
+                  min={0}
+                  max={150}
+                  value={dialogueVolume}
+                  onChange={(value) => handleDialogueVolumeChange(Number(value))}
+                  style={{ margin: '6px 0 0 0' }}
+                />
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {t('video.timeline.bgmUnavailable')}
+                </Text>
+              </div>
+
+              <Divider style={{ margin: '4px 0' }} />
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <Text>{t('video.timeline.trim')}</Text>
+                  <Text type="secondary">
+                    {currentTrimRange[0].toFixed(1)}s - {currentTrimRange[1].toFixed(1)}s / {currentSelectedDuration.toFixed(1)}s
+                  </Text>
                 </div>
+                <Slider
+                  range
+                  min={0}
+                  max={currentSelectedDuration}
+                  step={0.1}
+                  value={currentTrimRange}
+                  onChange={(value) => handleTrimChange(currentSelected.id, Array.isArray(value) ? value : [value, value])}
+                  style={{ margin: '8px 0 0 0' }}
+                />
+                <Space size={12} style={{ fontSize: 11 }}>
+                  <Text type="secondary">{t('video.timeline.trimStart', { value: currentSelected.trimStartSeconds.toFixed(1) })}</Text>
+                  <Text type="secondary">{t('video.timeline.trimEnd', { value: currentSelected.trimEndSeconds.toFixed(1) })}</Text>
+                </Space>
               </div>
             </div>
           ) : (
-            <Text type="secondary">点击下方时间轴中的分镜卡片进行选中与微调</Text>
+            <Text type="secondary">{t('video.timeline.noSelectedShot')}</Text>
           )}
         </Card>
       </div>
@@ -474,9 +602,9 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           fontWeight: 600,
         }}>
           <Space>
-            <span>分镜多轨流时间轴 (Tracks)</span>
+            <span>{t('video.timeline.tracksTitle')}</span>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              支持在卡片中上下调整顺序、关闭/启用镜头、点击选中查看画面
+              {t('video.timeline.tracksHint')}
             </Text>
           </Space>
         </div>
@@ -493,7 +621,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
           justifyContent: timelineShots.length === 0 ? 'center' : 'flex-start',
         }}>
           {timelineShots.length === 0 ? (
-            <Empty description="暂无分镜时间轴数据，请在阶段一或阶段三生成分镜与视频" style={{ margin: 'auto' }} />
+            <Empty description={t('video.timeline.emptyDescription')} style={{ margin: 'auto' }} />
           ) : (
             timelineShots.map((item, index) => {
             const isSelected = item.id === selectedShotId;
@@ -503,10 +631,21 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
               <div
                 key={item.id}
                 onClick={() => setSelectedShotId(item.id)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedShotId(item.id);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-pressed={isSelected}
+                aria-label={t('video.timeline.shotOrder', { index: index + 1 })}
                 style={{
                   width: 200,
                   flexShrink: 0,
-                  border: isSelected ? '2px solid #3b82f6' : '1px solid var(--border-secondary, #e2e8f0)',
+                  border: isSelected ? '2px solid var(--accent-primary)' : '1px solid var(--border-secondary)',
                   borderRadius: 8,
                   background: item.enabled ? '#fff' : '#f8fafc',
                   opacity: item.enabled ? 1 : 0.5,
@@ -523,7 +662,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Space size={4}>
                     <Tag color={isSelected ? 'blue' : 'default'} style={{ margin: 0, fontSize: 10, lineHeight: '18px' }}>
-                      第 {index + 1} 镜
+                      {t('video.timeline.shotOrder', { index: index + 1 })}
                     </Tag>
                     <Text style={{ fontSize: 10, color: '#64748b' }}>
                       <ClockCircleOutlined style={{ marginRight: 2 }} />
@@ -531,7 +670,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                     </Text>
                   </Space>
                   <Space size={2} onClick={(e) => e.stopPropagation()}>
-                    <Tooltip title="向前移动顺序">
+                    <Tooltip title={t('video.timeline.moveEarlier')}>
                       <Button
                         size="small"
                         type="text"
@@ -541,7 +680,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                         style={{ padding: '0 4px', height: 20 }}
                       />
                     </Tooltip>
-                    <Tooltip title="向后移动顺序">
+                    <Tooltip title={t('video.timeline.moveLater')}>
                       <Button
                         size="small"
                         type="text"
@@ -555,6 +694,7 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                       size="small"
                       checked={item.enabled}
                       onChange={() => handleToggleEnable(item.id)}
+                      aria-label={t('video.timeline.toggleShot', { index: index + 1 })}
                     />
                   </Space>
                 </div>
@@ -573,18 +713,18 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                   {item.shot.keyframeImage ? (
                     <img
                       src={toWebviewUrl(resolveLocalPath(item.shot.keyframeImage))}
-                      alt={`Shot ${index + 1}`}
+                      alt={t('video.timeline.shotOrder', { index: index + 1 })}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
                   ) : (
-                    <Text style={{ fontSize: 10, color: '#94a3b8' }}>无关键帧画面</Text>
+                    <Text style={{ fontSize: 10, color: '#94a3b8' }}>{t('video.timeline.noKeyframe')}</Text>
                   )}
                   {item.clip?.videoUrl && (
                     <Tag
                       color="green"
                       style={{ position: 'absolute', bottom: 4, right: 4, margin: 0, fontSize: 9, lineHeight: '16px', padding: '0 4px' }}
                     >
-                      视频就绪
+                      {t('video.timeline.videoReady')}
                     </Tag>
                   )}
                 </div>
@@ -594,12 +734,12 @@ export const VideoTimelineWorkspace: React.FC<VideoTimelineWorkspaceProps> = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
                     <FileTextOutlined style={{ fontSize: 10 }} />
                     <Text style={{ fontSize: 11, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {item.shot.sourceText || item.shot.videoPrompt || '无文本'}
+                      {item.shot.sourceText || item.shot.videoPrompt || t('video.timeline.noText')}
                     </Text>
                   </div>
                   {item.shot.audioTrack && (
                     <Tag color="cyan" style={{ fontSize: 9, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
-                      <SoundOutlined style={{ marginRight: 2 }} />配音已对齐
+                      <SoundOutlined style={{ marginRight: 2 }} />{t('video.timeline.dialogueAligned')}
                     </Tag>
                   )}
                 </div>
@@ -646,7 +786,7 @@ export const VideoTimelineDrawer: React.FC<VideoTimelineDrawerProps> = ({
       styles={{ body: { padding: 0, overflow: 'hidden' } }}
       closable={false}
     >
-      <VideoTimelineWorkspace pipelineId={pipelineId} project={project} showHeader onClose={onClose} />
+      <VideoTimelineWorkspace pipelineId={pipelineId} project={project} onClose={onClose} />
     </Drawer>
   );
 };

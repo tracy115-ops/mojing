@@ -22,3 +22,23 @@ export function detectInputLanguage(text: string): 'zh' | 'en' {
 
   return chineseRatio >= 0.15 || chineseCount >= englishCount ? 'zh' : 'en';
 }
+
+/**
+ * Check the natural-language fields returned by a planner against the source
+ * language contract. Short names and identifiers are intentionally ignored by
+ * callers so a bilingual proper noun does not trigger a false repair.
+ */
+export function hasLanguageMismatch(
+  sourceLanguage: 'zh' | 'en',
+  texts: string[],
+): boolean {
+  const combined = texts.filter((text) => text.trim().length > 0).join('\n');
+  if (!combined) return false;
+
+  const chineseCount = (combined.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const englishCount = (combined.match(/[a-zA-Z]/g) || []).length;
+  if (sourceLanguage === 'zh') {
+    return englishCount >= 12 && chineseCount < Math.max(2, Math.floor(englishCount * 0.1));
+  }
+  return chineseCount >= 4 && englishCount < Math.max(4, Math.floor(chineseCount * 0.1));
+}

@@ -5,7 +5,11 @@
 import { probeFFmpeg, downloadClip, composeClips } from '../ffmpeg-bridge';
 import { resolveLocalPath, isRemoteUrl, toWebviewUrl, isValidVideoClip } from '../asset-store';
 import { runAudioMerge } from './step-audio-merge';
-import type { GeneratedClip, ShotSpec } from '@/types/video';
+import { orderClipsByShots } from './clip-order';
+import { normalizeTimelineState } from './timeline-state';
+import { getAssemblyBlockers } from './shot-production-contract';
+import type { AssemblyQualityRequirements } from './quality-policy';
+import type { GeneratedClip, ShotSpec, VideoTimelineState } from '@/types/video';
 
 export interface ComposeOptions {
   novelProjectId: string;
@@ -13,6 +17,8 @@ export interface ComposeOptions {
   shots: ShotSpec[];
   hardcodeSubtitles: boolean;
   style?: string;
+  timelineState?: VideoTimelineState;
+  assemblyRequirements?: AssemblyQualityRequirements;
 }
 
 export interface ComposeResult {
@@ -29,19 +35,48 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     throw new Error('No clips to compose');
   }
 
+  const timelineState = normalizeTimelineState(
+    opts.timelineState,
+    opts.shots.map((shot) => shot.id),
+  );
+  const shots = timelineState.shotOrder
+    .filter((shotId) => !timelineState.disabledShotIds.includes(shotId))
+    .map((shotId) => opts.shots.find((shot) => shot.id === shotId))
+    .filter((shot): shot is ShotSpec => !!shot);
+  const includedShotIds = new Set(shots.map((shot) => shot.id));
+  // Generation is concurrent, but composition must follow the persisted timeline order.
+  let clips = orderClipsByShots(
+    opts.clips.filter((clip) => includedShotIds.has(clip.shotId)),
+    shots,
+  );
+  if (clips.length === 0) {
+    throw new Error('No enabled clips to compose');
+  }
+
+  const assemblyBlockers = getAssemblyBlockers(shots, clips, opts.assemblyRequirements);
+  if (assemblyBlockers.length > 0) {
+    const labels = assemblyBlockers
+      .slice(0, 6)
+      .map(({ shot, reason }) => `#${shot.index + 1}(${reason})`)
+      .join(', ');
+    throw new Error(
+      `Assembly is blocked until every enabled shot has an approved locked video version: ${labels}`,
+    );
+  }
+
   // 兜底防御：若镜头存在 TTS 中文配音音轨 (shot.audioTrack)，但 clip 尚未融合音轨 (!clip.hasAudio)，
   // 自动在合成前触发一次音视合并，确保中文配音 100% 融入最终成片中！
-  const unmergedShots = opts.shots.filter((s) => {
-    const c = opts.clips.find((clip) => clip.shotId === s.id);
+  const unmergedShots = shots.filter((s) => {
+    const c = clips.find((clip) => clip.shotId === s.id);
     return s.audioTrack && c && !c.hasAudio;
   });
 
   if (unmergedShots.length > 0) {
     console.log(`step-compose: 检测到 ${unmergedShots.length} 个镜头的 TTS 中文配音尚未合并进视频，自动补跑音视合并...`);
     try {
-      const mergeResult = await runAudioMerge(opts.shots, {
+      const mergeResult = await runAudioMerge(shots, {
         novelProjectId: opts.novelProjectId,
-        clips: opts.clips,
+        clips,
       });
       if (mergeResult.mergedShotIds.length > 0) {
         const mergedSet = new Set(mergeResult.mergedShotIds);
@@ -50,7 +85,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
             .filter((s) => mergedSet.has(s.id))
             .map((s) => [s.id, s.audioTrack]),
         );
-        opts.clips = opts.clips.map((clip) => {
+        clips = clips.map((clip) => {
           const mergedPath = shotToMerged.get(clip.shotId);
           if (mergedPath && !mergedPath.startsWith('data:')) {
             return {
@@ -67,26 +102,37 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     }
   }
 
-  // 单镜头:直接返回该镜 URL(转成 webview URL 让前端能播)
-  if (opts.clips.length === 1) {
-    return { finalVideoUrl: toWebviewUrl(resolveLocalPath(opts.clips[0].videoUrl)), degraded: false };
+  const hasSubtitleBurnIn = opts.hardcodeSubtitles && shots.some((shot) => !!shot.narration?.trim());
+  const hasTimelineEdits = clips.some((clip) => {
+    const trim = timelineState.trims[clip.shotId];
+    return (trim?.startSeconds ?? 0) > 0 || (trim?.endSeconds ?? 0) > 0;
+  }) || Math.abs(timelineState.dialogueVolume - 1) > 0.001 || hasSubtitleBurnIn;
+
+  // 单镜头且没有时间轴编辑时直接返回原始片段。
+  if (clips.length === 1 && !hasTimelineEdits) {
+    return { finalVideoUrl: toWebviewUrl(resolveLocalPath(clips[0].videoUrl)), degraded: false };
   }
 
   // 多镜头:走 FFmpeg
   const probe = await probeFFmpeg().catch(() => null);
   if (!probe?.available) {
+    if (hasTimelineEdits) {
+      throw new Error('时间轴裁剪或音量调整需要 FFmpeg，当前环境不可用，未生成未应用编辑的成片。');
+    }
     // FFmpeg 不可用:降级用第一镜(转成 webview URL)
     console.warn('step-compose: FFmpeg unavailable, using first clip as final');
-    return { finalVideoUrl: toWebviewUrl(resolveLocalPath(opts.clips[0].videoUrl)), degraded: true };
+    return { finalVideoUrl: toWebviewUrl(resolveLocalPath(clips[0].videoUrl)), degraded: true };
   }
 
   const workDir = await getWorkDir(opts.novelProjectId);
   const localPaths: string[] = [];
   const subtitles: (string | null)[] = [];
+  const trimStartSeconds: number[] = [];
+  const trimEndSeconds: number[] = [];
   const invalidReasons: string[] = [];
 
-  for (let i = 0; i < opts.clips.length; i++) {
-    const clip = opts.clips[i];
+  for (let i = 0; i < clips.length; i++) {
+    const clip = clips[i];
 
     // 校验 clip 是否为真正可播放的视频路径（过滤掉旧数据中的 video_xxx ID 字符串）
     if (!isValidVideoClip(clip)) {
@@ -118,8 +164,10 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
       continue;
     }
     localPaths.push(resolvedPath);
-    const shot = opts.shots.find((s) => s.id === clip.shotId);
+    const shot = shots.find((s) => s.id === clip.shotId);
     subtitles.push(shot?.narration ?? null);
+    trimStartSeconds.push(timelineState.trims[clip.shotId]?.startSeconds ?? 0);
+    trimEndSeconds.push(timelineState.trims[clip.shotId]?.endSeconds ?? 0);
   }
 
   if (localPaths.length === 0) {
@@ -137,6 +185,9 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     outputPath,
     hardcodeSubtitles: opts.hardcodeSubtitles,
     style: opts.style,
+    trimStartSeconds,
+    trimEndSeconds,
+    audioVolume: timelineState.dialogueVolume,
   });
 
   return {

@@ -1,0 +1,164 @@
+.video-script-source-meta {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.video-script-source-input {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+  line-height: 1.7;
+  font-size: 13px;
+  background: var(--bg-tertiary);
+}
+
+.video-shot-story-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+
+.video-shot-prompt-collapse {
+  margin-top: 6px;
+  border-top: 1px solid var(--border-secondary);
+}
+
+.video-shot-prompt-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.video-shot-prompt-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.video-pipeline-panel {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.video-workflow-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-base);
+}
+
+.video-workflow-content.is-script,
+.video-workflow-content.is-assets {
+  overflow-y: auto;
+}
+
+.video-workflow-content.is-flow {
+  overflow-y: auto;
+}
+
+.video-workflow-flow-view,
+.video-workflow-studio-view,
+.video-workflow-timeline-view {
+  min-width: 0;
+  min-height: 100%;
+}
+
+.video-workflow-script-view,
+.video-workflow-assets-view {
+  min-width: 0;
+  min-height: 100%;
+  padding-bottom: 8px;
+}
+
+.video-script-workspace-grid {
+  display: grid;
+  min-width: 0;
+  min-height: 520px;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.video-script-workspace-grid > .ant-card {
+  min-width: 0;
+}
+
+.video-workflow-studio-view {
+  padding: 0 8px 8px;
+}
+
+.video-workflow-timeline-view {
+  height: 100%;
+}
+
+.video-workflow-back-button {
+  max-width: 170px;
+  overflow: hidden;
+  padding-right: 6px;
+  padding-left: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-workflow-prompt-button {
+  padding-right: 6px;
+  padding-left: 6px;
+}
+
+@media (max-width: 1100px) {
+  .video-shot-prompt-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .video-script-workspace-grid {
+    grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .video-workflow-content.is-script,
+  .video-workflow-content.is-assets {
+    padding: 10px !important;
+  }
+
+  .video-script-workspace-grid {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .video-script-workspace-grid > .ant-card {
+    min-height: 260px !important;
+  }
+
+  .video-workflow-studio-view {
+    padding: 0;
+  }
+
+  .video-pipeline-panel,
+  .video-workflow-content,
+  .video-production-console-workspace {
+    height: auto;
+    overflow: visible !important;
+  }
+
+  .video-pipeline-panel {
+    min-height: 0;
+  }
+
+  .video-workflow-back-button {
+    max-width: 130px;
+  }
+
+}

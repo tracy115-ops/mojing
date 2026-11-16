@@ -1,33 +1,23 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Typography, message, Button, Form, Input, Modal } from 'antd';
-import { VideoCameraOutlined, FolderAddOutlined, FireOutlined } from '@ant-design/icons';
+import { VideoCameraOutlined, FolderAddOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
+import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import type { VideoMetadata } from '@/types';
 import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal, { CreateVideoFormValues } from './CreateVideoModal';
 import VideoGeneratorModal from './VideoGeneratorModal';
 import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
-import { VideoPipeline } from '@/services/video/pipeline';
 import { runFromStage } from '@/services/video/core/pipeline-runner';
 import { applySeriesProjectLibrary } from '@/services/video/series-character-library';
-import { PipelineOptions, type CharacterAnchor, type SceneAnchor } from '@/types/video';
+import { DEFAULT_PIPELINE_OPTIONS, type CharacterAnchor, type SceneAnchor } from '@/types/video';
 import VideoSeriesWorkspace from './VideoSeriesWorkspace';
+import './VideoView.css';
 
 const { Text, Title } = Typography;
-
-const FULL_PIPELINE_OPTIONS: PipelineOptions = {
-  enableCharacterAnchor: true,
-  enableSceneImage: true,
-  enableTTS: true,
-  enableKeyframe: true,
-  enableI2V: true,
-  enableAudioMerge: true,
-  enableSubtitles: true,
-  characterAnchorLimit: 5,
-};
 
 const VideoView: React.FC = () => {
   const { t } = useTranslation();
@@ -40,6 +30,13 @@ const VideoView: React.FC = () => {
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const createRequested = useVideoStudioStore((state) => state.createProjectRequested);
+  useEffect(() => {
+    if (createRequested) {
+      setEpisodeSeriesId(undefined); setCreateOpen(true);
+      useVideoStudioStore.setState({ createProjectRequested: false });
+    }
+  }, [createRequested]);
   const [genOpen, setGenOpen] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [episodeSeriesId, setEpisodeSeriesId] = useState<string | undefined>();
@@ -56,7 +53,8 @@ const VideoView: React.FC = () => {
     const handler = (e: Event) => {
       const { type } = (e as CustomEvent).detail;
       if (type === 'video') {
-        setSeriesOpen(true);
+        setEpisodeSeriesId(undefined);
+        setCreateOpen(true);
       }
     };
     window.addEventListener('mojing:create-project', handler);
@@ -105,17 +103,13 @@ const VideoView: React.FC = () => {
       aspectRatio: values.aspectRatio,
       fps: values.fps,
       scriptText: values.scriptText,
-      chapters: values.scriptText ? [{ id: 'ch_1', number: 1, content: values.scriptText }] : undefined,
+      chapters: values.scriptText ? [{ id: 'ch_1', number: 1, order: 0, content: values.scriptText }] : undefined,
       ...(seriesId ? { seriesRole: 'episode' as const, seriesId, previousEpisodeId: previousEpisode?.id, episodeContinuity } : {}),
     } as any);
     
     const duration = values.shotDurationSeconds || 5;
     const store = useVideoStore.getState();
     const inheritedProject = values.inheritFromProjectId ? store.projects[values.inheritFromProjectId] : undefined;
-    const effectiveSeriesCharacters = seriesCharacters || inheritedProject?.sceneSpec?.characters;
-    const effectiveSeriesScenes = seriesScenes || inheritedProject?.sceneSpec?.scenes;
-    const effectiveStyleGuide = seriesStyleGuide || (inheritedProject?.spec as any)?.style;
-
     const spec = {
       aspectRatio: (values.aspectRatio as any) || inheritedProject?.spec?.aspectRatio || '16:9',
       resolution: values.resolution || inheritedProject?.spec?.resolution || '1920x1080',
@@ -128,7 +122,14 @@ const VideoView: React.FC = () => {
       bgmStyle: (values.style as any) || 'cinematic',
     };
 
-    store.initProject(project.id, [], spec, values.title);
+    const sourceChapterId = `${project.id}_script`;
+    if (values.scriptText) {
+      useProjectStore.getState().updateProjectMetadata(project.id, {
+        chapters: [{ id: sourceChapterId, number: 1, order: 0, content: values.scriptText }],
+        scriptText: values.scriptText,
+      });
+    }
+    store.initProject(project.id, values.scriptText ? [sourceChapterId] : [], spec, values.title);
 
     // 如果继承了已有项目，立即将已锁定的角色与场景资产写入新项目的 sceneSpec
     if (inheritedProject?.sceneSpec?.characters?.length) {
@@ -144,45 +145,11 @@ const VideoView: React.FC = () => {
     setEpisodeSeriesId(undefined);
 
     if (values.scriptText) {
-      // ✍️ 粘贴剧本生成：统一使用 VideoPipeline 进行切片、分镜规划、角色提取与系列资产绑定！
-      message.loading({ content: '正在为剧本切片并规划分镜与角色...', key: 'create-pipeline' });
-      try {
-        const pipeline = new VideoPipeline(
-          {
-            novelProjectId: project.id,
-            novelTitle: values.title,
-            genre: 'script',
-            style: values.style,
-            chapters: [
-              {
-                id: `${project.id}_script`,
-                order: 0,
-                content: values.scriptText,
-              },
-            ],
-            spec,
-            options: FULL_PIPELINE_OPTIONS,
-            seriesCharacters: effectiveSeriesCharacters,
-            seriesScenes: effectiveSeriesScenes,
-            seriesStyleGuide: effectiveStyleGuide,
-            seriesContinuityContext: episodeContinuity,
-          },
-          {
-            onError: (msg) => {
-              message.error({ content: msg, key: 'create-pipeline' });
-            },
-          },
-        );
-        message.success({ content: '剧本全流程生成已启动！', key: 'create-pipeline' });
-        pipeline.run().catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error('Failed to run script pipeline:', err);
-          message.error({ content: `剧本生成异常: ${msg}`, key: 'create-pipeline' });
-        });
-      } catch (err) {
-        console.error('Failed to start novel script pipeline:', err);
-        message.error({ content: '剧本解析启动失败', key: 'create-pipeline' });
-      }
+      store.setPipelineOptions(project.id, DEFAULT_PIPELINE_OPTIONS);
+      // Project creation is a local draft operation. Planning is explicit so
+      // the user can review the source and provider readiness before a model call.
+      message.success('项目已创建，请在项目首页点击“生成分镜计划”。');
+      return;
     } else if (values.novelId) {
         // 关联了已有小说：打开章节选择配置框
         if (seriesId) {
@@ -209,7 +176,7 @@ const VideoView: React.FC = () => {
     const meta = proj?.metadata as Partial<VideoMetadata> | undefined;
 
     if (!store.projects[id] || !store.projects[id].sceneSpec) {
-      if (meta?.initialSceneSpec) {
+      if (meta?.initialSceneSpec && Array.isArray(meta.initialSceneSpec.shots)) {
         store.initProject(
           id,
           meta.initialSceneSpec.shots.map((s) => s.id),
@@ -267,7 +234,6 @@ const VideoView: React.FC = () => {
     useVideoStore.getState().setActivePipelineId(undefined);
     seriesForm.resetFields();
     setSeriesOpen(false);
-    message.success(t('video.series.created'));
   };
 
   const handleCreateEpisode = (seriesId: string) => {
@@ -276,8 +242,8 @@ const VideoView: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      <div style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div className="video-view-shell" style={{ display: 'flex', height: '100%' }}>
+      <div className="video-view-projects" style={{ width: 220, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ProjectList
           projects={videoProjects}
           type="video"
@@ -286,31 +252,33 @@ const VideoView: React.FC = () => {
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
           onCreate={() => {
-            setSeriesOpen(true);
+            setEpisodeSeriesId(undefined);
+            setCreateOpen(true);
           }}
         />
       </div>
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div className="video-view-main" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {/* Top toolbar — two entries */}
-        <div style={{
+        <div className="video-view-toolbar" style={{
           padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)',
           display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
         }}>
           <Button type="primary"
+            icon={<VideoCameraOutlined />}
+            data-testid="video-new-video"
+            onClick={() => {
+              setEpisodeSeriesId(undefined);
+              setCreateOpen(true);
+            }}
+          >
+            {t('video.newProject')}
+          </Button>
+          <Button
             icon={<FolderAddOutlined />}
+            data-testid="video-new-series"
             onClick={() => setSeriesOpen(true)}
           >
             {t('video.series.newSeries')}
-          </Button>
-          <Button
-            icon={<FireOutlined style={{ color: '#fa8c16' }} />}
-            onClick={() => {
-              const res = useProjectStore.getState().seedShawBrothersMartialCatProject();
-              handleSelectProject(res.series.id);
-              message.success('已载入《80年代港风武侠·猫大师与小师妹》示范项目与第1集');
-            }}
-          >
-            载入猫大师港风示范
           </Button>
           {activeEpisodeSeries && (
             <Button onClick={() => handleSelectProject(activeEpisodeSeries.id)}>
@@ -321,7 +289,7 @@ const VideoView: React.FC = () => {
             {t('video.series.consistencyHint')}
           </Text>
         </div>
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div className="video-view-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           {activeSeries ? (
             <VideoSeriesWorkspace
               series={activeSeries}
@@ -409,7 +377,19 @@ const VideoView: React.FC = () => {
                 <Button
                   type="primary"
                   size="large"
+                  icon={<VideoCameraOutlined />}
+                  data-testid="video-new-video-empty"
+                  onClick={() => {
+                    setEpisodeSeriesId(undefined);
+                    setCreateOpen(true);
+                  }}
+                >
+                  {t('video.newProject')}
+                </Button>
+                <Button
+                  size="large"
                   icon={<FolderAddOutlined />}
+                  data-testid="video-new-series-empty"
                   onClick={() => setSeriesOpen(true)}
                 >
                   {t('video.series.newSeries')}
@@ -421,6 +401,7 @@ const VideoView: React.FC = () => {
       </div>
       <CreateVideoModal
         open={createOpen}
+        seriesMode={!!episodeSeriesId}
         onOk={handleCreate}
         onCancel={() => {
           setCreateOpen(false);

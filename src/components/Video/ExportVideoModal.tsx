@@ -112,28 +112,6 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
     }
   };
 
-  const [subtitleStyle, setSubtitleStyle] = useState<'yellow' | 'gold_stroke' | 'cinema' | 'minimal'>('yellow');
-  const [transitionStyle, setTransitionStyle] = useState<'smooth' | 'fadeblack' | 'direct'>('smooth');
-  const [bgmSource, setBgmSource] = useState<'preset' | 'custom'>('preset');
-  const [customBgmFile, setCustomBgmFile] = useState<string | null>(null);
-
-  // 一键生成 SRT 标准字幕文件并触发浏览器/桌面端下载
-  const handleDownloadSRT = () => {
-    try {
-      const srtText = `1\n00:00:00,000 --> 00:00:04,500\nAI 漫剧短视频 · 自动化语音配音与字幕\n\n2\n00:00:04,500 --> 00:00:08,000\nAI 是副驾驶，不是方向盘。流程越清楚，结果越稳定。`;
-      const blob = new Blob([srtText], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${suggestedName}.srt`;
-      link.click();
-      URL.revokeObjectURL(url);
-      message.success('已导出标准 .srt 字幕包！可在剪映/CapCut/PR 中直接导入使用。');
-    } catch {
-      message.error('导出 SRT 失败');
-    }
-  };
-
   return (
     <Modal
       open={open}
@@ -158,97 +136,15 @@ const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
           <Radio.Group value={resolution} onChange={(e) => setResolution(e.target.value)}>
             <Radio value="original">{t('video.export.resolutionOriginal')}</Radio>
             <Radio value="720">720p</Radio>
-            <Radio value="1080">1080p (高清推荐)</Radio>
-            <Radio value="1440">4K 2160p (超分渲染)</Radio>
+            <Radio value="1080">1080p</Radio>
+            <Radio value="1440">1440p</Radio>
           </Radio.Group>
         </div>
 
-        <div style={{ padding: '10px 12px', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', borderRadius: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>
-            短视频花字硬烧录风格预设
-          </Text>
-          <Radio.Group value={subtitleStyle} onChange={(e) => setSubtitleStyle(e.target.value)}>
-            <Space direction="vertical" size={4}>
-              <Radio value="yellow">抖音爆款黑底黄字 (黑阴影+亮黄粗体)</Radio>
-              <Radio value="gold_stroke">综艺极光描边金字 (金灿描边+高亮)</Radio>
-              <Radio value="cinema">电影原声双语字幕 (底部暗影高质感)</Radio>
-              <Radio value="minimal">二次元漫剧白字 (极简圆润边框)</Radio>
-            </Space>
-          </Radio.Group>
-        </div>
-
-        <div style={{ padding: '10px 12px', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', borderRadius: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>
-            分镜转场衔接模式 (Transition Style)
-          </Text>
-          <Radio.Group value={transitionStyle} onChange={(e) => setTransitionStyle(e.target.value)}>
-            <Space direction="vertical" size={4}>
-              <Radio value="smooth">智能电影微过渡 (Smooth Cut - 推荐，消除跳帧与音频爆音)</Radio>
-              <Radio value="fadeblack">电影黑场淡出淡入 (Fade to Black - 适合大章节转换)</Radio>
-              <Radio value="direct">经典无损硬切 (Direct Cut - 极速拼接)</Radio>
-            </Space>
-          </Radio.Group>
-        </div>
-
-        <div style={{ padding: '10px 12px', background: 'var(--bg-secondary, rgba(0,0,0,0.02))', borderRadius: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>
-            背景音乐 (BGM) 配音混音
-          </Text>
-          <Radio.Group
-            value={bgmSource}
-            onChange={(e) => setBgmSource(e.target.value)}
-            style={{ marginBottom: 8 }}
-          >
-            <Radio value="preset">AI 智能氛围预设 BGM</Radio>
-            <Radio value="custom">自定义上传本地音乐 (.mp3 / .wav / .m4a)</Radio>
-          </Radio.Group>
-
-          {bgmSource === 'custom' ? (
-            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <input
-                type="file"
-                accept="audio/*"
-                style={{ fontSize: 12 }}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    setCustomBgmFile(file.name);
-                    message.success(`已成功加载自选音乐文件: ${file.name}`);
-                  }
-                }}
-              />
-              {customBgmFile && (
-                <Text type="success" style={{ fontSize: 12 }}>
-                  已选择: {customBgmFile}
-                </Text>
-              )}
-            </div>
-          ) : (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              系统将根据镜头情绪（如热血、悬疑、温馨）自动淡入淡出混入配乐。
-            </Text>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {t('video.export.hint')}
           </Text>
-          <button
-            type="button"
-            style={{
-              padding: '4px 10px',
-              fontSize: 12,
-              background: 'rgba(24, 144, 255, 0.1)',
-              color: '#1890ff',
-              border: '1px solid #91d5ff',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
-            onClick={handleDownloadSRT}
-          >
-            一键导出单独 .srt 字幕包
-          </button>
         </div>
 
         {busy && (

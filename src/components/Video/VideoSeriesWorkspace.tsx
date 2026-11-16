@@ -29,7 +29,10 @@ import type { CreativeProject, VideoMetadata } from '@/types';
 import type { CharacterAnchor, CostumeVariant, SceneAnchor } from '@/types/video';
 import { providerRouter } from '@/services/providers';
 import { useVideoStore } from '@/stores/videoStore';
+import { useProviderStore } from '@/stores/providerStore';
 import { readAsDataUri, saveAsset } from '@/services/video/asset-store';
+import { planImagePrompt } from '@/services/video/core/prompt-enricher';
+import { ENVIRONMENT_REFERENCE_VERSION } from '@/services/video/core/step-scene-image';
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -114,6 +117,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   const [editing, setEditing] = useState<CharacterAnchor | undefined>();
   const [portraitImage, setPortraitImage] = useState<string | undefined>();
   const [turnaroundImage, setTurnaroundImage] = useState<string | undefined>();
+  const [turnaroundSourcePortrait, setTurnaroundSourcePortrait] = useState<string | undefined>();
   const [generating, setGenerating] = useState<'portrait' | 'turnaround' | undefined>();
   const [costumeVariants, setCostumeVariants] = useState<CostumeVariant[]>([]);
   const [costumeModalOpen, setCostumeModalOpen] = useState(false);
@@ -123,6 +127,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   const [sceneModalOpen, setSceneModalOpen] = useState(false);
   const [editingScene, setEditingScene] = useState<SceneAnchor | undefined>();
   const [sceneImage, setSceneImage] = useState<string | undefined>();
+  const [sceneImageEnvironmentOnly, setSceneImageEnvironmentOnly] = useState(false);
   const [sceneGenerating, setSceneGenerating] = useState(false);
   const [continuityModalOpen, setContinuityModalOpen] = useState(false);
   const [editingEpisode, setEditingEpisode] = useState<CreativeProject | undefined>();
@@ -132,6 +137,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   const costumeFileInput = useRef<HTMLInputElement | null>(null);
   const sceneFileInput = useRef<HTMLInputElement | null>(null);
   const metadata = series.metadata as VideoMetadata;
+  const activeImageEndpoint = useProviderStore((s) => s.getActiveEndpoint('image'));
   const characters = metadata.seriesCharacters ?? [];
   const scenes = metadata.seriesScenes ?? [];
 
@@ -144,6 +150,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     setEditing(character);
     setPortraitImage(character?.portraitImage);
     setTurnaroundImage(character?.turnaroundImage);
+    setTurnaroundSourcePortrait(character?.turnaroundSourcePortrait);
     setCostumeVariants(character?.costumeVariants?.map((variant) => ({ ...variant })) ?? []);
     form.setFieldsValue({
       name: character?.name ?? '',
@@ -180,14 +187,32 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     }
     setCostumeGenerating(true);
     try {
+      const reference = await readAsDataUri(portraitImage);
+      const plan = await planImagePrompt({
+        purpose: 'character_portrait',
+        character: {
+          id: editing?.id ?? 'draft-character',
+          name: character.name,
+          appearance: character.appearance,
+          firstAppearShotIndex: 0,
+        },
+        costumeOverride: costume.description,
+        style: metadata.style,
+        requestedAspectRatio: '2:3',
+        referenceCount: reference ? 1 : 0,
+        endpointId: activeImageEndpoint?.id,
+      });
       const response = await providerRouter.generateImage({
         taskType: 'character',
-        prompt: `${character.appearance}, ${character.name}, wearing ${costume.description}, full body character design portrait, front view, preserve the exact face, hairstyle, age, and body proportions from the reference, clean neutral background, standard anatomy, exactly two legs`,
-        negativePrompt: 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, watermark, text, signature',
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+        parameters: plan.parameters,
+        aspectRatio: '2:3',
         width: 768,
         height: 1152,
         style: metadata.style,
-        referenceImages: [await readAsDataUri(portraitImage)],
+        referenceImages: reference ? [reference] : undefined,
+        endpointId: activeImageEndpoint?.id,
       });
       setCostumeImage(await saveAsset(series.id, 'portrait', response.imageData, `series_${character.name}_costume`));
       message.success(t('video.series.imageGenerated'));
@@ -219,8 +244,14 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     }
     const dataUri = await readFileAsDataUri(file);
     const saved = await saveAsset(series.id, 'portrait', dataUri, `series_${kind}`);
-    if (kind === 'portrait') setPortraitImage(saved);
-    else setTurnaroundImage(saved);
+    if (kind === 'portrait') {
+      setPortraitImage(saved);
+      setTurnaroundImage(undefined);
+      setTurnaroundSourcePortrait(undefined);
+    } else {
+      setTurnaroundImage(saved);
+      setTurnaroundSourcePortrait(portraitImage);
+    }
   };
 
   const generateImage = async (kind: 'portrait' | 'turnaround') => {
@@ -228,29 +259,47 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
     setGenerating(kind);
     try {
       const isTurnaround = kind === 'turnaround';
-      const referenceImages = isTurnaround && portraitImage
-        ? [await readAsDataUri(portraitImage)]
-        : undefined;
       if (isTurnaround && !portraitImage) {
         message.warning(t('video.series.turnaroundNeedsPortrait'));
         return;
       }
+      const reference = isTurnaround && portraitImage
+        ? await readAsDataUri(portraitImage)
+        : undefined;
+      const plan = await planImagePrompt({
+        purpose: isTurnaround ? 'character_turnaround' : 'character_portrait',
+        character: {
+          id: editing?.id ?? 'draft-character',
+          name: values.name,
+          appearance: values.appearance,
+          firstAppearShotIndex: 0,
+        },
+        style: metadata.style,
+        requestedAspectRatio: isTurnaround ? '3:2' : '2:3',
+        referenceCount: reference ? 1 : 0,
+        endpointId: activeImageEndpoint?.id,
+      });
       const response = await providerRouter.generateImage({
         taskType: 'character',
-        prompt: isTurnaround
-          ? `${values.appearance}, ${values.name}, character turnaround sheet, front view, side view, back view, consistent facial features, clean neutral background, standard anatomy`
-          : `${values.appearance}, ${values.name}, full body character design portrait, front view, clean neutral background, consistent proportions, standard anatomy, exactly two legs`,
-        negativePrompt: isTurnaround
-          ? 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, watermark, text, signature'
-          : 'three legs, 3 legs, extra legs, extra limbs, deformed legs, bad anatomy, bad limbs, duplicate character, multiple people, watermark, text, signature',
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+        parameters: plan.parameters,
+        aspectRatio: isTurnaround ? '3:2' : '2:3',
         width: isTurnaround ? 1536 : 768,
         height: isTurnaround ? 1024 : 1152,
         style: metadata.style,
-        referenceImages,
+        referenceImages: reference ? [reference] : undefined,
+        endpointId: activeImageEndpoint?.id,
       });
       const saved = await saveAsset(series.id, 'portrait', response.imageData, `series_${values.name}_${kind}`);
-      if (isTurnaround) setTurnaroundImage(saved);
-      else setPortraitImage(saved);
+      if (isTurnaround) {
+        setTurnaroundImage(saved);
+        setTurnaroundSourcePortrait(portraitImage);
+      } else {
+        setPortraitImage(saved);
+        setTurnaroundImage(undefined);
+        setTurnaroundSourcePortrait(undefined);
+      }
       message.success(t('video.series.imageGenerated'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : t('video.series.imageGenerateFailed'));
@@ -261,6 +310,12 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
 
   const saveCharacter = async () => {
     const values = await form.validateFields();
+    const portraitChanged = !!editing && editing.portraitImage !== portraitImage;
+    const savedTurnaroundImage = portraitChanged ? undefined : turnaroundImage;
+    const savedTurnaroundSourcePortrait = savedTurnaroundImage
+      ? (turnaroundSourcePortrait
+        || (editing?.turnaroundImage === savedTurnaroundImage ? editing.turnaroundSourcePortrait : portraitImage))
+      : undefined;
     const next: CharacterAnchor = {
       id: editing?.id ?? makeCharacterId(),
       name: values.name.trim(),
@@ -268,7 +323,8 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
       appearance: values.appearance.trim(),
       voiceRef: values.voiceRef?.trim() || undefined,
       portraitImage,
-      turnaroundImage,
+      turnaroundImage: savedTurnaroundImage,
+      turnaroundSourcePortrait: savedTurnaroundSourcePortrait,
       costumeVariants,
       firstAppearShotIndex: 0,
     };
@@ -286,6 +342,10 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   const openSceneModal = (scene?: SceneAnchor) => {
     setEditingScene(scene);
     setSceneImage(scene?.backgroundImage);
+    setSceneImageEnvironmentOnly(
+      scene?.backgroundReferenceRole === 'environment_only'
+      && scene?.backgroundReferenceVersion === ENVIRONMENT_REFERENCE_VERSION,
+    );
     sceneForm.setFieldsValue({
       name: scene?.name ?? '',
       aliases: scene?.aliases?.join(', ') ?? '',
@@ -300,20 +360,42 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
       return;
     }
     setSceneImage(await saveAsset(series.id, 'background', await readFileAsDataUri(file), 'series_scene'));
+    setSceneImageEnvironmentOnly(false);
   };
 
   const generateSceneImage = async () => {
     const values = await sceneForm.validateFields(['name', 'description']);
     setSceneGenerating(true);
     try {
+      const plan = await planImagePrompt({
+        purpose: 'scene_background',
+        scene: {
+          id: editingScene?.id ?? 'draft-scene',
+          name: values.name,
+          description: values.description,
+          firstAppearShotIndex: 0,
+        },
+        style: metadata.style,
+        requestedAspectRatio: '16:9',
+        excludedEntities: [...new Set(characters.flatMap((character) => [
+          character.name,
+          ...(character.aliases ?? []),
+        ]))],
+        endpointId: activeImageEndpoint?.id,
+      });
       const response = await providerRouter.generateImage({
         taskType: 'scene',
-        prompt: `${values.name}, ${values.description}, empty environment establishing shot, no people, consistent production design`,
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+        parameters: plan.parameters,
+        aspectRatio: '16:9',
         width: 1280,
         height: 720,
         style: metadata.style,
+        endpointId: activeImageEndpoint?.id,
       });
       setSceneImage(await saveAsset(series.id, 'background', response.imageData, `series_scene_${values.name}`));
+      setSceneImageEnvironmentOnly(true);
       message.success(t('video.series.imageGenerated'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : t('video.series.imageGenerateFailed'));
@@ -330,6 +412,12 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
       aliases: values.aliases?.split(',').map((value) => value.trim()).filter(Boolean),
       description: values.description.trim(),
       backgroundImage: sceneImage,
+      ...(sceneImage && sceneImageEnvironmentOnly
+        ? {
+            backgroundReferenceRole: 'environment_only' as const,
+            backgroundReferenceVersion: ENVIRONMENT_REFERENCE_VERSION,
+          }
+        : {}),
       firstAppearShotIndex: 0,
     };
     onUpdateScenes(editingScene ? scenes.map((scene) => scene.id === editingScene.id ? next : scene) : [...scenes, next]);
@@ -440,7 +528,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
                 {t('common.delete')}系列
               </Button>
             </Popconfirm>
-            <Button type="primary" icon={<PlusOutlined />} onClick={onCreateEpisode}>
+            <Button type="primary" icon={<PlusOutlined />} data-testid="video-new-episode" onClick={onCreateEpisode}>
               {t('video.series.newEpisode')}
             </Button>
           </Space>
@@ -544,7 +632,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
         >
           {sortedEpisodes.length === 0 ? (
             <Empty description={t('video.series.episodeEmpty')} image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Button type="primary" onClick={onCreateEpisode}>{t('video.series.newEpisode')}</Button>
+              <Button type="primary" data-testid="video-new-episode" onClick={onCreateEpisode}>{t('video.series.newEpisode')}</Button>
             </Empty>
           ) : (
             <Space direction="vertical" size={8} style={{ width: '100%' }}>

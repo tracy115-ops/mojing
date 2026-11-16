@@ -1,200 +1,355 @@
-// prompt-enricher.ts — 动态 LLM 提示词增强矩阵
-// 在文生图/图生视频前，自动调用配置好的 LLM 文本模型，
-// 对角色立绘、场景背景、关键帧图像的提示词进行专业级的膨胀与风格优化。
+// Model-facing image prompt planning. The application supplies facts and the
+// active provider contract; the text model decides how to phrase the request.
 
 import { providerRouter } from '@/services/providers';
-import type { CharacterAnchor, SceneAnchor } from '@/types/video';
-import { getStyleEnhancers } from './step-video-gen';
-import { getCharacterAestheticTag } from './step-character-anchor';
-import { detectInputLanguage } from './lang-detector';
+import { formatCapabilitiesForPrompt } from '@/services/providers/provider-capabilities';
+import type { ImageGenerationCapabilities, VideoGenerationCapabilities } from '@/types/providers';
+import type { CharacterAnchor, SceneAnchor, ShotSpec } from '@/types/video';
+import { parseLLMJson } from '@/services/novel/llm-json';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { SHOT_DIRECTION_PLANNING_RULE } from './shot-motion-prompt';
 
+export type ImagePromptPurpose =
+  | 'character_portrait'
+  | 'character_turnaround'
+  | 'scene_background';
+
+export interface ImagePromptPlan {
+  prompt: string;
+  negativePrompt?: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface ImagePromptPlannerInput {
+  purpose: ImagePromptPurpose;
+  character?: CharacterAnchor;
+  scene?: SceneAnchor;
+  costumeOverride?: string;
+  style?: string;
+  requestedAspectRatio?: string;
+  referenceCount?: number;
+  promptOverride?: string;
+  /** Entity references that must not appear in an environment-only image. */
+  excludedEntities?: string[];
+  /** Pin the same endpoint/model that will execute the planned request. */
+  endpointId?: string;
+  model?: string;
+}
+
+/**
+ * Kept as a compatibility helper for the comic pipeline. It intentionally
+ * does not translate or expand style names.
+ */
 export function getStyleNameZh(style?: string): string {
-  if (!style) return '电影级';
-  const s = style.toLowerCase();
-  if (s === 'cinematic') return '电影级';
-  if (s === 'anime' || s === '2d') return '2D动漫';
-  if (s === 'cyberpunk') return '赛博朋克';
-  if (s === 'documentary' || s === 'realistic') return '写实纪录片';
-  if (s === 'wuxia') return '武侠古风';
-  return style;
+  return style?.trim() || '';
 }
 
-/**
- * 调配置好的 LLM 文本模型，将角色外观动态扩展为工业级高精度生图 Prompt。
- */
+export async function planImagePrompt(input: ImagePromptPlannerInput): Promise<ImagePromptPlan> {
+  const capability = providerRouter.getImageCapabilities(
+    input.purpose === 'scene_background' ? 'scene' : 'character',
+    input.model,
+    input.endpointId,
+  );
+  const configuredInstruction = getConfiguredInstruction(input.purpose);
+  const systemPrompt = buildSystemPrompt(
+    capability,
+    configuredInstruction,
+    input.purpose,
+    (input.referenceCount ?? 0) > 0,
+  );
+  const userPrompt = buildUserPrompt(input);
+  const request = {
+    taskType: 'prompt_optimization' as const,
+    systemPrompt,
+    userPrompt,
+    responseFormat: 'json' as const,
+    temperature: 0.3,
+    maxTokens: 700,
+  };
+
+  try {
+    const response = await providerRouter.generate(request);
+    let plan = parsePlan(response.content);
+    if (!plan) {
+      const repaired = await providerRouter.generate({
+        ...request,
+        userPrompt: `${userPrompt}\n\nThe previous response was not valid JSON. Return only one JSON object matching the schema; do not use Markdown or explanation.`,
+        temperature: 0.1,
+      });
+      plan = parsePlan(repaired.content);
+    }
+    if (plan) {
+      return input.purpose === 'scene_background'
+        ? sanitizeScenePlan(plan, input)
+        : plan;
+    }
+    throw new Error('Image prompt planner returned no usable JSON plan');
+  } catch (err) {
+    console.warn(`image prompt planning failed for ${input.purpose}; using source facts`, err);
+    return fallbackPlan(input);
+  }
+}
+
+export interface VideoPromptPlannerInput {
+  shot: Partial<Pick<
+    ShotSpec,
+    | 'sourceText'
+    | 'videoPrompt'
+    | 'location'
+    | 'mood'
+    | 'cameraMovement'
+    | 'startState'
+    | 'endState'
+    | 'narration'
+    | 'dialogue'
+    | 'visibleCharacterIds'
+    | 'offscreenCharacterIds'
+  >>;
+  style?: string;
+  requestedAspectRatio?: string;
+  durationSeconds?: number;
+  /** Pin the same endpoint/model that will execute the planned request. */
+  endpointId?: string;
+  model?: string;
+}
+
+/** Plan a motion prompt from shot facts and the active video capability contract. */
+export async function planVideoPrompt(input: VideoPromptPlannerInput): Promise<ImagePromptPlan> {
+  const capability = providerRouter.getVideoCapabilities('clip', input.model, input.endpointId);
+  const systemPrompt = buildVideoSystemPrompt(capability);
+  const userPrompt = JSON.stringify({
+    style: input.style,
+    requestedAspectRatio: input.requestedAspectRatio,
+    durationSeconds: input.durationSeconds,
+    shot: input.shot,
+  }, null, 2);
+
+  try {
+    const response = await providerRouter.generate({
+      taskType: 'prompt_optimization',
+      systemPrompt,
+      userPrompt,
+      responseFormat: 'json',
+      temperature: 0.3,
+      maxTokens: 700,
+    });
+    const plan = parsePlan(response.content);
+    if (plan) return plan;
+    throw new Error('Video prompt planner returned no usable JSON plan');
+  } catch (err) {
+    console.warn('video prompt planning failed; preserving shot facts', err);
+    return {
+      prompt: input.shot.videoPrompt?.trim() || input.shot.sourceText?.trim() || '',
+    };
+  }
+}
+
+/** Existing callers can use this string-only facade while retaining planner output. */
 export async function enrichCharacterPromptWithLLM(
-  c: CharacterAnchor,
+  character: CharacterAnchor,
   style?: string,
   costumeOverride?: string,
 ): Promise<string> {
-  const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
-  const lang = detectInputLanguage(fullText);
-  const isChinese = lang === 'zh';
-  const styleEnhancer = getStyleEnhancers(fullText, style);
-  const aestheticTag = getCharacterAestheticTag(fullText);
-  const styleZh = getStyleNameZh(style);
-
-  const customSystem = isChinese
-    ? useSettingsStore.getState().settings.creative.promptTemplates?.portraitZh
-    : useSettingsStore.getState().settings.creative.promptTemplates?.portraitEn;
-
-  const defaultSystemZh = `你是 AI 角色立绘提示词专家。把角色外貌描述扩展为高精度的纯中文角色立绘提示词。
-【核心要求】：
-1. 必须使用 100% 纯中文！严禁包含英文单词或中英混排。
-2. 描述单人全身立绘，禁止出现"三视图"、"多视角"。
-3. 必须 100% 完整保留用户的全部原词细节（如黄色僧袍、墨镜、胖橘猫等）。输出纯文本，不超过120字。`;
-
-  const defaultSystemEn = `You are an expert AI character portrait prompt engineer.
-CRITICAL MANDATE:
-1. Output MUST be 100% in English! No Chinese characters.
-2. Must be a SINGLE INDIVIDUAL figure in frame. Do NOT include words like "character sheet", "turnaround", "multiple views".
-3. Preserve 100% of user raw details. Keep under 120 words.`;
-
-  const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
-
-  try {
-    const userPrompt = isChinese
-      ? `角色姓名：${c.name}\n外貌描写：${c.appearance}\n变装说明：${costumeOverride || '默认服饰'}\n艺术风格：${styleZh}`
-      : `Character Name: ${c.name}\nFeatures: ${c.appearance}\nCostume: ${costumeOverride || 'default'}\nStyle: ${style || 'cinematic'}`;
-
-    const resp = await providerRouter.generate({
-      taskType: 'prompt_optimization',
-      systemPrompt,
-      userPrompt,
-      temperature: 0.3,
-      maxTokens: 250,
-    });
-
-    const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
-    if (enriched && enriched.length > 10) {
-      if (isChinese) {
-        return `角色立绘：${c.name}，${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}。${enriched}，单人全身立绘，纯色干净背景，${styleEnhancer || '写实电影质感'}`;
-      }
-      return `Character Portrait: ${c.name}, ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}. ${enriched}, single centered full-body character portrait, plain clean background, ${styleEnhancer || 'cinematic style'}`;
-    }
-  } catch (err) {
-    console.warn(`enrichCharacterPromptWithLLM: LLM fallback for ${c.name}`, err);
-  }
-
-  return defaultCharacterPrompt(c, style, costumeOverride, styleEnhancer);
+  const plan = await planImagePrompt({
+    purpose: 'character_portrait',
+    character,
+    style,
+    costumeOverride,
+    requestedAspectRatio: '2:3',
+  });
+  return plan.prompt;
 }
 
-/**
- * 调 LLM 将场景背景描述动态扩展为高清不带人像的环境空景图 Prompt。
- */
+/** Existing callers can use this string-only facade while retaining planner output. */
 export async function enrichScenePromptWithLLM(
-  s: SceneAnchor,
+  scene: SceneAnchor,
   style?: string,
 ): Promise<string> {
-  const fullText = `${s.name} ${s.description} ${style || ''}`;
-  const lang = detectInputLanguage(fullText);
-  const isChinese = lang === 'zh';
-  const styleZh = getStyleNameZh(style);
-
-  const customSystem = isChinese
-    ? useSettingsStore.getState().settings.creative.promptTemplates?.sceneZh
-    : useSettingsStore.getState().settings.creative.promptTemplates?.sceneEn;
-
-  const defaultSystemZh = `你是 AI 场景背景提示词专家。将场景描述转为大气高精度的纯中文环境空景图提示词。
-【核心要求】：
-1. 必须使用 100% 纯中文！严禁包含英文单词或中英混排。
-2. 剔除所有人物、角色、姓名和动作，仅描述建筑、自然、环境光影。
-3. 输出纯文本，不超过80字。`;
-
-  const defaultSystemEn = `You are an expert AI landscape prompt engineer. Convert scene description into English background landscape prompt.
-CRITICAL MANDATE: Strip away ALL characters, people, and actions. Describe ONLY physical scenery. Keep under 80 words.`;
-
-  const systemPrompt = customSystem && customSystem.trim() ? customSystem : (isChinese ? defaultSystemZh : defaultSystemEn);
-
-  try {
-    const userPrompt = isChinese
-      ? `场景名称：${s.name}\n场景描写：${sanitizeSceneDescription(s.description)}\n艺术风格：${styleZh}`
-      : `Scene Name: ${s.name}\nDescription: ${sanitizeSceneDescription(s.description)}\nStyle: ${style || 'cinematic'}`;
-
-    const resp = await providerRouter.generate({
-      taskType: 'prompt_optimization',
-      systemPrompt,
-      userPrompt,
-      temperature: 0.3,
-      maxTokens: 250,
-    });
-
-    const enriched = resp.content.trim().replace(/^["']|["']$/g, '');
-    if (enriched && enriched.length > 10) {
-      if (isChinese) {
-        return `环境空景：${s.name}，${enriched}，${styleZh}风格，纯环境空镜`;
-      }
-      return `Landscape establishing shot: ${s.name}, ${enriched}, ${style ? `${style} style` : 'cinematic style'}, empty background scenery`;
-    }
-  } catch (err) {
-    console.warn(`enrichScenePromptWithLLM: LLM fallback for ${s.name}`, err);
-  }
-
-  return defaultScenePrompt(s, style);
+  const plan = await planImagePrompt({
+    purpose: 'scene_background',
+    scene,
+    style,
+  });
+  return plan.prompt;
 }
 
-function defaultCharacterPrompt(
-  c: CharacterAnchor,
-  style?: string,
-  costumeOverride?: string,
-  styleEnhancer?: string,
+function buildSystemPrompt(
+  capability: ImageGenerationCapabilities,
+  configuredInstruction?: string,
+  purpose?: ImagePromptPurpose,
+  hasReference = false,
 ): string {
-  const fullText = `${c.name} ${c.appearance} ${style || ''}`;
-  const isChinese = detectInputLanguage(fullText) === 'zh';
-  const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-
-  if (isChinese) {
-    const artTypeTag = isCartoonOrAnime ? '2D动漫角色立绘' : (style ? `${style}风格` : '高清写实角色立绘');
-    return [
-      `角色立绘：${c.name}，${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
-      '单人全身立绘，从头到脚完整展示',
-      '纯净浅色背景',
-      artTypeTag,
-      styleEnhancer,
-    ].filter(Boolean).join('，');
-  }
-
-  const artTypeTag = isCartoonOrAnime ? '2D anime character portrait' : (style ? `${style} style` : 'realistic character portrait');
+  const characterReferenceContract = purpose !== 'scene_background' && hasReference
+    ? [
+        'A supplied reference image is the authoritative visual source for the entity. Preserve its face, hair, body or form, clothing, colors, and accessories; do not redesign or reinterpret them.',
+        'For a character turnaround, keep one identical entity and one identical outfit across the front, side, and back views. Show a clean full-body reference sheet on a neutral background with no additional entities or scene storytelling.',
+        'Treat style as rendering, lighting, and finish guidance only. Do not let style change the entity design or wardrobe unless that change is explicitly present in the supplied appearance or costume override.',
+      ].join('\n')
+    : '';
   return [
-    `Character Portrait: ${c.name}, ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
-    'single full-body character portrait, fully visible from head to toe',
-    'plain clean background',
-    artTypeTag,
-    styleEnhancer,
-  ].filter(Boolean).join(', ');
+    'You are a provider-aware image prompt planner.',
+    'Return only one JSON object with prompt, optional negativePrompt, and optional parameters.',
+    'Use only facts supplied in the input. Preserve names, appearance, entities, clothing, setting, and requested style without inventing identity details.',
+    'Use the source language naturally; do not translate merely to satisfy a language rule.',
+    'The prompt must describe the requested visual output for the selected purpose.',
+    'For a character portrait, keep the requested entity as one coherent subject. For a turnaround, describe one entity across the requested views. For a scene background, keep the frame focused on the supplied environment and do not render story subjects or other entities listed as excluded.',
+    characterReferenceContract,
+    purpose === 'scene_background'
+      ? 'For a scene background, excludedEntities are control data rather than scene content. Never repeat them in the generated prompt, and do not infer people, animals, or other story subjects from the scene description.'
+      : '',
+    'Only emit parameter keys listed in the provider capability contract. Omit optional parameters that are not justified by the supplied input. Never put image data, file paths, or reference-slot guesses in parameters.',
+    'If selecting a model, set parameters.model to an advertised available model only.',
+    configuredInstruction ? `[User-configured instruction]\n${configuredInstruction}` : '',
+    '[Image Provider Capability Contract]',
+    formatCapabilitiesForPrompt(capability),
+    '[JSON shape]',
+    '{ "prompt": "...", "negativePrompt": "...", "parameters": { "key": "value" } }',
+  ].filter(Boolean).join('\n\n');
 }
 
-function sanitizeSceneDescription(desc: string): string {
-  if (!desc) return '';
-  return desc
-    .replace(/(主角|女主角|男主角|角色|人物|人影|猫咪|猫大师|胖橘猫|女生|少年|少女|老人|他|她|他们)[在|与|和|着|了|的|中]*/g, '')
-    .replace(/(特写|特写镜头|近景|面部特写|眼神特写|镜头推近|推镜头|特写画面)/g, '')
+function buildVideoSystemPrompt(capability: VideoGenerationCapabilities): string {
+  return [
+    'You are a provider-aware video prompt planner.',
+    SHOT_DIRECTION_PLANNING_RULE,
+    'Return only one JSON object with prompt, optional negativePrompt, and optional parameters.',
+    'Use only facts supplied in the input. Preserve entities, setting, action, dialogue, and state transitions without inventing story content.',
+    'Describe motion and camera behavior only when supported by the supplied facts. Keep the shot physically coherent from first state to last state.',
+    'Only emit parameter keys listed in the video provider capability contract. Omit optional parameters that are not justified by the input.',
+    'Never put image data, file paths, or reference-slot guesses in parameters. Reference binding is handled by the execution stage.',
+    'If selecting a model, set parameters.model to an advertised available model only.',
+    '[Video Provider Capability Contract]',
+    formatCapabilitiesForPrompt(capability),
+    '[JSON shape]',
+    '{ "prompt": "...", "negativePrompt": "...", "parameters": { "key": "value" } }',
+  ].join('\n\n');
+}
+
+function buildUserPrompt(input: ImagePromptPlannerInput): string {
+  const source = input.character
+    ? {
+        name: input.character.name,
+        appearance: input.character.appearance,
+        entityType: input.character.entityType,
+        gender: input.character.gender,
+        ageGroup: input.character.ageGroup,
+        aliases: input.character.aliases,
+        costumeOverride: input.costumeOverride,
+      }
+    : {
+        name: input.scene?.name,
+        description: input.scene?.description,
+      };
+  return JSON.stringify({
+    purpose: input.purpose,
+    requestedAspectRatio: input.requestedAspectRatio,
+    referenceCount: input.referenceCount ?? 0,
+    style: input.style,
+    promptOverride: input.promptOverride,
+    excludedEntities: input.excludedEntities,
+    source,
+  }, null, 2);
+}
+
+function parsePlan(content: string): ImagePromptPlan | undefined {
+  let parsed = parseLLMJson<unknown>(content);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const record = parsed as Record<string, unknown>;
+    for (const key of ['plan', 'result', 'output', 'data']) {
+      if (record[key] && typeof record[key] === 'object' && !Array.isArray(record[key])) {
+        parsed = record[key];
+        break;
+      }
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const record = parsed as Record<string, unknown>;
+  const prompt = stringValue(record.prompt);
+  if (!prompt) return undefined;
+  return {
+    prompt,
+    negativePrompt: stringValue(record.negativePrompt),
+    parameters: parameterObject(record.parameters),
+  };
+}
+
+function fallbackPlan(input: ImagePromptPlannerInput): ImagePromptPlan {
+  if (input.purpose === 'scene_background') {
+    const source = input.promptOverride?.trim() || [
+      stripEntityReferences(input.scene?.name, input.excludedEntities),
+      stripEntityReferences(input.scene?.description, input.excludedEntities),
+      input.style,
+    ].filter((value): value is string => !!value?.trim()).join(', ');
+    return {
+      prompt: appendEnvironmentOnlyContract(stripEntityReferences(source, input.excludedEntities)),
+      negativePrompt: input.excludedEntities?.filter(Boolean).join(', ') || undefined,
+    };
+  }
+  if (input.promptOverride?.trim()) return { prompt: input.promptOverride.trim() };
+  const source = input.character
+    ? [
+        input.character.name,
+        input.character.appearance,
+        input.costumeOverride,
+        input.style,
+        input.purpose === 'character_turnaround'
+          ? 'single-entity full-body front, side, and back reference sheet on a neutral background'
+          : '',
+      ]
+    : [stripEntityReferences(input.scene?.name, input.excludedEntities), stripEntityReferences(input.scene?.description, input.excludedEntities), input.style];
+  return { prompt: source.filter((value): value is string => !!value?.trim()).join(', ') };
+}
+
+function sanitizeScenePlan(
+  plan: ImagePromptPlan,
+  input: ImagePromptPlannerInput,
+): ImagePromptPlan {
+  return {
+    ...plan,
+    prompt: appendEnvironmentOnlyContract(stripEntityReferences(plan.prompt, input.excludedEntities)),
+  };
+}
+
+function appendEnvironmentOnlyContract(prompt: string): string {
+  return [
+    prompt.trim(),
+    'Generate a clean environment-only plate. Do not render any story subject, person, animal, creature, or other foreground entity.',
+  ].filter(Boolean).join('\n\n');
+}
+
+function stripEntityReferences(value: string | undefined, references?: string[]): string {
+  if (!value?.trim() || !references?.length) return value?.trim() || '';
+  return [...new Set(references)]
+    .map((reference) => reference.trim())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .reduce((current, reference) => {
+      const escaped = reference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return current.replace(new RegExp(escaped, 'giu'), ' ');
+    }, value)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;!?，。！？])/g, '$1')
     .trim();
 }
 
-function defaultScenePrompt(s: SceneAnchor, style?: string): string {
-  const fullText = `${s.name} ${s.description} ${style || ''}`;
-  const isChinese = detectInputLanguage(fullText) === 'zh';
-  const styleZh = getStyleNameZh(style);
+function getConfiguredInstruction(purpose: ImagePromptPurpose): string | undefined {
+  const templates = useSettingsStore.getState().settings.creative.promptTemplates;
+  if (!useSettingsStore.getState().settings.creative.promptTemplatesEnabled || !templates) return undefined;
+  const value = purpose === 'scene_background'
+    ? templates.sceneEn || templates.sceneZh
+    : purpose === 'character_turnaround'
+      ? templates.turnaroundEn || templates.turnaroundZh
+      : templates.portraitEn || templates.portraitZh;
+  if (!value?.trim()) return undefined;
+  return value.trim();
+}
 
-  if (isChinese) {
-    return [
-      `环境空景图：${s.name}`,
-      sanitizeSceneDescription(s.description),
-      '纯环境空景，无人物，无角色，仅背景风光',
-      style ? `${style}风格` : '',
-      '高细节，无文字，无水印',
-    ].filter(Boolean).join('，');
-  }
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
 
-  return [
-    `environment establishing shot of ${s.name}`,
-    sanitizeSceneDescription(s.description),
-    'empty scene, no humans, no people, no character, background scenery only',
-    'wide angle, cinematic composition, rule of thirds, atmospheric lighting',
-    style ? `${style} style` : 'cinematic style',
-    '8k detail, photorealistic',
-    'no text, no watermark, no signature, no people',
-  ].filter(Boolean).join(', ');
+function parameterObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== null),
+  );
 }

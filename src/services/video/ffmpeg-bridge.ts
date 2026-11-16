@@ -25,6 +25,9 @@ export interface ComposeRequest {
   outputPath: string;
   hardcodeSubtitles: boolean;
   style?: string;
+  trimStartSeconds?: number[];
+  trimEndSeconds?: number[];
+  audioVolume?: number;
 }
 
 export interface ComposeResult {
@@ -51,6 +54,17 @@ export interface WriteDataUriRequest {
 export interface WriteDataUriResult {
   savedPath: string;
   bytes: number;
+}
+
+export interface ExtractFrameRequest {
+  videoPath: string;
+  outputPath: string;
+  /** Optional timestamp; omitted means the near-final frame. */
+  timeSeconds?: number;
+}
+
+export interface ExtractFrameResult {
+  outputPath: string;
 }
 
 /** 是否在 Tauri 桌面环境内 */
@@ -90,11 +104,21 @@ export async function writeDataUri(req: WriteDataUriRequest): Promise<WriteDataU
   return invoke<WriteDataUriResult>('ffmpeg_write_data_uri', { req });
 }
 
+export async function extractLastFrame(req: ExtractFrameRequest): Promise<ExtractFrameResult> {
+  return invoke<ExtractFrameResult>('ffmpeg_extract_last_frame', { req });
+}
+
+export async function extractFrameAt(req: ExtractFrameRequest): Promise<ExtractFrameResult> {
+  return invoke<ExtractFrameResult>('ffmpeg_extract_frame', { req });
+}
+
 export interface ExportRequest {
   sourcePath: string;
   outputPath: string;
   /** Target vertical resolution. 0/null = keep original. */
   targetHeight?: number;
+  /** Encode H.264/AAC MP4 with even dimensions, without upscaling. */
+  compatibleMp4?: boolean;
 }
 
 export interface ExportResult {

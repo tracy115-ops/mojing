@@ -58,7 +58,7 @@ export async function runTTS(
       );
     }
 
-    // 2. 优先根据台词开头的角色名（如 "女生："、"胖橘猫："、"大师:"）精准比对角色或别名
+    // 2. Fall back to a structured character name at the start of the text.
     if (!speaker) {
       for (const c of characters) {
         const namesToCheck = [c.name, ...(c.aliases || [])].filter(Boolean);
@@ -218,7 +218,7 @@ function cleanNarrationForTTS(raw: string): string {
     .replace(/【.*?】/g, '')
     .replace(/（.*?）/g, '') // 去除 (括号) 提示
     .replace(/\(.*?\)/g, '')
-    .replace(/^.*?(?:台词|对白)[:：]\s*/g, '') // 去除 "女生台词：" 或 "猫咪台词："
+    .replace(/^.*?(?:台词|对白)[:：]\s*/g, '') // Remove a generic dialogue label.
     .replace(/^([一-龥A-Za-z0-9_]{1,8})(?:（[^）]+）|\([^)]+\))?[:：]\s*/g, '')  // 去除开头的 "角色名:" 或 "角色名：" 前缀
     .replace(/[“”"「」『』]/g, '')     // 去除双引号/单引号等符号，让发音自然连贯
     .trim();

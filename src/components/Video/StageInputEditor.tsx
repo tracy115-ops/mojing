@@ -53,10 +53,11 @@ function getDownstreamCount(stage: VideoStage): number {
     'extraction',
     'character_anchor',
     'scene_image',
+    'keyframe_image',
     'voice_assignment',
     'tts',
-    'keyframe_image',
     'video_generation',
+    'video_review',
     'audio_merge',
     'composing',
   ] as const;
@@ -91,7 +92,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
 
   // 检查依赖是否满足。
   // 防御性过滤:deps 里不应该出现 stage 自己或后面的 stage(配置错误时兜底)。
-  const order = ['character_anchor', 'voice_assignment', 'scene_image', 'tts', 'keyframe_image', 'video_generation', 'audio_merge', 'composing'] as const;
+  const order = ['character_anchor', 'scene_image', 'keyframe_image', 'voice_assignment', 'tts', 'video_generation', 'video_review', 'audio_merge', 'composing'] as const;
   const stageIdx = order.indexOf(stage as typeof order[number]);
   const deps = getStageDeps(stage).filter((dep) => {
     const depIdx = order.indexOf(dep as typeof order[number]);
@@ -109,7 +110,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
     if (rerunning || depMissing) return;
     setRerunning(true);
     try {
-      const ok = await runSingleStage(project.novelProjectId, stage);
+      const ok = await runSingleStage(project.novelProjectId, stage, { force: true });
       if (ok) {
         message.success(t('video.pipeline.rerunDone'));
       } else {
@@ -124,7 +125,7 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
     if (rerunning || depMissing) return;
     setRerunning(true);
     try {
-      const ok = await runFromStage(project.novelProjectId, stage);
+      const ok = await runFromStage(project.novelProjectId, stage, { force: true });
       if (ok) {
         message.success(t('video.pipeline.rerunDone'));
       } else {
@@ -254,25 +255,6 @@ const StageInputEditor: React.FC<StageInputEditorProps> = ({ stage, project }) =
                 </div>
               );
             })}
-          </div>
-        )}
-        {stage === 'composing' && (
-          <div style={{ marginBottom: 8 }}>
-            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 2 }}>
-              BGM 背景音乐氛围挂载:
-            </Text>
-            <Radio.Group
-              defaultValue="epic"
-              size="small"
-              onChange={(e) => setStageInput(project.novelProjectId, stage, { bgmStyle: e.target.value } as any)}
-              style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}
-            >
-              <Radio.Button value="none">无 BGM</Radio.Button>
-              <Radio.Button value="epic">史诗交响</Radio.Button>
-              <Radio.Button value="piano">治愈钢琴</Radio.Button>
-              <Radio.Button value="cyber">赛博朋克</Radio.Button>
-              <Radio.Button value="oriental">华风古韵</Radio.Button>
-            </Radio.Group>
           </div>
         )}
         {fields.map((f) => {

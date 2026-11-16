@@ -11,43 +11,16 @@
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { parseLLMJson } from '@/services/novel/llm-json';
-
-export interface RawShot {
-  id: string;
-  index: number;
-  sourceChapterId: string;
-  sourceChapterNumber: number;
-  rawText: string;
-  characters: string[];
-  location?: string;
-  mood?: string;
-  hasDialogue: boolean;
-  hasAction: boolean;
-}
-
-export interface SliceOptions {
-  /** 单镜头目标字数（默认 80，剧本模式默认 60） */
-  targetWordsPerShot?: number;
-  /** 最小字数（小于此值合并到上一段） */
-  minWordsPerShot?: number;
-  /** 最大字数（超过此值强制切分） */
-  maxWordsPerShot?: number;
-  /** 是否为剧本模式（针对分镜/剧本格式优化切片与分镜粒度） */
-  isScript?: boolean;
-}
-
-const DEFAULT_OPTS: Required<SliceOptions> = {
-  targetWordsPerShot: 80,
-  minWordsPerShot: 10,
-  maxWordsPerShot: 300,
-  isScript: false,
-};
-
-export interface ChapterInput {
-  id: string;
-  number: number;
-  content: string;
-}
+import { detectInputLanguage } from './core/lang-detector';
+import {
+  sliceChapters,
+  type ChapterInput,
+  type RawShot,
+  type SliceOptions,
+} from './chapter-slicer-core';
+export { sliceChapters } from './chapter-slicer-core';
+export type { ChapterInput, RawShot, SliceOptions } from './chapter-slicer-core';
+import type { ShotCharacterBinding } from '../../types/video';
 
 /**
  * 使用 LLM 大模型进行智能语义分镜切片，确保 100% 完整覆盖原著情节与对话。
@@ -58,26 +31,26 @@ export async function sliceChaptersWithLLM(
 ): Promise<RawShot[]> {
   const fullText = chapters.map((c) => c.content || '').join('\n\n').trim();
   if (!fullText) return [];
+  const sourceLanguage = detectInputLanguage(fullText);
 
-  const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));
+  const systemPrompt = [
+    'You are a source-preserving shot segmentation model.',
+    'Split the supplied chapters into ordered video shot segments without deleting, rewriting, or inventing source events or dialogue.',
+    'Keep each sourceText as an exact contiguous excerpt from the input whenever possible. A cut may follow an action change, scene change, state change, or dialogue turn.',
+    'visibleCharacters contains only entities explicitly framed in that shot. offscreenCharacters contains mentioned entities that remain outside the frame. Do not create entity names.',
+    sourceLanguage === 'zh'
+      ? 'Write location and mood in Simplified Chinese when they are present in the source. Do not translate source text or entity names into English.'
+      : 'Write location and mood in English when they are present in the source. Do not translate source text or entity names into Chinese.',
+    'Return only a JSON array. Each item must contain index, sourceChapterId, sourceChapterNumber, sourceText, visibleCharacters, offscreenCharacters, location, mood, hasDialogue, and hasAction.',
+  ].join('\n');
 
-  const systemPrompt = `你是专业影视导演与资深分镜师。你的任务是将输入的小说章节/剧本智能切分成一系列连续独立、节奏适中的视频分镜镜头（Raw Shots）。
-
-【核心原则：100% 完整覆盖原著情节，严禁随意删减、遗漏或跳过任何情节与对话】
-1. 完整保留原文字句：每个分镜的 "sourceText" 必须是原文对应的真实段落/句子，保留完整的人物对白（如“大师，我有一事相求！”）与叙事细节，严禁随意精简或改写！
-2. 镜头切分粒度：
-   - 包含明确的人物动作、情绪转折、场景转换或对话交锋的节点切为一个独立镜头。
-   - 每个镜头字数适中（通常 20-100 字左右）。
-3. 输出格式：严格 JSON 数组，每个镜头包含：
-   - "index": 镜头序号 (从 0 开始递增: 0, 1, 2...)
-   - "sourceText": 该镜头对应的原文完整内容（必须与原文严密对齐，包含完整台词）
-   - "characters": 该镜头出场的角色名称数组，例如 ["林墨", "苏清雪"]
-   - "location": 发生的具体场景/地点，例如 "青云门大殿"
-   - "mood": 情绪/氛围，例如 "紧张" / "温馨" / "神秘" / "热血"
-   - "hasDialogue": boolean，是否包含人物台词对白
-   - "hasAction": boolean，是否包含明显动作`;
-
-  const userPrompt = `请对以下内容进行智能分镜切片，输出严格 JSON 数组：\n\n${fullText}`;
+  const userPrompt = JSON.stringify({
+    chapters,
+    targetWordsPerShot: opts.targetWordsPerShot,
+    minWordsPerShot: opts.minWordsPerShot,
+    maxWordsPerShot: opts.maxWordsPerShot,
+    isScript: opts.isScript,
+  }, null, 2);
 
   const request: LLMGenerateRequest = {
     taskType: 'planning',
@@ -110,17 +83,33 @@ export async function sliceChaptersWithLLM(
     if (Array.isArray(parsed) && parsed.length > 0) {
       return parsed.map((item: any, idx: number) => {
         const text = String(item.sourceText || item.rawText || item.text || item.videoPrompt || `镜头 ${idx + 1}`).trim();
+        const chapter = resolveChapter(item, text, chapters);
+        const hasVisibleList = Array.isArray(item.visibleCharacters) || Array.isArray(item.visibleCharacterIds);
+        const visibleCharacters = Array.isArray(item.visibleCharacters)
+          ? item.visibleCharacters.map(String)
+          : Array.isArray(item.visibleCharacterIds)
+            ? item.visibleCharacterIds.map(String)
+            : Array.isArray(item.characters)
+              ? item.characters.map(String)
+              : [];
+        const offscreenCharacters = Array.isArray(item.offscreenCharacters)
+          ? item.offscreenCharacters.map(String)
+          : Array.isArray(item.offscreenCharacterIds)
+            ? item.offscreenCharacterIds.map(String)
+            : [];
         return {
-          id: `shot_1_${idx}`,
-          index: typeof item.index === 'number' ? item.index : idx,
-          sourceChapterId: chapters[0]?.id || 'ch_1',
-          sourceChapterNumber: chapters[0]?.number || 1,
+          id: typeof item.id === 'string' && item.id.trim() ? item.id.trim() : `shot_${chapter.number}_${idx}`,
+          index: idx,
+          sourceChapterId: chapter.id,
+          sourceChapterNumber: chapter.number,
           rawText: text,
-          characters: Array.isArray(item.characters) ? item.characters : detectCharacters(text),
-          location: item.location || detectLocation(text),
-          mood: item.mood || detectMood(text),
+          characters: visibleCharacters,
+          offscreenCharacters,
+          characterBinding: hasVisibleList ? 'explicit' as ShotCharacterBinding : 'inferred' as ShotCharacterBinding,
+          location: typeof item.location === 'string' ? item.location.trim() || undefined : undefined,
+          mood: typeof item.mood === 'string' ? item.mood.trim() || undefined : undefined,
           hasDialogue: typeof item.hasDialogue === 'boolean' ? item.hasDialogue : /["「『":：]/.test(text),
-          hasAction: typeof item.hasAction === 'boolean' ? item.hasAction : true,
+          hasAction: typeof item.hasAction === 'boolean' ? item.hasAction : false,
         };
       });
     }
@@ -128,145 +117,31 @@ export async function sliceChaptersWithLLM(
     console.warn('[chapter-slicer] LLM slicing failed, falling back to local heuristic', err);
   }
 
-  // 兜底：使用本地规则切片
+  // 兜底：使用无 provider 依赖的本地规则切片
   return sliceChapters(chapters, opts);
 }
 
-/**
- * 将多章节正文切成 RawShot 序列（本地启发式）。
- */
-export function sliceChapters(chapters: ChapterInput[], opts: SliceOptions = {}): RawShot[] {
-  const isScript = opts.isScript || chapters.some((c) => /^(镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场)/im.test(c.content));
-  const o: Required<SliceOptions> = {
-    targetWordsPerShot: opts.targetWordsPerShot ?? (isScript ? 60 : 100),
-    minWordsPerShot: opts.minWordsPerShot ?? 10,
-    maxWordsPerShot: opts.maxWordsPerShot ?? (isScript ? 200 : 300),
-    isScript,
-  };
-  const shots: RawShot[] = [];
-  let globalIndex = 0;
-
-  for (const ch of chapters) {
-    let paragraphs = splitParagraphs(ch.content);
-    // 如果只有 1 个段落且字符数超过 40，按句号/感叹号/分号细粒度拆句
-    if (paragraphs.length <= 1 && ch.content.length > 40) {
-      const sentenceSplits = ch.content
-        .split(/(?<=[。！？；\n])/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 5);
-      if (sentenceSplits.length > 1) {
-        paragraphs = sentenceSplits;
-      }
-    }
-
-    const groups = groupParagraphs(paragraphs, o);
-
-    for (const group of groups) {
-      const text = group.join('\n\n').trim();
-      if (!text) continue;
-
-      shots.push({
-        id: `shot_${ch.number}_${globalIndex}`,
-        index: globalIndex,
-        sourceChapterId: ch.id,
-        sourceChapterNumber: ch.number,
-        rawText: text,
-        characters: detectCharacters(text),
-        location: detectLocation(text),
-        mood: detectMood(text),
-        hasDialogue: /["「『":：]/.test(text),
-        hasAction: /(vs\.|战斗|冲|跑|打|撞|刺|劈|射|爆炸|闪避|拔剑|出手|跃起)/.test(text),
-      });
-      globalIndex += 1;
-    }
+function resolveChapter(
+  item: Record<string, unknown>,
+  sourceText: string,
+  chapters: ChapterInput[],
+): ChapterInput {
+  const explicitId = typeof item.sourceChapterId === 'string' ? item.sourceChapterId.trim() : '';
+  if (explicitId) {
+    const byId = chapters.find((chapter) => chapter.id === explicitId);
+    if (byId) return byId;
   }
-
-  return shots;
-}
-
-// --- internals ---
-
-function splitParagraphs(content: string): string[] {
-  return content
-    .replace(/\r\n/g, '\n')
-    .split(/\n+|(?<=[。！？\n])(?=(?:镜头|第?\d+镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场))/i)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-
-/**
- * 按目标字数和场景边界把段落分组。
- * 简单策略：累加段落字数，达到 targetWords 或检测到场景切换就切。
- */
-function groupParagraphs(paragraphs: string[], o: Required<SliceOptions>): string[][] {
-  const groups: string[][] = [];
-  let current: string[] = [];
-  let currentWords = 0;
-
-  const flush = () => {
-    if (current.length === 0) return;
-    const totalWords = current.reduce((s, p) => s + countChars(p), 0);
-    // 太短且不是剧本模式 → 合并到上一组（如果有）
-    if (!o.isScript && totalWords < o.minWordsPerShot && groups.length > 0) {
-      const prev = groups[groups.length - 1];
-      prev.push(...current);
-    } else {
-      groups.push(current);
-    }
-    current = [];
-    currentWords = 0;
-  };
-
-  for (const para of paragraphs) {
-    const words = countChars(para);
-    const sceneChanged = isSceneBoundary(para);
-
-    // 遇到新场景/镜头标记，或者超长，先 flush 前面积累的内容
-    if (sceneChanged && current.length > 0) {
-      flush();
-    } else if (currentWords + words > o.maxWordsPerShot && current.length > 0) {
-      flush();
-    } else if (currentWords + words > o.targetWordsPerShot && current.length > 0) {
-      flush();
-    }
-
-    current.push(para);
-    currentWords += words;
-
-    // 如果是剧本模式且当前段落已经是完整镜头描述，直接切
-    if (o.isScript && (words >= o.minWordsPerShot || sceneChanged)) {
-      flush();
-    }
+  const explicitNumber = Number(item.sourceChapterNumber);
+  if (Number.isFinite(explicitNumber)) {
+    const byNumber = chapters.find((chapter) => chapter.number === explicitNumber);
+    if (byNumber) return byNumber;
   }
-  flush();
-
-  return groups;
-}
-
-function countChars(s: string): number {
-  // 中文字符按 1 计，英文按单词（粗略 1 字符）
-  return [...s].filter((c) => !/\s/.test(c)).length;
-}
-
-/**
- * 启发式检测：段落开头是否暗示场景切换或镜头切换
- *   - 镜头标记："镜头1" / "第1镜" / "Shot 1"
- *   - "第二天 / 当晚 / 三日后" 等时间词
- *   - "在 xxx / xxx 客栈" 等地点词开头
- *   - 全大写或带【】的场景标记
- */
-function isSceneBoundary(para: string): boolean {
-  const trimmed = para.trim();
-  if (/^(镜头|第?\d+镜|分镜|Shot\s*\d+|Scene\s*\d+|【镜头|【分镜|【场|第\d+场|场\s*\d+)/i.test(trimmed)) {
-    return true;
-  }
-  if (/^(第二天|当晚|当夜|三日后|数日后|次日|黄昏|清晨|夜晚|午后|几天后|不久|与此同时)/.test(trimmed)) {
-    return true;
-  }
-  if (/^【.+】/.test(trimmed)) return true;
-  if (/^场景[:：]/.test(trimmed)) return true;
-  if (/^(第一章|第二章|第三章|第\S+章)/.test(trimmed)) return true;
-  return false;
+  const normalized = sourceText.replace(/\s+/g, '');
+  const byExcerpt = chapters.find((chapter) => {
+    const chapterText = chapter.content.replace(/\s+/g, '');
+    return normalized.length >= 12 && chapterText.includes(normalized);
+  });
+  return byExcerpt ?? chapters[0] ?? { id: 'ch_1', number: 1, content: '' };
 }
 
 function detectCharacters(text: string): string[] {

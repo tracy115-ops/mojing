@@ -88,6 +88,12 @@ pub struct ComposeRequest {
     pub output_path: String,
     pub hardcode_subtitles: bool,
     pub style: Option<String>,
+    #[serde(default)]
+    pub trim_start_seconds: Vec<f64>,
+    #[serde(default)]
+    pub trim_end_seconds: Vec<f64>,
+    #[serde(default)]
+    pub audio_volume: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,6 +102,91 @@ pub struct ComposeResult {
     pub output_path: String,
     pub duration_seconds: Option<f64>,
     pub size_bytes: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractFrameRequest {
+    pub video_path: String,
+    pub output_path: String,
+    #[serde(default)]
+    pub time_seconds: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractFrameResult {
+    pub output_path: String,
+}
+
+/// Extract a near-final video frame as a durable PNG reference image.
+#[tauri::command]
+pub async fn ffmpeg_extract_last_frame(req: ExtractFrameRequest) -> Result<ExtractFrameResult, String> {
+    let result = tokio::task::spawn_blocking(move || extract_last_frame_blocking(&req))
+        .await
+        .map_err(|e| format!("extract last frame task panicked: {}", e))??;
+    Ok(result)
+}
+
+/// Extract a frame at a requested timestamp for visual quality review.
+#[tauri::command]
+pub async fn ffmpeg_extract_frame(req: ExtractFrameRequest) -> Result<ExtractFrameResult, String> {
+    let result = tokio::task::spawn_blocking(move || extract_frame_blocking(&req))
+        .await
+        .map_err(|e| format!("ffmpeg extract frame task panicked: {}", e))??;
+    Ok(result)
+}
+
+fn extract_frame_blocking(req: &ExtractFrameRequest) -> Result<ExtractFrameResult, String> {
+    let output = PathBuf::from(&req.output_path);
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut cmd = FfmpegCommand::new();
+    if let Some(time_seconds) = req.time_seconds {
+        if !time_seconds.is_finite() || time_seconds < 0.0 {
+            return Err("Frame timestamp must be a finite non-negative number".to_string());
+        }
+        cmd.arg("-ss").arg(format!("{:.3}", time_seconds));
+    } else {
+        cmd.arg("-sseof").arg("-0.1");
+    }
+    cmd.input(req.video_path.clone())
+        .arg("-frames:v").arg("1")
+        .arg("-an")
+        .arg("-f").arg("image2")
+        .output(req.output_path.clone());
+
+    run_to_completion(cmd, "ffmpeg extract frame")?;
+    if !output.is_file() {
+        return Err(format!("FFmpeg did not create frame output: {}", req.output_path));
+    }
+
+    Ok(ExtractFrameResult { output_path: req.output_path.clone() })
+}
+
+fn extract_last_frame_blocking(req: &ExtractFrameRequest) -> Result<ExtractFrameResult, String> {
+    let output = PathBuf::from(&req.output_path);
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut cmd = FfmpegCommand::new();
+    cmd.arg("-y")
+        .arg("-sseof").arg("-0.1")
+        .input(req.video_path.clone())
+        .arg("-frames:v").arg("1")
+        .arg("-an")
+        .arg("-f").arg("image2")
+        .output(req.output_path.clone());
+
+    run_to_completion(cmd, "ffmpeg extract last frame")?;
+    if !output.is_file() {
+        return Err(format!("FFmpeg did not create frame output: {}", req.output_path));
+    }
+
+    Ok(ExtractFrameResult { output_path: req.output_path.clone() })
 }
 
 /// Concatenate clips with optional hardcoded subtitles via FFmpeg.
@@ -136,6 +227,8 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
     // 过滤后保留对应的 subtitle,顺序不变。
     let mut valid_paths: Vec<String> = Vec::new();
     let mut valid_subs: Vec<Option<String>> = Vec::new();
+    let mut valid_trim_starts: Vec<f64> = Vec::new();
+    let mut valid_trim_ends: Vec<f64> = Vec::new();
     for (i, p) in sanitized_clip_paths.iter().enumerate() {
         let path = PathBuf::from(p);
         if !path.exists() {
@@ -148,6 +241,8 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         }
         valid_paths.push(p.clone());
         valid_subs.push(req.subtitles[i].clone());
+        valid_trim_starts.push(req.trim_start_seconds.get(i).copied().unwrap_or(0.0));
+        valid_trim_ends.push(req.trim_end_seconds.get(i).copied().unwrap_or(0.0));
     }
     if valid_paths.is_empty() {
         return Err(format!(
@@ -170,6 +265,9 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         output_path: req.output_path.clone(),
         hardcode_subtitles: req.hardcode_subtitles,
         style: req.style.clone(),
+        trim_start_seconds: valid_trim_starts,
+        trim_end_seconds: valid_trim_ends,
+        audio_volume: req.audio_volume,
     };
     let req = &filtered_req;
 
@@ -177,8 +275,9 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         .subtitles
         .iter()
         .any(|s| s.as_deref().map(|t| !t.is_empty()).unwrap_or(false));
+    let has_timeline_edits = has_timeline_edits(req);
 
-    if req.clip_paths.len() == 1 {
+    if req.clip_paths.len() == 1 && !has_timeline_edits {
         let src = &req.clip_paths[0];
         let sub = req.subtitles[0].as_deref().filter(|t| !t.is_empty());
 
@@ -200,7 +299,7 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         ));
     }
 
-    if !any_subtitle || !req.hardcode_subtitles {
+    if (!any_subtitle || !req.hardcode_subtitles) && !has_timeline_edits {
         // No subtitles to burn: concat demuxer with stream copy is fast & lossless.
         // Codec mismatch will surface as a runtime error and the caller can retry
         // with the re-encode path.
@@ -244,6 +343,9 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
                 // 直接调 compose_multishot_with_subtitles 但不实际烧字幕。
                 hardcode_subtitles: false,
                 style: req.style.clone(),
+                trim_start_seconds: req.trim_start_seconds.clone(),
+                trim_end_seconds: req.trim_end_seconds.clone(),
+                audio_volume: req.audio_volume,
             };
             // 手动重编码每片到统一格式,再 concat
             return compose_reencode_only(&reencode_req, &out_path);
@@ -274,11 +376,27 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
                 output_path: req.output_path.clone(),
                 hardcode_subtitles: false,
                 style: req.style.clone(),
+                trim_start_seconds: req.trim_start_seconds.clone(),
+                trim_end_seconds: req.trim_end_seconds.clone(),
+                audio_volume: req.audio_volume,
             };
             let r = compose_reencode_only(&reencode_req, &out_path)?;
             return Ok(attach_meta(r, &out_path));
         }
     }
+}
+
+fn has_timeline_edits(req: &ComposeRequest) -> bool {
+    let has_trim = req
+        .trim_start_seconds
+        .iter()
+        .chain(req.trim_end_seconds.iter())
+        .any(|value| *value > 0.001);
+    let has_volume = req
+        .audio_volume
+        .map(|value| (value - 1.0).abs() > 0.001)
+        .unwrap_or(false);
+    has_trim || has_volume
 }
 
 /// Burn subtitle text into a single clip using drawtext.
@@ -306,6 +424,21 @@ fn render_single_with_subtitle(src: &str, text: &str, out: &Path) -> Result<Comp
     })
 }
 
+fn append_trimmed_input(cmd: &mut FfmpegCommand, input: &str, trim_start: f64, trim_end: f64) {
+    if trim_start > 0.001 {
+        cmd.arg("-ss").arg(format!("{:.3}", trim_start));
+    }
+    cmd.input(input.to_string());
+    if trim_end > 0.001 {
+        if let Some(source_duration) = probe_duration(Path::new(input)) {
+            let remaining = source_duration - trim_start - trim_end;
+            if remaining > 0.05 {
+                cmd.arg("-t").arg(format!("{:.3}", remaining));
+            }
+        }
+    }
+}
+
 /// 兜底合成:对每个 clip 重编码到统一格式(libx264 + aac + yuv420p),
 /// 然后用 concat demuxer 拼接。用于 stream-copy 失败时的降级路径。
 /// 跳过编码失败的 clip(返回错误但继续处理剩余)。
@@ -320,13 +453,20 @@ fn compose_reencode_only(req: &ComposeRequest, out: &Path) -> Result<ComposeResu
     for (i, clip_src) in req.clip_paths.iter().enumerate() {
         let rendered = job_dir.join(format!("clip_{:04}.mp4", i));
         let has_audio = clip_has_audio_stream(clip_src).unwrap_or(false);
+        let trim_start = req.trim_start_seconds.get(i).copied().unwrap_or(0.0).max(0.0);
+        let trim_end = req.trim_end_seconds.get(i).copied().unwrap_or(0.0).max(0.0);
         let mut cmd = FfmpegCommand::new();
         cmd.arg("-y")
-            .arg("-err_detect").arg("ignore_err")
-            .input(clip_src.to_string())
+            .arg("-err_detect").arg("ignore_err");
+        append_trimmed_input(&mut cmd, clip_src, trim_start, trim_end);
+        cmd
             .arg("-vf").arg("scale=trunc(iw/2)*2:trunc(ih/2)*2")
             .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
         if has_audio {
+            let volume = req.audio_volume.unwrap_or(1.0).clamp(0.0, 1.5);
+            if (volume - 1.0).abs() > 0.001 {
+                cmd.arg("-af").arg(format!("volume={:.4}", volume));
+            }
             cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
         } else {
             cmd.arg("-an");
@@ -395,10 +535,16 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
     let mut rendered_paths: Vec<PathBuf> = Vec::with_capacity(req.clip_paths.len());
     let mut first_failure_reason: Option<String> = None;
     for (i, clip_src) in req.clip_paths.iter().enumerate() {
-        let sub = req.subtitles[i].as_deref().filter(|t| !t.is_empty());
+        let sub = if req.hardcode_subtitles {
+            req.subtitles[i].as_deref().filter(|t| !t.is_empty())
+        } else {
+            None
+        };
         let rendered = job_dir.join(format!("clip_{:04}.mp4", i));
 
         let has_audio = clip_has_audio_stream(clip_src).unwrap_or(false);
+        let trim_start = req.trim_start_seconds.get(i).copied().unwrap_or(0.0).max(0.0);
+        let trim_end = req.trim_end_seconds.get(i).copied().unwrap_or(0.0).max(0.0);
         let style_filter = get_style_video_filter(req.style.as_deref());
         let base_scale = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
         let filter_chain = if let Some(sf) = &style_filter {
@@ -417,11 +563,16 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
             );
             let mut cmd = FfmpegCommand::new();
             cmd.arg("-y")
-                .arg("-err_detect").arg("ignore_err")
-                .input(clip_src.to_string())
+                .arg("-err_detect").arg("ignore_err");
+            append_trimmed_input(&mut cmd, clip_src, trim_start, trim_end);
+            cmd
                 .arg("-vf").arg(filter)
                 .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
             if has_audio {
+                let volume = req.audio_volume.unwrap_or(1.0).clamp(0.0, 1.5);
+                if (volume - 1.0).abs() > 0.001 {
+                    cmd.arg("-af").arg(format!("volume={:.4}", volume));
+                }
                 cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
             } else {
                 cmd.arg("-an");
@@ -433,11 +584,16 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
             // No subtitle for this clip; still need consistent codec for concat.
             let mut cmd = FfmpegCommand::new();
             cmd.arg("-y")
-                .arg("-err_detect").arg("ignore_err")
-                .input(clip_src.to_string())
+                .arg("-err_detect").arg("ignore_err");
+            append_trimmed_input(&mut cmd, clip_src, trim_start, trim_end);
+            cmd
                 .arg("-vf").arg(filter_chain)
                 .arg("-c:v").arg("libx264").arg("-preset").arg("veryfast").arg("-crf").arg("20");
             if has_audio {
+                let volume = req.audio_volume.unwrap_or(1.0).clamp(0.0, 1.5);
+                if (volume - 1.0).abs() > 0.001 {
+                    cmd.arg("-af").arg(format!("volume={:.4}", volume));
+                }
                 cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
             } else {
                 cmd.arg("-an");
@@ -657,7 +813,7 @@ fn probe_has_video_stream(path: &Path) -> bool {
 }
 
 /// 拿到 ffprobe 可执行文件路径(优先 ffmpeg_sidecar 解压目录,其次 PATH)。
-fn ffprobe_path() -> Option<PathBuf> {
+pub(crate) fn ffprobe_path() -> Option<PathBuf> {
     let exe_name = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
     if let Some(parent) = ffmpeg_sidecar::paths::ffmpeg_path().parent() {
         let p = parent.join(exe_name);
@@ -925,6 +1081,7 @@ pub struct ExportRequest {
     /// Target vertical resolution. None/0 = keep original.
     /// Common values: 720, 1080, 1440, 2160.
     pub target_height: Option<u32>,
+    pub compatible_mp4: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -948,13 +1105,21 @@ pub async fn ffmpeg_export(req: ExportRequest) -> Result<ExportResult, String> {
 
 fn export_blocking(req: &ExportRequest) -> Result<ExportResult, String> {
     let out_path = PathBuf::from(&req.output_path);
+    let compatible = req.compatible_mp4.unwrap_or(false);
+    if req.source_path == req.output_path || std::fs::canonicalize(&req.source_path).ok()
+        .zip(std::fs::canonicalize(&out_path).ok()).map(|(a, b)| a == b).unwrap_or(false) {
+        return Err("Export requires a separate output file".to_string());
+    }
+    if compatible && out_path.extension().and_then(|ext| ext.to_str()).map(|ext| !ext.eq_ignore_ascii_case("mp4")).unwrap_or(true) {
+        return Err("Compatible video export requires an MP4 output".to_string());
+    }
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
     let need_scale = req.target_height.unwrap_or(0) > 0;
 
-    if !need_scale {
+    if !need_scale && !compatible {
         // Stream copy: instant and lossless.
         let mut cmd = FfmpegCommand::new();
         cmd.arg("-y")
@@ -964,16 +1129,22 @@ fn export_blocking(req: &ExportRequest) -> Result<ExportResult, String> {
         run_to_completion(cmd, "ffmpeg export copy")?;
     } else {
         // Re-encode with scale preserving aspect ratio (height = -2 keeps even width).
-        let h = req.target_height.unwrap();
-        let vf = format!("scale=-2:{}", h);
+        let h = req.target_height.unwrap_or(0);
+        let vf = if compatible {
+            if h > 0 { format!("scale=-2:trunc(min(ih\\,{})/2)*2", h) }
+            else { "scale=trunc(iw/2)*2:trunc(ih/2)*2".to_string() }
+        } else { format!("scale=-2:{}", h) };
         let mut cmd = FfmpegCommand::new();
         cmd.arg("-y")
             .input(req.source_path.clone())
             .arg("-vf").arg(vf)
             .arg("-c:v").arg("libx264").arg("-preset").arg("medium").arg("-crf").arg("20")
-            .arg("-c:a").arg("copy")
-            .arg("-pix_fmt").arg("yuv420p")
-            .output(out_path.to_string_lossy().to_string());
+            .arg("-pix_fmt").arg("yuv420p");
+        if compatible {
+            cmd.arg("-map").arg("0:v:0").arg("-map").arg("0:a:0?")
+                .arg("-c:a").arg("aac").arg("-b:a").arg("192k").arg("-movflags").arg("+faststart");
+        } else { cmd.arg("-c:a").arg("copy"); }
+        cmd.output(out_path.to_string_lossy().to_string());
         run_to_completion(cmd, "ffmpeg export transcode")?;
     }
 
@@ -989,4 +1160,44 @@ fn export_blocking(req: &ExportRequest) -> Result<ExportResult, String> {
         r.duration_seconds = Some(d);
     }
     Ok(r)
+}
+
+#[cfg(test)]
+mod compatible_mp4_tests {
+    use super::*;
+
+    #[test]
+    fn compatible_mp4_transcodes_video_and_audio_without_upscaling() {
+        let directory = std::env::temp_dir().join(format!("mojing-mp4-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("source.webm");
+        let mut command = FfmpegCommand::new();
+        command.arg("-y").arg("-f").arg("lavfi").arg("-i").arg("color=c=blue:s=160x90:r=15:d=1")
+            .arg("-f").arg("lavfi").arg("-i").arg("sine=frequency=440:duration=1")
+            .arg("-c:v").arg("libvpx").arg("-c:a").arg("libopus").arg("-shortest").output(source.to_string_lossy().to_string());
+        run_to_completion(command, "create WebM fixture").unwrap();
+        let original = std::fs::read(&source).unwrap();
+        let output = directory.join("compatible.mp4");
+        let result = export_blocking(&ExportRequest { source_path: source.to_string_lossy().to_string(), output_path: output.to_string_lossy().to_string(), target_height: Some(720), compatible_mp4: Some(true) }).unwrap();
+        assert!(result.size_bytes.unwrap() > 0);
+        assert!(result.duration_seconds.unwrap() > 0.9);
+        let probe = std::process::Command::new(ffprobe_path().expect("ffprobe is required for this integration test"))
+            .args(["-v", "error", "-show_entries", "stream=codec_name,width,height,pix_fmt", "-of", "json"]).arg(&output).output().unwrap();
+        assert!(probe.status.success());
+        let metadata: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+        let streams = metadata["streams"].as_array().unwrap();
+        let video = streams.iter().find(|stream| stream["codec_name"] == "h264").expect("H.264 output");
+        assert_eq!(video["width"], 160);
+        assert_eq!(video["height"], 90);
+        assert_eq!(video["pix_fmt"], "yuv420p");
+        assert!(streams.iter().any(|stream| stream["codec_name"] == "aac"), "Opus must be encoded to AAC");
+        assert_eq!(std::fs::read(&source).unwrap(), original, "source must remain unchanged");
+        assert!(export_blocking(&ExportRequest { source_path: source.to_string_lossy().to_string(), output_path: source.to_string_lossy().to_string(), target_height: None, compatible_mp4: Some(true) }).is_err());
+
+        // A silent input and original-size conversion are also valid.
+        let silent = directory.join("silent.webm");
+        std::fs::write(&silent, include_bytes!("../../scripts/fixtures/studio-output.webm")).unwrap();
+        assert!(export_blocking(&ExportRequest { source_path: silent.to_string_lossy().to_string(), output_path: directory.join("silent.mp4").to_string_lossy().to_string(), target_height: None, compatible_mp4: Some(true) }).is_ok());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
 }

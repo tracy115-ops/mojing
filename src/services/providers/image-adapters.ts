@@ -5,7 +5,25 @@ import type {
 } from '@/types/providers';
 import { BaseImageProvider } from './base';
 import { fetch as httpFetch } from './fetch-proxy';
+import { applyUnconsumedGenerationParameters } from './parameter-transport';
 import { readAsDataUri, isRemoteUrl } from '@/services/video/asset-store';
+import { buildSDWebUIRequest, getAgnesImageOutput, getAgnesImageWireParameterSnapshot } from './image-wire-contract.ts';
+
+function pickIdeogramAspectRatio(width?: number, height?: number, explicit?: string): string {
+  const supported = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '2:1', '1:2', '3:1', '1:3'] as const;
+  if (explicit && supported.includes(explicit as typeof supported[number])) return explicit;
+  if (!width || !height) return '1:1';
+
+  const target = width / height;
+  return supported.reduce((closest, candidate) => {
+    const [candidateWidth, candidateHeight] = candidate.split(':').map(Number);
+    const [closestWidth, closestHeight] = closest.split(':').map(Number);
+    return Math.abs(candidateWidth / candidateHeight - target)
+      < Math.abs(closestWidth / closestHeight - target)
+      ? candidate
+      : closest;
+  }, supported[2]);
+}
 
 // --- DALL-E Adapter ---
 
@@ -15,19 +33,26 @@ export class DALLEProvider extends BaseImageProvider {
   async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
     const startTime = Date.now();
     const model = request.model || 'dall-e-3';
+    const size = request.size || inferDalleSize(request.width, request.height, request.aspectRatio);
+    const [outputWidth, outputHeight] = parseImageSize(size);
 
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
       n: 1,
-      size: `${request.width ?? 1024}x${request.height ?? 1024}`,
-      quality: 'standard',
+      size,
+      quality: request.quality ?? 'standard',
       response_format: 'b64_json',
     };
 
     if (request.style) {
       body.style = request.style;
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'size', 'width', 'height', 'quality', 'style'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/images/generations`, {
       method: 'POST',
@@ -46,8 +71,8 @@ export class DALLEProvider extends BaseImageProvider {
 
     return {
       imageData: this.normalizeImageSrc(image?.b64_json ?? image?.url ?? ''),
-      width: request.width ?? 1024,
-      height: request.height ?? 1024,
+      width: outputWidth,
+      height: outputHeight,
       model,
       provider: 'dalle',
       latencyMs: Date.now() - startTime,
@@ -60,26 +85,18 @@ export class DALLEProvider extends BaseImageProvider {
 export class SDWebUIProvider extends BaseImageProvider {
   readonly providerId = 'sd-webui';
 
+  getWireParameterSnapshot(request: ImageGenerateRequest): Record<string, unknown> {
+    const wire = buildSDWebUIRequest(request, true);
+    return { path: wire.path, ...wire.body };
+  }
+
   async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
     const startTime = Date.now();
     const width = request.width ?? 1024;
     const height = request.height ?? 1024;
-
-    const body: Record<string, unknown> = {
-      prompt: request.prompt,
-      negative_prompt: request.negativePrompt ?? '',
-      width,
-      height,
-      steps: 30,
-      cfg_scale: 7,
-      sampler_name: 'DPM++ 2M Karras',
-    };
-
-    if (request.seed !== undefined) {
-      body.seed = request.seed;
-    }
-
-    const response = await httpFetch(`${this.endpoint.baseUrl}/sdapi/v1/txt2img`, {
+    const images = request.referenceImages ? await Promise.all(request.referenceImages.map((image) => readAsDataUri(image))) : undefined;
+    const { path, body } = buildSDWebUIRequest({ ...request, referenceImages: images });
+    const response = await httpFetch(`${this.endpoint.baseUrl}${path}`, {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
@@ -92,9 +109,10 @@ export class SDWebUIProvider extends BaseImageProvider {
     }
 
     const data = await response.json();
+    if (!data.images?.[0]) throw new Error('SD WebUI returned no image');
 
     return {
-      imageData: this.normalizeImageSrc(data.images?.[0] ?? ''),
+      imageData: this.normalizeImageSrc(data.images[0]),
       width,
       height,
       model: request.model || 'stable-diffusion',
@@ -125,6 +143,11 @@ export class KlingImageProvider extends BaseImageProvider {
     if (request.referenceImages?.length) {
       body.image_reference = request.referenceImages[0];
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height', 'negativePrompt'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/v1/images/generations`, {
       method: 'POST',
@@ -172,6 +195,11 @@ export class CogViewProvider extends BaseImageProvider {
       prompt: request.prompt,
       size: `${width}x${height}`,
     };
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/images/generations`, {
       method: 'POST',
@@ -217,21 +245,29 @@ export class WanxProvider extends BaseImageProvider {
     // 通义 size 格式 "1024*1024"
     const size = `${width}*${height}`;
 
+    const body: Record<string, unknown> = {
+      model,
+      input: { prompt: request.prompt },
+      parameters: {
+        size,
+        n: 1,
+        ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
+      },
+    };
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height', 'negativePrompt'],
+      'parameters',
+    );
+
     const submitResponse = await httpFetch(`${this.endpoint.baseUrl}/services/aigc/text2image/image-synthesis`, {
       method: 'POST',
       headers: {
         ...this.getHeaders(),
         'X-DashScope-Async': 'enable',
       },
-      body: JSON.stringify({
-        model,
-        input: { prompt: request.prompt },
-        parameters: {
-          size,
-          n: 1,
-          ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
-        },
-      }),
+      body: JSON.stringify(body),
       signal: this.timeoutSignal(60_000),
     });
 
@@ -294,23 +330,31 @@ export class JimengProvider extends BaseImageProvider {
     const height = request.height ?? 1024;
     const model = request.model || 'doubao-seedream-3-0-t2i-250415';
 
+    const body: Record<string, unknown> = {
+      model,
+      content: [
+        {
+          text: request.prompt,
+          type: 'text',
+        },
+      ],
+      parameters: {
+        width,
+        height,
+        ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
+      },
+    };
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height', 'negativePrompt'],
+      'parameters',
+    );
+
     const submitResp = await httpFetch(`${this.endpoint.baseUrl}/api/v3/contents/generations/tasks`, {
       method: 'POST',
       headers: this.getHeaders(),
-      body: JSON.stringify({
-        model,
-        content: [
-          {
-            text: request.prompt,
-            type: 'text',
-          },
-        ],
-        parameters: {
-          width,
-          height,
-          ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
-        },
-      }),
+      body: JSON.stringify(body),
       signal: this.timeoutSignal(60_000),
     });
 
@@ -372,7 +416,7 @@ export class IdeogramProvider extends BaseImageProvider {
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
-      aspect_ratio: `${width}:${height}`,
+      aspect_ratio: pickIdeogramAspectRatio(width, height, request.aspectRatio),
       magic_prompt_option: 'OFF',
       num_images: 1,
     };
@@ -380,6 +424,11 @@ export class IdeogramProvider extends BaseImageProvider {
     if (request.negativePrompt) {
       body.negative_prompt = request.negativePrompt;
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'aspectRatio', 'negativePrompt'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/ideogram/v1/generate`, {
       method: 'POST',
@@ -417,14 +466,13 @@ export class IdeogramProvider extends BaseImageProvider {
 export class AgnesImageProvider extends BaseImageProvider {
   readonly providerId = 'agnes-image';
 
+  getWireParameterSnapshot(request: ImageGenerateRequest): Record<string, unknown> {
+    return getAgnesImageWireParameterSnapshot(request);
+  }
+
   async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
     const startTime = Date.now();
-    let model = request.model?.trim() || 'agnes-image-2.1-flash';
-    if (!model.startsWith('agnes-image') || model.toLowerCase().includes('kolors') || model.includes('/')) {
-      model = 'agnes-image-2.1-flash';
-    }
-    const width = request.width ?? 1024;
-    const height = request.height ?? 1024;
+    const model = request.model?.trim() || 'agnes-image-2.1-flash';
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     // 用户填 `https://apihub.agnes-ai.com` 或 `https://apihub.agnes-ai.com/v1` 都兼容
@@ -432,22 +480,7 @@ export class AgnesImageProvider extends BaseImageProvider {
       ? `${baseUrl}/images/generations`
       : `${baseUrl}/v1/images/generations`;
 
-    // Agnes AI 官方标准: size 使用 "1K" 档位，配合 ratio 指定画幅宽高比
-    let agnesRatio = '1:1';
-    const ratioVal = width / height;
-    if (Math.abs(ratioVal - 16 / 9) < 0.15 || ratioVal > 1.4) {
-      agnesRatio = '16:9';
-    } else if (Math.abs(ratioVal - 9 / 16) < 0.15 || ratioVal < 0.6) {
-      agnesRatio = '9:16';
-    } else if (Math.abs(ratioVal - 2 / 3) < 0.15 || ratioVal < 0.8) {
-      agnesRatio = '2:3';
-    } else if (Math.abs(ratioVal - 3 / 2) < 0.15 || ratioVal > 1.2) {
-      agnesRatio = '3:2';
-    } else if (Math.abs(ratioVal - 3 / 4) < 0.15) {
-      agnesRatio = '3:4';
-    } else if (Math.abs(ratioVal - 4 / 3) < 0.15) {
-      agnesRatio = '4:3';
-    }
+    const output = getAgnesImageOutput(request);
 
     const isImg2Img = !!request.referenceImages?.length;
 
@@ -476,9 +509,9 @@ export class AgnesImageProvider extends BaseImageProvider {
     // 按照 Agnes 官方文档规范构造 Body (严禁在顶层放置 response_format)
     const body: Record<string, unknown> = {
       model,
-      prompt: request.prompt,
-      size: '1K',
-      ratio: agnesRatio,
+      prompt: appendNegativeConstraints(request.prompt, request.negativePrompt),
+      size: output.size,
+      ratio: output.ratio,
       extra_body: extraBody,
     };
 
@@ -493,6 +526,11 @@ export class AgnesImageProvider extends BaseImageProvider {
     if (request.seed !== undefined && request.seed !== null) {
       body.seed = request.seed;
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'size', 'width', 'height', 'aspectRatio', 'seed', 'negativePrompt'],
+    );
 
     const response = await httpFetch(url, {
       method: 'POST',
@@ -518,8 +556,8 @@ export class AgnesImageProvider extends BaseImageProvider {
 
     return {
       imageData: this.normalizeImageSrc(rawImage),
-      width,
-      height,
+      width: output.width,
+      height: output.height,
       model,
       provider: 'agnes-image',
       latencyMs: Date.now() - startTime,
@@ -559,8 +597,8 @@ export class LeonardoImageProvider extends BaseImageProvider {
       width,
       height,
       num_images: 1,
-      num_inference_steps: 30,
-      guidance_scale: 7,
+      num_inference_steps: request.steps ?? 30,
+      guidance_scale: request.guidanceScale ?? 7,
     };
     if (request.negativePrompt) {
       body.negative_prompt = request.negativePrompt;
@@ -568,6 +606,11 @@ export class LeonardoImageProvider extends BaseImageProvider {
     if (request.seed !== undefined) {
       body.seed = request.seed;
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height', 'negativePrompt', 'seed', 'steps', 'guidanceScale'],
+    );
 
     const submitResp = await httpFetch(`${base}/rest/v1/generations`, {
       method: 'POST',
@@ -636,6 +679,78 @@ export class LeonardoImageProvider extends BaseImageProvider {
   }
 }
 
+function inferDalleSize(width?: number, height?: number, aspectRatio?: string): string {
+  if (aspectRatio === '9:16') return '1024x1792';
+  if (aspectRatio === '16:9') return '1792x1024';
+  if (width && height) {
+    const ratio = width / height;
+    if (ratio > 1.35) return '1792x1024';
+    if (ratio < 0.75) return '1024x1792';
+  }
+  return '1024x1024';
+}
+
+function parseImageSize(size: string): [number, number] {
+  const match = size.match(/^(\d+)x(\d+)$/);
+  return match ? [Number(match[1]), Number(match[2])] : [1024, 1024];
+}
+
+// --- SiliconFlow OpenAI-compatible image API ---
+
+export class SiliconFlowImageProvider extends BaseImageProvider {
+  readonly providerId = 'siliconflow-image';
+
+  async generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+    const startTime = Date.now();
+    const width = request.width ?? 1024;
+    const height = request.height ?? 1024;
+    const model = request.model || 'black-forest-labs/FLUX.1-schnell';
+    const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
+    const url = /\/v\d+$/.test(baseUrl)
+      ? `${baseUrl}/images/generations`
+      : `${baseUrl}/v1/images/generations`;
+    const body: Record<string, unknown> = {
+      model,
+      prompt: request.prompt,
+      image_size: `${width}x${height}`,
+    };
+    if (request.negativePrompt) body.negative_prompt = request.negativePrompt;
+    if (request.steps !== undefined) body.num_inference_steps = request.steps;
+    if (request.guidanceScale !== undefined) body.guidance_scale = request.guidanceScale;
+    if (request.seed !== undefined) body.seed = request.seed;
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'width', 'height', 'negativePrompt', 'seed', 'steps', 'guidanceScale'],
+    );
+
+    const response = await httpFetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(300_000),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`SiliconFlow Image API error ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    const image = data.images?.[0] ?? data.data?.[0];
+    const imageData = this.normalizeImageSrc(image?.url ?? image?.b64_json ?? image ?? '');
+    if (!imageData) throw new Error('SiliconFlow Image API returned empty image data');
+    return {
+      imageData,
+      width,
+      height,
+      model,
+      provider: 'siliconflow-image',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+}
+
 // --- Factory ---
 
 export function createImageProvider(
@@ -663,9 +778,12 @@ export function createImageProvider(
       return new AgnesImageProvider(endpoint);
     case 'leonardo':
       return new LeonardoImageProvider(endpoint);
-    default:
-      // Assume OpenAI-compatible image API
+    case 'siliconflow-image':
+      return new SiliconFlowImageProvider(endpoint);
+    case 'custom':
       return new DALLEProvider(endpoint);
+    default:
+      throw new Error(`No image adapter is implemented for provider ${providerId}`);
   }
 }
 
@@ -701,4 +819,10 @@ function normalizeForAgnes(s: string | undefined | null): string | null {
   }
 
   return null;
+}
+
+function appendNegativeConstraints(prompt: string, negativePrompt?: string): string {
+  const negative = negativePrompt?.trim();
+  if (!negative) return prompt;
+  return `${prompt.trim()}\n\n[Negative constraints]\nDo not include: ${negative}\n\n[Reference priority]\nWhen a negative constraint conflicts with a bound subject record or reference image, preserve the bound subject record and reference image.`;
 }

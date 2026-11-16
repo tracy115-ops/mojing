@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { createWorld } from '../src/services/video-studio/document.ts';
+import { worldFramePlan } from '../src/services/video-studio/world-offline-plan.ts';
+const world = createWorld('Offline fixture'); world.duration = 1;
+assert.deepEqual(worldFramePlan(world, 1280, 24), { width: 1280, height: 720, fps: 24, frameCount: 24, durationSeconds: 1 });
+assert.deepEqual(worldFramePlan({ ...world, aspectRatio: '9:16' }, 1920, 30), { width: 1080, height: 1920, fps: 30, frameCount: 30, durationSeconds: 1 });
+assert.equal(worldFramePlan({ ...world, aspectRatio: '21:9' }, 1280, 24).height, 548);
+assert.equal(worldFramePlan({ ...world, aspectRatio: '1:1' }, 1920, 15).width, 1920);
+const sequence = { ...world, cameraSequence: { enabled: true, shots: [{ id: 'a', duration: 0.25, camera: world.camera }, { id: 'b', duration: 0.5, camera: world.camera }] } };
+assert.equal(worldFramePlan(sequence, 1280, 25).frameCount, 19, 'fractional final frame duration rounds up to a complete encoded frame');
+assert.equal(worldFramePlan(sequence, 1280, 24).frameCount, 18);
+assert.equal(worldFramePlan({ ...world, duration: 60 }, 1920, 30).frameCount, 1800);
+for (const [edge, fps] of [[3840, 24], [1280, 12], [0, 30], [1920, NaN]]) assert.throws(() => worldFramePlan(world, edge, fps), /settings/);
+for (const duration of [0, 61, NaN]) assert.throws(() => worldFramePlan({ ...world, duration }, 1280, 24), /settings/);
+console.log('Offline frame plan passed: sequence duration, exact frame counts, fractional end rounding, even portrait/landscape dimensions and supported render limits.');

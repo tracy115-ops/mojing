@@ -15,24 +15,6 @@ export interface VoiceAssignResult {
   characters: CharacterAnchor[];
 }
 
-interface VoicePreset {
-  id: string;
-  label: string;
-  gender: 'male' | 'female';
-  ageGroup: 'child' | 'teen' | 'young' | 'middle' | 'elder';
-}
-
-// UI 展示用的占位音色库(只用于列表展示,实际 voiceRef 用 REAL_VOICES)
-const VOICE_PRESETS: VoicePreset[] = [
-  { id: 'female_young_01', label: '年轻女声 1', gender: 'female', ageGroup: 'young' },
-  { id: 'female_middle_01', label: '中年女声 1', gender: 'female', ageGroup: 'middle' },
-  { id: 'female_elder_01', label: '老年女声', gender: 'female', ageGroup: 'elder' },
-  { id: 'male_young_01', label: '年轻男声 1', gender: 'male', ageGroup: 'young' },
-  { id: 'male_middle_01', label: '中年男声 1', gender: 'male', ageGroup: 'middle' },
-  { id: 'male_elder_01', label: '老年男声', gender: 'male', ageGroup: 'elder' },
-  { id: 'child_01', label: '童声', gender: 'female', ageGroup: 'child' },
-];
-
 /** 各 TTS provider 的真实音色 ID(按性别 + 年龄档)。
  *  这些是 provider API 实际接受的字符串。 */
 const REAL_VOICES: Record<string, {
@@ -75,21 +57,6 @@ const REAL_VOICES: Record<string, {
   },
 };
 
-/** 从角色名字、别名与外貌描述中智能精准识别男女性别 */
-function inferGender(c: CharacterAnchor): 'female' | 'male' | 'unknown' {
-  // 如果 LLM 提取或用户已明确指定了性别，100% 尊重已有性别！
-  if (c.gender === 'female' || c.gender === 'male') return c.gender;
-  
-  const textToScan = `${c.name || ''} ${c.aliases?.join(' ') || ''} ${c.appearance || ''}`.trim();
-  if (/(女性角色|女|女性|少女|女人|女子|老太|大娘|大妈|阿姨|姑姑|姐姐|妹妹|妈妈|母亲|夫人|太太|媳妇|丫鬟|侍女|闺女|千金|公主|皇后|贵妃|female|woman|girl|lady|mother|sister|queen)/i.test(textToScan)) {
-    return 'female';
-  }
-  if (/(男性人物|男|男性|少年|男人|男子|大师|高僧|和尚|道士|道长|长老|掌门|老者|大叔|老爷|老头|父亲|爸爸|哥哥|弟弟|儿子|少爷|公子|国王|皇帝|将领|将军|壮汉|神医|医师|神仙|尊者|male|man|boy|father|brother|king|master|monk)/i.test(textToScan)) {
-    return 'male';
-  }
-  return 'unknown';
-}
-
 function isFemaleVoiceId(v: string): boolean {
   return /female|nova|shimmer|anna|bella|claire|diana|xiaoxiao|xiaoyi|xiaomo|xiaomeng|qingxin|wenrou/i.test(v);
 }
@@ -101,11 +68,11 @@ function isMaleVoiceId(v: string): boolean {
 export async function stepVoice(characters: CharacterAnchor[]): Promise<VoiceAssignResult> {
   const providerId = providerRouter.getActiveTTSProviderId();
 
-  // 第一轮:给 gender 已知或可推断出的角色分配真实音色
-  // (自动校正历史缓存里音色与性别矛盾的旧数据,例如猫大师(男)被误存为女音色)
+  // Only the structured gender field may constrain a voice. Names and
+  // appearance text are content, not a reliable gender classifier.
   const usedVoices = new Set<string>();
   const result: CharacterAnchor[] = characters.map((c) => {
-    const resolvedGender = inferGender(c);
+    const resolvedGender = c.gender === 'female' || c.gender === 'male' ? c.gender : 'unknown';
     const isMismatch = c.voiceRef && (
       (resolvedGender === 'male' && isFemaleVoiceId(c.voiceRef)) ||
       (resolvedGender === 'female' && isMaleVoiceId(c.voiceRef))
@@ -173,8 +140,4 @@ function pickRealVoice(
     return (ageGroup ? byAgeTyped[ageGroup] : undefined) ?? byAge.young;
   }
   return undefined;
-}
-
-export function listVoicePresets(): VoicePreset[] {
-  return VOICE_PRESETS;
 }

@@ -1,0 +1,18 @@
+.studio-image-editor-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; }
+.studio-image-editor-layout > section, .studio-image-editor-layout > aside { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.studio-image-editor-layout > aside > .ant-tag { align-self: flex-start; }
+.studio-image-editor-stage { display: flex; align-items: center; justify-content: center; min-height: 200px; padding: 16px; background: var(--bg-base); border: 1px solid var(--border-base); border-radius: 6px; }
+.studio-image-editor-preview { position: relative; max-width: 100%; touch-action: none; cursor: crosshair; line-height: 0; }
+.studio-image-editor-preview canvas { display: block; max-width: 100%; max-height: 460px; width: auto; height: auto; }
+.studio-image-editor-preview > canvas.studio-image-mask-overlay { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; opacity: 0.4; pointer-events: none; }
+.studio-image-editor-preview > canvas.studio-image-mask-overlay.is-mask { opacity: 1; }
+.studio-image-editor-region.is-region { background: transparent; }
+.studio-image-mask-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.studio-image-mask-tools > label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.studio-image-mask-tools > label .ant-slider { width: 90px; margin-inline: 4px; }
+.studio-image-mask-slider { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-secondary); }
+.studio-image-editor-settings.is-disabled { pointer-events: none; opacity: 0.65; }
+.studio-image-editor-region { position: absolute; pointer-events: none; border: 2px solid var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 18%, transparent); }
+.studio-image-editor-region.is-crop { background: transparent; box-shadow: 0 0 0 1px var(--bg-container); border-style: dashed; }
+.studio-image-editor-layout .ant-select, .studio-image-editor-layout .ant-input-number { width: 100%; }
+@media (max-width: 850px) { .studio-image-editor-layout { grid-template-columns: minmax(0, 1fr); } }

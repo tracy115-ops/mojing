@@ -18,16 +18,23 @@ import type {
   ShotSpec,
   PipelineOptions,
   CharacterAnchor,
+  VideoExecutionBinding,
 } from '@/types/video';
+import { DEFAULT_PIPELINE_OPTIONS } from '@/types/video';
 import type { NovelChapter, NovelMetadata } from '@/types';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
-import { sliceChapters, type RawShot } from './chapter-slicer';
+import { sliceChaptersWithLLM, type RawShot } from './chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from './storyboard-prompt';
+import { detectInputLanguage } from './core/lang-detector';
 import { stepExtract } from './core/step-extract';
+import { assertShotPlanContract } from './core/shot-plan-contract';
 import { runPipeline, type VideoGenOptions } from './core/pipeline-runner';
 import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { providerRouter } from '@/services/providers';
+import { useProviderStore } from '@/stores/providerStore';
 import { applySeriesProjectLibrary } from './series-character-library';
+import { collectVideoPipelinePreflight } from './core/pipeline-preflight';
 
 export interface PipelineCallbacks {
   onStageChange?: (stage: VideoStage) => void;
@@ -108,6 +115,11 @@ export class VideoPipeline {
     }
 
     const meta = novelProject.metadata as NovelMetadata | undefined;
+    const seriesId = (meta as any)?.seriesId as string | undefined;
+    const seriesProject = seriesId
+      ? useProjectStore.getState().projects.find((project) => project.id === seriesId)
+      : undefined;
+    const seriesMetadata = seriesProject?.metadata as any;
     const chapters: Pick<NovelChapter, 'id' | 'order' | 'content'>[] = (videoProject.selectedChapterIds ?? [])
       .map((cid) => meta?.chapters?.find((c) => c.id === cid))
       .filter((c): c is NovelChapter => !!c);
@@ -121,6 +133,10 @@ export class VideoPipeline {
         chapters,
         spec: videoProject.spec,
         options: videoProject.options,
+        seriesCharacters: seriesMetadata?.seriesCharacters,
+        seriesScenes: seriesMetadata?.seriesScenes,
+        seriesStyleGuide: seriesMetadata?.seriesStyleGuide,
+        seriesContinuityContext: (meta as any)?.episodeContinuity,
       },
       cb,
     );
@@ -137,45 +153,77 @@ export class VideoPipeline {
 
     store.setPipelineOptions(novelProjectId, pipelineOptions);
 
+    const preflight = collectVideoPipelinePreflight({
+      channel: 'novel',
+      sourceMode: 'multishot',
+      options: pipelineOptions,
+      startStage: 'script_slicing',
+      planningRequired: true,
+      // Character references are unknown until extraction finishes. The
+      // downstream preflight rechecks them once the SceneSpec is available.
+      hasCharacterReferences: false,
+      hasSpeech: chapters.length > 0,
+    });
+    if (!preflight.ok) {
+      const message = describePreflightFailure(preflight);
+      store.setError(novelProjectId, message);
+      this.cb.onError?.(message);
+      return store.getProject(novelProjectId) ?? null;
+    }
+
     try {
+      const videoGenSelection = this.createVideoGenOptions(spec, 'novel', 'multishot', novelProjectId);
       // --- 步 1:章节切片 ---
       const rawShots = await this.runScriptSlicing();
 
       // --- 步 2+5:LLM 改写 + 分镜 ---
-      const storyboardShots = await this.runStoryboardPrompt(rawShots);
+      const storyboardShots = await this.runStoryboardPrompt(rawShots, videoGenSelection);
 
       // --- 步 3:提取角色/场景/道具 ---
       const sceneSpec = await this.runExtraction(rawShots, storyboardShots);
 
-      // --- 步 4:音色(期 3) ---
-      // 暂跳过
-
-      // --- 步 6-14:交由 core runner ---
-      const videoGen: VideoGenOptions = {
-        spec: {
-          resolution: spec.resolution,
-          fps: spec.fps,
-          videoTier: spec.videoTier,
-        },
-        sceneSource: 'novel',
-        sourceMode: 'multishot', // Novel 通道语义上是多镜头
-        novelProjectId,
-      };
-
-      return await runPipeline({
-        novelProjectId,
-        spec: sceneSpec,
-        options: pipelineOptions,
-        callbacks: this.cb,
-        videoGen,
-        shouldAbort: () => this.aborted,
+      // Planning is a user-owned artifact. Persist it and stop before any
+      // image, voice, keyframe, or video call. This is the same boundary the
+      // workbench exposes to the user: inspect the actual shot contract first,
+      // then explicitly start production.
+      store.setSceneSpec(novelProjectId, sceneSpec);
+      store.setStageStatus(novelProjectId, 'extraction', 'awaiting_review', {
+        progress: 1,
+        completedAt: undefined,
+        error: undefined,
       });
+      store.advanceToStage(novelProjectId, 'extraction');
+      store.setStageInputSummary(novelProjectId, 'extraction', {
+        headline: '分镜规划已完成，等待人工确认',
+        details: [
+          `已生成 ${sceneSpec.shots.length} 个镜头`,
+          `已识别 ${sceneSpec.characters?.length ?? 0} 个角色、${sceneSpec.scenes?.length ?? 0} 个场景`,
+          '确认后才会生成角色资产、场景资产和关键帧',
+        ],
+        upstreamArtifacts: '剧本切片、分镜意图、角色/场景绑定',
+      });
+      return store.getProject(novelProjectId) ?? null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       useVideoStore.getState().setError(novelProjectId, msg);
       this.cb.onError?.(msg);
       return null;
     }
+  }
+
+  /**
+   * Rebuild only the planning artifact for an existing project. Planning is
+   * outside RUNTIME_STAGE_ORDER, so it must not be routed through
+   * runFromStage; that API intentionally starts at asset production stages.
+   * Resetting from script_slicing also invalidates every derived asset before
+   * the new plan is persisted.
+   */
+  async replan(): Promise<VideoProjectState | null> {
+    const store = useVideoStore.getState();
+    if (!store.getProject(this.input.novelProjectId)) return this.run();
+    store.resetStagesFrom(this.input.novelProjectId, 'script_slicing');
+    store.setError(this.input.novelProjectId, undefined);
+    return this.run();
   }
 
   /**
@@ -189,7 +237,7 @@ export class VideoPipeline {
    */
   async resume(): Promise<VideoProjectState | null> {
     const store = useVideoStore.getState();
-    const { novelProjectId, chapters, spec, options } = this.input;
+    const { novelProjectId, spec, options } = this.input;
     const existing = store.getProject(novelProjectId);
     if (!existing) {
       // 还没跑过,降级到 run()
@@ -197,12 +245,59 @@ export class VideoPipeline {
     }
 
     // 用已有 options,但如果本次传入了新 options 则覆盖
-    const pipelineOptions: PipelineOptions = options ?? existing.options ?? specToOptions(spec);
+    const pipelineOptions: PipelineOptions = options
+      ?? existing.options
+      ?? legacyPipelineOptions(spec);
     store.setPipelineOptions(novelProjectId, pipelineOptions);
     // 清掉 error 状态,但保留各 stage 状态(让 runPipeline 内部判断)
     store.setError(novelProjectId, undefined);
 
     try {
+      const isDirect = novelProjectId.startsWith('direct_') || existing.sceneSpec?.meta.channel === 'direct';
+      const sourceMode = existing.sceneSpec?.meta.sourceMode ?? 'multishot';
+      const hasSceneSpec = !!existing.sceneSpec;
+
+      // A planned novel project must remain at the review checkpoint until
+      // the user confirms the shot list. Resume is intentionally idempotent.
+      if (!isDirect && existing.stages.extraction?.status === 'awaiting_review') {
+        return existing;
+      }
+      const preflight = collectVideoPipelinePreflight({
+        channel: isDirect ? 'direct' : 'novel',
+        sourceMode,
+        options: pipelineOptions,
+        startStage: hasSceneSpec ? 'character_anchor' : 'script_slicing',
+        planningRequired: !isDirect && !hasSceneSpec,
+        sceneSpec: existing.sceneSpec,
+        hasCharacterReferences: existing.sceneSpec
+          ? pipelineOptions.enableCharacterAnchor && (existing.sceneSpec.characters?.length ?? 0) > 0
+          : false,
+        hasSpeech: existing.sceneSpec
+          ? existing.sceneSpec.shots.some((shot) => !!(
+            shot.dialogue?.some((line) => !!line.text?.trim())
+            || shot.narration?.trim()
+            || shot.sourceText?.trim()
+            || shot.videoPrompt?.trim()
+          ))
+          : true,
+        imageEndpointId: existing.executionBinding?.image?.endpointId,
+        imageModel: existing.executionBinding?.image?.model,
+        videoEndpointId: existing.executionBinding?.video.endpointId,
+        videoModel: existing.executionBinding?.video.model,
+      });
+      if (!preflight.ok) {
+        const message = describePreflightFailure(preflight);
+        store.setError(novelProjectId, message);
+        this.cb.onError?.(message);
+        return store.getProject(novelProjectId) ?? null;
+      }
+
+      const videoGen = this.createVideoGenOptions(
+        spec,
+        isDirect ? 'direct' : 'novel',
+        sourceMode,
+        novelProjectId,
+      );
       // Direct 通道:不走 script_slicing/storyboard/extraction。
       // sceneSpec 已经在首次跑时写进了 store(DirectVideoModal 调 runPipeline 前
       // 由 buildSceneFromPrompt 构造,在 runner 里通过 setSceneSpec 持久化)。
@@ -213,17 +308,6 @@ export class VideoPipeline {
             'Direct 任务缺少 sceneSpec,无法续跑。请关闭后重新生成(可能是早期版本未持久化)。',
           );
         }
-        const videoGen: VideoGenOptions = {
-          spec: {
-            resolution: spec.resolution,
-            fps: spec.fps,
-            videoTier: spec.videoTier,
-          },
-          sceneSource: 'direct',
-          sourceMode: 'multishot',
-          novelProjectId,
-        };
-
         return await runPipeline({
           novelProjectId,
           spec: existing.sceneSpec,
@@ -245,20 +329,9 @@ export class VideoPipeline {
       } else {
         // 确实无完整分镜产物时才从头跑
         const rawShots = await this.runScriptSlicing();
-        const storyboardShots = await this.runStoryboardPrompt(rawShots);
+        const storyboardShots = await this.runStoryboardPrompt(rawShots, videoGen);
         sceneSpec = await this.runExtraction(rawShots, storyboardShots);
       }
-
-      const videoGen: VideoGenOptions = {
-        spec: {
-          resolution: spec.resolution,
-          fps: spec.fps,
-          videoTier: spec.videoTier,
-        },
-        sceneSource: 'novel',
-        sourceMode: 'multishot',
-        novelProjectId,
-      };
 
       return await runPipeline({
         novelProjectId,
@@ -274,6 +347,57 @@ export class VideoPipeline {
       this.cb.onError?.(msg);
       return null;
     }
+  }
+
+  private createVideoGenOptions(
+    spec: VideoSpec,
+    sceneSource: 'novel' | 'direct',
+    sourceMode: 'pure' | 'extract' | 'multishot',
+    novelProjectId: string,
+  ): VideoGenOptions {
+    const providerStore = useProviderStore.getState();
+    const existingBinding = useVideoStore.getState().getProject(novelProjectId)?.executionBinding;
+    const imageEndpointId = existingBinding?.image?.endpointId ?? providerStore.getActiveEndpoint('image')?.id;
+    const imageCapabilities = imageEndpointId
+      ? providerRouter.getImageCapabilities('storyboard', existingBinding?.image?.model, imageEndpointId)
+      : undefined;
+    const videoCapabilities = existingBinding?.video
+      ? providerRouter.getVideoCapabilities('clip', existingBinding.video.model, existingBinding.video.endpointId)
+      : providerRouter.getVideoCapabilities('clip');
+    const binding: VideoExecutionBinding = existingBinding ?? {
+      ...(imageCapabilities ? {
+        image: {
+          provider: imageCapabilities.provider,
+          model: imageCapabilities.model,
+          endpointId: imageCapabilities.endpointId,
+        },
+      } : {}),
+      video: {
+        provider: videoCapabilities.provider,
+        model: videoCapabilities.model,
+        endpointId: videoCapabilities.endpointId,
+      },
+      createdAt: new Date().toISOString(),
+    };
+    useVideoStore.getState().setExecutionBinding(novelProjectId, binding);
+
+    return {
+      spec: {
+        resolution: spec.resolution,
+        fps: spec.fps,
+        videoTier: spec.videoTier,
+        aspectRatio: spec.aspectRatio,
+      },
+      imageEndpointId: binding.image?.endpointId ?? providerStore.getActiveEndpoint('image')?.id,
+      imageModel: binding.image?.model,
+      endpointId: binding.video.endpointId ?? providerStore.getActiveEndpoint('video')?.id,
+      model: binding.video.model,
+      imageStyle: spec.style,
+      scenes: useVideoStore.getState().getProject(novelProjectId)?.sceneSpec?.scenes,
+      sceneSource,
+      sourceMode,
+      novelProjectId,
+    };
   }
 
   // --- 步 1 ---
@@ -297,11 +421,16 @@ export class VideoPipeline {
     pushStageContext({ novelProjectId: this.input.novelProjectId, stage });
     try {
       const isScript = this.input.genre === 'script' || this.input.genre === 'custom_script';
-      const rawShots: RawShot[] = sliceChapters(
+      const rawShots: RawShot[] = await sliceChaptersWithLLM(
         chapters.map((c) => ({ id: c.id, number: c.order + 1, content: c.content })),
         {
           isScript,
-          targetWordsPerShot: isScript ? 100 : (spec.shotDurationSeconds === 10 ? 1200 : 600),
+          // Keep one shot focused on one visual beat. The old path used a
+          // large local character budget here, which produced overloaded shots
+          // and left the planner too little room to choose a clear frame.
+          targetWordsPerShot: isScript ? 70 : spec.shotDurationSeconds === 10 ? 140 : 90,
+          minWordsPerShot: 20,
+          maxWordsPerShot: isScript ? 180 : 240,
         },
       );
 
@@ -315,7 +444,10 @@ export class VideoPipeline {
 
   // --- 步 2+5 ---
 
-  private async runStoryboardPrompt(rawShots: RawShot[]): Promise<StoryboardShot[]> {
+  private async runStoryboardPrompt(
+    rawShots: RawShot[],
+    videoGen?: VideoGenOptions,
+  ): Promise<StoryboardShot[]> {
     const { novelProjectId, novelTitle, genre, style, spec } = this.input;
     const store = useVideoStore.getState();
     const stage: VideoStage = 'storyboard_prompt';
@@ -337,6 +469,18 @@ export class VideoPipeline {
       aspectRatio: spec.aspectRatio,
       defaultShotDuration: spec.shotDurationSeconds,
       continuityContext: this.input.seriesContinuityContext,
+      allowFallback: false,
+      sourceLanguage: detectInputLanguage(rawShots.map((shot) => shot.rawText).join('\n\n')),
+      imageCapabilities: providerRouter.getImageCapabilities(
+        'storyboard',
+        videoGen?.imageModel,
+        videoGen?.imageEndpointId,
+      ),
+      videoCapabilities: providerRouter.getVideoCapabilities(
+        'clip',
+        videoGen?.model,
+        videoGen?.endpointId,
+      ),
     };
 
     pushStageContext({ novelProjectId, stage });
@@ -384,9 +528,20 @@ export class VideoPipeline {
       sourceChapterId: s.sourceChapterId,
       sourceText: s.sourceText,
       videoPrompt: s.videoPrompt,
+      imagePrompt: s.imagePrompt,
+      imageNegativePrompt: s.imageNegativePrompt,
+      videoNegativePrompt: s.videoNegativePrompt,
+      imageParameters: s.imageParameters,
+      videoParameters: s.videoParameters,
+      startState: s.startState,
+      endState: s.endState,
+      seed: s.seed,
       narration: s.narration,
       dialogue: s.dialogue,
-      characterIds: s.characters, // chapter-slicer 启发式检测的字符串列表
+      characterIds: s.visibleCharacterIds ?? s.characters,
+      visibleCharacterIds: s.visibleCharacterIds ?? s.characters,
+      offscreenCharacterIds: s.offscreenCharacterIds ?? s.offscreenCharacters ?? [],
+      characterBinding: s.characterBinding,
       location: s.location,
       mood: s.mood,
       cameraMovement: s.cameraMovement,
@@ -403,6 +558,8 @@ export class VideoPipeline {
       extractResult = await stepExtract({
         text: fullText,
         shots: shotSpecs,
+        existingCharacters: this.input.seriesCharacters,
+        allowFallback: false,
       });
     } finally {
       popStageContext();
@@ -415,15 +572,23 @@ export class VideoPipeline {
     const knownCharIds = new Set(extractResult.characters.map((c) => c.id));
     const finalShots: ShotSpec[] = (extractResult.resolvedShots ?? shotSpecs).map((sh) => ({
       ...sh,
-      characterIds: sh.characterIds.filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
+      characterIds: (sh.visibleCharacterIds ?? sh.characterIds)
+        .filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
+      visibleCharacterIds: (sh.visibleCharacterIds ?? sh.characterIds)
+        .filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
+      offscreenCharacterIds: (sh.offscreenCharacterIds ?? [])
+        .filter((id) => knownCharIds.has(id) || knownCharNames.has(id)),
     }));
 
     // 把残留的中文名 characterIds 转成对应角色 id
     const nameToId = new Map(extractResult.characters.map((c) => [c.name, c.id] as const));
     for (const sh of finalShots) {
-      sh.characterIds = sh.characterIds
+      const normalizeRefs = (refs: string[]) => refs
         .map((id) => nameToId.get(id) ?? id)
         .filter((id, idx, arr) => knownCharIds.has(id) && arr.indexOf(id) === idx);
+      sh.characterIds = normalizeRefs(sh.characterIds);
+      sh.visibleCharacterIds = normalizeRefs(sh.visibleCharacterIds ?? sh.characterIds);
+      sh.offscreenCharacterIds = normalizeRefs(sh.offscreenCharacterIds ?? []);
     }
 
     const sceneSpec: SceneSpec = {
@@ -446,6 +611,11 @@ export class VideoPipeline {
       characters: this.input.seriesCharacters,
       scenes: this.input.seriesScenes,
       styleGuide: this.input.seriesStyleGuide,
+    });
+    assertShotPlanContract(boundSpec.shots, {
+      characters: boundSpec.characters,
+      scenes: boundSpec.scenes,
+      requireAssetBindings: true,
     });
 
     const matchedChars = boundSpec.meta.matchedCharacterNames ?? [];
@@ -476,6 +646,15 @@ export class VideoPipeline {
   }
 }
 
+function describePreflightFailure(result: ReturnType<typeof collectVideoPipelinePreflight>): string {
+  const details = result.blocking.map((issue) => {
+    const provider = issue.provider ? ` ${issue.provider}/${issue.model ?? '-'}` : '';
+    const shot = issue.shotId ? ` shot=${issue.shotId}` : '';
+    return `${issue.category}:${issue.code}${shot}${provider}${issue.detail ? ` (${issue.detail})` : ''}`;
+  });
+  return `Generation preflight failed: ${details.join('; ') || 'unknown issue'}`;
+}
+
 // --- helpers ---
 
 function toPlaceholderShot(raw: RawShot): StoryboardShot {
@@ -499,13 +678,24 @@ function toPlaceholderShot(raw: RawShot): StoryboardShot {
  */
 function specToOptions(spec: VideoSpec): PipelineOptions {
   return {
+    ...DEFAULT_PIPELINE_OPTIONS,
     enableCharacterAnchor: spec.enableCharacterAnchor ?? true,
     enableSceneImage: spec.enableSceneImage ?? true,
     enableTTS: spec.enableTTS ?? true,
-    enableKeyframe: true,
-    enableI2V: true,
     enableAudioMerge: spec.enableTTS ?? true,
     enableSubtitles: spec.hardcodeSubtitles ?? true,
-    characterAnchorLimit: 5,
+  };
+}
+
+/** Keep persisted projects created before quality profiles on the old cheap path. */
+function legacyPipelineOptions(spec: VideoSpec): PipelineOptions {
+  return {
+    ...specToOptions(spec),
+    qualityProfile: 'draft',
+    keyframeCandidatesPerShot: 1,
+    videoCandidatesPerShot: 1,
+    enableVisualQualityGate: false,
+    blockOnVisualReviewUnavailable: false,
+    continuityMode: 'approved_keyframe',
   };
 }

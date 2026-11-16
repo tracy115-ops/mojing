@@ -11,7 +11,14 @@
 //   - extract: 跑步 2/3/5/6/9/10/14(视觉一致性链路)
 //   - multishot: 跑完整 14 步
 
-import type { VideoProviderId } from './providers';
+import type {
+  GenerationAttemptSnapshot,
+  GenerationResponseSnapshot,
+  GenerationRequestSnapshot,
+  ImageProviderId,
+  VideoControlMode,
+  VideoProviderId,
+} from './providers';
 
 // --- Aspect Ratio ---
 
@@ -23,9 +30,6 @@ export interface StylePreset {
   id: string;
   name: string;
   description: string;
-  promptPrefix: string;
-  promptSuffix: string;
-  negativePrompt: string;
 }
 
 export const VISUAL_STYLE_PRESETS: StylePreset[] = [
@@ -33,41 +37,26 @@ export const VISUAL_STYLE_PRESETS: StylePreset[] = [
     id: 'cinematic',
     name: '电影大片 (Cinematic)',
     description: '真实质感，电影级景深，专业构图与光影',
-    promptPrefix: 'Cinematic film shot, 8k resolution, photorealistic, highly detailed, masterwork, ',
-    promptSuffix: ', dynamic lighting, shallow depth of field, 35mm lens, volumetric light, shot on ARRI Alexa',
-    negativePrompt: 'blurry, noisy, low quality, distorted, cartoon, anime, rendered, 3d, extra limbs, bad anatomy',
   },
   {
     id: 'anime',
     name: '日漫风 (Anime Shinkai Style)',
     description: '新海诚唯美日漫，明亮天空，色彩鲜艳，情感细腻',
-    promptPrefix: 'Makoto Shinkai style anime, vibrant colors, beautiful detailed background, high quality anime art, ',
-    promptSuffix: ', emotional atmosphere, lens flare, clouds in blue sky, studio ghibli inspired',
-    negativePrompt: 'photorealistic, 3d render, live action, realistic skin, ugly, deformed, blurry',
   },
   {
     id: 'cyberpunk',
     name: '赛博朋克 (Cyberpunk Neon)',
     description: '霓虹灯影，高科技低生活，雨夜街景，金属质感',
-    promptPrefix: 'Cyberpunk style, neon glow, futuristic city, rainy night, wet reflection, ',
-    promptSuffix: ', cyan and magenta color palette, highly detailed, octane render, unreal engine 5',
-    negativePrompt: 'daylight, rural, countryside, historical, traditional, lowres, poorly drawn',
   },
   {
     id: 'ink_wash',
     name: '国风水墨 (Chinese Ink Wash)',
     description: '东方韵味，水墨留白，意境悠远，仙侠古风',
-    promptPrefix: 'Traditional Chinese ink wash painting, elegant brush strokes, ethereal atmosphere, ',
-    promptSuffix: ', artistic composition, mist and mountains, oriental aesthetics, masterpiece',
-    negativePrompt: 'western, modern, neon, saturated digital art, photorealistic, 3d render',
   },
   {
     id: 'vintage',
     name: '胶片复古 (Vintage 80s Film)',
     description: '80年代复古胶片感，暖色调，复古颗粒，怀旧氛围',
-    promptPrefix: '1980s vintage film grain, retro aesthetics, warm color grading, nostalgic, ',
-    promptSuffix: ', kodak portra 400, muted colors, soft focus, film photography',
-    negativePrompt: 'digital, ultra crisp, modern, neon, futuristic, overly saturated',
   },
 ];
 
@@ -211,6 +200,20 @@ export interface StageInvocation {
   promptPreview?: string;
   /** 触发本次调用的源 label(如 "shot 3 character[林墨]") */
   sourceLabel?: string;
+  /** 实际请求的关键参数摘要，用于确认参考素材是否真正传到 provider。 */
+  requestSummary?: string[];
+  /** Provider/model capability keys visible in the execution trace. */
+  supportedParameters?: string[];
+  /** Normalized parameter keys that survived capability validation. */
+  actualParameters?: string[];
+  /** Structured request contract, including semantic reference slots. */
+  requestSnapshot?: GenerationRequestSnapshot;
+  /** Structured provider output contract without embedding the output asset. */
+  responseSnapshot?: GenerationResponseSnapshot;
+  /** Attempts made across retries or endpoint fallback. */
+  attempts?: GenerationAttemptSnapshot[];
+  /** Explicitly marks a successful result that used a degraded path. */
+  executionStatus?: 'succeeded' | 'degraded' | 'failed';
   error?: string;
 }
 
@@ -249,12 +252,16 @@ export interface CostumeVariant {
 }
 
 /** 步 3 提取的角色 */
+export type CharacterEntityType = 'human' | 'non_human' | 'object' | 'unknown';
+
 export interface CharacterAnchor {
   id: string;                    // 'char_xxx'
   name: string;                  // '林墨'
   /** 剧本中允许使用的别名，用于绑定到同一套项目级角色资产。 */
   aliases?: string[];
   appearance: string;            // 完整外貌(gender/age/face/hair/...)
+  /** LLM 提取的视觉实体形态，供下游保持原始形态；不再从角色名称猜测。 */
+  entityType?: CharacterEntityType;
   gender?: 'male' | 'female' | 'unknown';
   ageGroup?: 'child' | 'teen' | 'young' | 'middle' | 'elder' | 'unknown';
   costumeVariants?: CostumeVariant[];
@@ -266,6 +273,8 @@ export interface CharacterAnchor {
    *  keyframe 步优先用 turnaroundImage(裁中间 1/3 正视图)做 reference,
    *  没有则回退到 portraitImage。 */
   turnaroundImage?: string;
+  /** Portrait asset used to generate turnaroundImage. Missing on legacy projects. */
+  turnaroundSourcePortrait?: string;
   /** 固定 Seed 种子（锁定后在生图/生视频时保持面容与风格高度一致） */
   seed?: number;
   /** 角色视觉一致性标签（如 LoRA Tag / 专属外观标记） */
@@ -279,6 +288,10 @@ export interface SceneAnchor {
   aliases?: string[];
   description: string;
   backgroundImage?: string;      // 步 7 产物:base64
+  /** Only environment-only backgrounds may be used as keyframe references. */
+  backgroundReferenceRole?: 'environment_only';
+  /** Generation contract version for backgrounds that are safe to reuse as references. */
+  backgroundReferenceVersion?: number;
   firstAppearShotIndex: number;
   seed?: number;
 }
@@ -290,6 +303,147 @@ export interface PropSpec {
   description: string;
 }
 
+export type ShotReferenceKind = 'character' | 'scene' | 'opening' | 'previous' | 'keyframe' | 'custom';
+
+/**
+ * Editorial intent between adjacent shots. The planner must declare whether a
+ * shot continues the same physical moment or starts a new edit segment.
+ */
+export type ShotTransition = 'cut' | 'continue';
+
+/** Human decision for one generated still or clip version. */
+export type ShotReviewStatus = 'unreviewed' | 'approved' | 'rejected';
+
+/** A persisted candidate generated for one shot. */
+/** Inspection receipt for user-supplied video; never a provider generation receipt. */
+export interface ImportedVideoReceipt {
+  kind: 'imported_video';
+  sourceAssetId: string;
+  sourceUrl: string;
+  sha256: string;
+  width: number;
+  height: number;
+  durationSeconds: number;
+  inspectedAt: string;
+  shotInputFingerprint: string;
+  visualContextFingerprint: string;
+  /** Preserve the supplied soundtrack (including silence); do not auto-dub. */
+  audio: 'preserve';
+}
+
+export interface ShotVersion {
+  importedVideo?: ImportedVideoReceipt;
+  id: string;
+  type: 'image' | 'video';
+  url: string;
+  createdAt: string;
+  /** Studio imports remain reference candidates until the shot's normal production checks pass. */
+  sourceStudioAssetId?: string;
+  /** Fingerprint of the editable shot inputs used to create this candidate. */
+  inputFingerprint?: string;
+  prompt?: string;
+  /** Seed actually used for this candidate, independent from later retries. */
+  seed?: number;
+  /** Provider facts and reference ledger captured with a video candidate. */
+  provider?: VideoProviderId;
+  model?: string;
+  durationSeconds?: number;
+  imageReferenceAssets?: ShotReferenceAsset[];
+  imageGenerationContext?: ShotGenerationExecutionContext;
+  generationPlan?: ShotGenerationPlan;
+  generationContext?: ShotGenerationExecutionContext;
+  /** Exact normalized provider request used for this candidate. */
+  requestSnapshot?: GenerationRequestSnapshot;
+  /** Provider/output facts captured for this candidate. */
+  responseSnapshot?: GenerationResponseSnapshot;
+  videoReferenceAssets?: ShotReferenceAsset[];
+  videoReferenceMode?: 'i2v' | 't2v';
+  videoControlMode?: VideoControlMode;
+  lastFrameImage?: string;
+  thumbnailUrl?: string;
+  hasAudio?: boolean;
+  qualityReview?: VideoClipQualityReview;
+  visualReview?: VideoVisualQualityReview;
+  /** Optional on legacy projects; missing means unreviewed. */
+  reviewStatus?: ShotReviewStatus;
+  reviewNote?: string;
+  reviewedAt?: string;
+}
+
+/** How the provider received the declared shot references. */
+export type ShotReferenceTransport = 'direct' | 'direct_untyped';
+
+/** Whether a shot's visible-character list was explicitly produced by an upstream stage. */
+export type ShotCharacterBinding = 'explicit' | 'inferred';
+
+/** Provider/output facts captured with a generated still. */
+export interface ShotGenerationExecutionContext {
+  provider?: string;
+  model?: string;
+  endpointId?: string;
+  seed?: number;
+  aspectRatio?: string;
+  resolution?: string;
+  fps?: number;
+  style?: string;
+  /** Temporal artifact that the video provider actually received as first frame. */
+  temporalAuthority?: 'approved_keyframe' | 'previous_tail';
+  /** The concrete rendered artifact used to carry state across shots. */
+  continuity?: {
+    source: 'previous_tail' | 'previous_keyframe';
+    sourceShotId?: string;
+    appliedTo: 'keyframe' | 'video';
+  };
+}
+
+/** A canonical image actually sent to the keyframe generator for this shot. */
+export interface ShotReferenceAsset {
+  id: string;
+  kind: ShotReferenceKind;
+  label: string;
+  imageUrl: string;
+  characterId?: string;
+  /** Whether this slot was included in the provider request for the keyframe. */
+  sentToProvider?: boolean;
+  /** Zero-based position in the exact referenceImages array sent to the provider. */
+  providerIndex?: number;
+  /** Direct image slot used for this asset. */
+  transport?: ShotReferenceTransport;
+  /** Subject ids represented by a temporal/reference frame. */
+  subjectIds?: string[];
+  /** Why a declared candidate was intentionally left out of the provider request. */
+  omittedReason?: string;
+  /** Fingerprint of the exact payload when the request recorded one. */
+  payloadFingerprint?: string;
+}
+
+export interface ShotGenerationPlan {
+  schemaVersion: 1;
+  shotId: string;
+  visibleSubjectIds: string[];
+  offscreenSubjectIds: string[];
+  sceneId?: string;
+  keyframe?: {
+    promptFingerprint?: string;
+    inputFingerprint?: string;
+    executionContext?: ShotGenerationExecutionContext;
+    requestSnapshot?: GenerationRequestSnapshot;
+    responseSnapshot?: GenerationResponseSnapshot;
+    references: ShotReferenceAsset[];
+    outputUrl?: string;
+  };
+  video?: {
+    inputFingerprint?: string;
+    executionContext?: ShotGenerationExecutionContext;
+    requestSnapshot?: GenerationRequestSnapshot;
+    responseSnapshot?: GenerationResponseSnapshot;
+    controlMode?: VideoControlMode;
+    referenceMode?: 'i2v' | 't2v';
+    references: ShotReferenceAsset[];
+    outputUrl?: string;
+  };
+}
+
 /** 步 5 产出的镜头(ShotSpec 与 StoryboardShot 字段对齐) */
 export interface ShotSpec {
   id: string;
@@ -299,8 +453,30 @@ export interface ShotSpec {
   sourceText?: string;
   /** 步 2 产物:画面描述(T2V/I2V 都用) */
   videoPrompt: string;
+  /** Text planner output for the still/keyframe generator. */
+  imagePrompt?: string;
+  /** Text planner output for provider models that support negative prompts. */
+  imageNegativePrompt?: string;
+  /** Text planner output for video models that support negative prompts. */
+  videoNegativePrompt?: string;
+  /** Whether this shot starts a new edit or continues the previous moment. */
+  transition?: ShotTransition;
+  /** Text planner output, filtered by the active image provider at execution time. */
+  imageParameters?: Record<string, unknown>;
+  /** Text planner output, filtered by the active video provider at execution time. */
+  videoParameters?: Record<string, unknown>;
+  /** 画面在本镜头第 0 秒的可见状态,用于首帧与动作承接。 */
+  startState?: string;
+  /** 画面在本镜头结束时的可见状态,用于下一镜头承接。 */
+  endState?: string;
+  /** 镜头级随机种子,可由流水线输入覆盖。 */
+  seed?: number;
   /** 步 9 产物:关键帧 base64,作为 I2V 首帧 */
   keyframeImage?: string;
+  /** Input receipt for the currently persisted keyframe. */
+  keyframeInputFingerprint?: string;
+  /** Provider binding used to create the currently persisted keyframe. */
+  keyframeGenerationContext?: ShotGenerationExecutionContext;
   /** 步 5 产物:旁白 */
   narration?: string;
   dialogue?: {
@@ -310,6 +486,14 @@ export interface ShotSpec {
   }[];
   /** 引用 CharacterAnchor.id */
   characterIds: string[];
+  /** Canonical visible-character aliases used by newer stages. */
+  visibleCharacterIds?: string[];
+  /** Characters mentioned by the script but intentionally kept outside the frame. */
+  offscreenCharacterIds?: string[];
+  /** Explicit empty lists are meaningful: they prevent later stages from guessing. */
+  characterBinding?: ShotCharacterBinding;
+  /** References emitted by planning but not matched to an extracted entity. */
+  unresolvedCharacterRefs?: string[];
   /** charId → costumeVariantId,决定该镜用哪套服装立绘 */
   costumeVariantRefs?: Record<string, string>;
   /** 引用 SceneAnchor.id */
@@ -322,22 +506,25 @@ export interface ShotSpec {
   audioTrack?: string;
   /** 单镜头工作台：手动绑定的参考图片 (最多9张) */
   customReferenceImages?: string[];
+  /** One human-approved shot image that already contains all visible subjects. */
+  manualReferenceImage?: string;
+  /** 3D previs constrains composition and camera, while character assets remain the identity authority. */
+  previsReferenceImage?: string;
+  previsWorldId?: string;
+  /** 关键帧生成时实际使用的角色/场景参考图,仅用于追溯和精修展示。 */
+  referenceAssets?: ShotReferenceAsset[];
+  /** Canonical, persisted input/output contract shared by keyframe and video stages. */
+  generationPlan?: ShotGenerationPlan;
   /** 单镜头工作台：手动绑定的参考视频 (最多3条) */
   customReferenceVideos?: string[];
   /** 单镜头工作台：手动指定的自定义音频 */
   customAudioUrl?: string;
   /** 单镜头生成历史版本库 (版本画廊) */
-  versionHistory?: Array<{
-    id: string;
-    type: 'image' | 'video';
-    url: string;
-    createdAt: string;
-    prompt?: string;
-    model?: string;
-    durationSeconds?: number;
-  }>;
+  versionHistory?: ShotVersion[];
   /** 当前选定生效的版本 ID */
   selectedVersionId?: string;
+  /** Human-approved version used by the assembly stage. */
+  lockedVersionId?: string;
 }
 
 export type CameraMovementOption =
@@ -409,7 +596,37 @@ export interface PipelineOptions {
   enableSubtitles: boolean;
   /** 角色立绘上限(超出未选的角色其描述拼到 prompt 里) */
   characterAnchorLimit: number;
+  /** Sample generated frames with a declared multimodal LLM before assembly. */
+  enableVisualQualityGate?: boolean;
+  /** Workflow policy, independent from story content and provider parameters. */
+  qualityProfile?: 'draft' | 'balanced' | 'quality';
+  /** Number of still candidates to create per shot before the keyframe gate. */
+  keyframeCandidatesPerShot?: number;
+  /** Number of video candidates to create per shot before the video gate. */
+  videoCandidatesPerShot?: number;
+  /** Quality mode can require a real visual review before assembly. */
+  blockOnVisualReviewUnavailable?: boolean;
+  /** Temporal authority for matching scene/subject shot segments. */
+  continuityMode?: 'approved_keyframe' | 'previous_tail';
 }
+
+/** Default quality-oriented options for the novel video pipeline. */
+export const DEFAULT_PIPELINE_OPTIONS: PipelineOptions = {
+  enableCharacterAnchor: true,
+  enableSceneImage: true,
+  enableTTS: true,
+  enableKeyframe: true,
+  enableI2V: true,
+  enableAudioMerge: true,
+  enableSubtitles: true,
+  characterAnchorLimit: 5,
+  enableVisualQualityGate: true,
+  qualityProfile: 'quality',
+  keyframeCandidatesPerShot: 2,
+  videoCandidatesPerShot: 2,
+  blockOnVisualReviewUnavailable: true,
+  continuityMode: 'previous_tail',
+};
 
 /** Direct modal 三种模式的预设开关 */
 export const DIRECT_MODE_PRESETS: Record<DirectSourceMode, PipelineOptions> = {
@@ -422,6 +639,12 @@ export const DIRECT_MODE_PRESETS: Record<DirectSourceMode, PipelineOptions> = {
     enableAudioMerge: false,
     enableSubtitles: false,
     characterAnchorLimit: 0,
+    qualityProfile: 'draft',
+    keyframeCandidatesPerShot: 1,
+    videoCandidatesPerShot: 1,
+    enableVisualQualityGate: false,
+    blockOnVisualReviewUnavailable: false,
+    continuityMode: 'approved_keyframe',
   },
   extract: {
     enableCharacterAnchor: true,
@@ -432,6 +655,12 @@ export const DIRECT_MODE_PRESETS: Record<DirectSourceMode, PipelineOptions> = {
     enableAudioMerge: false,
     enableSubtitles: false,
     characterAnchorLimit: 5,
+    qualityProfile: 'quality',
+    keyframeCandidatesPerShot: 2,
+    videoCandidatesPerShot: 2,
+    enableVisualQualityGate: true,
+    blockOnVisualReviewUnavailable: true,
+    continuityMode: 'previous_tail',
   },
   multishot: {
     enableCharacterAnchor: true,
@@ -442,6 +671,12 @@ export const DIRECT_MODE_PRESETS: Record<DirectSourceMode, PipelineOptions> = {
     enableAudioMerge: true,
     enableSubtitles: true,
     characterAnchorLimit: 5,
+    qualityProfile: 'quality',
+    keyframeCandidatesPerShot: 2,
+    videoCandidatesPerShot: 2,
+    enableVisualQualityGate: true,
+    blockOnVisualReviewUnavailable: true,
+    continuityMode: 'previous_tail',
   },
 };
 
@@ -453,7 +688,19 @@ export interface StoryboardShot {
   sourceChapterId?: string;
   sourceText: string;
   videoPrompt: string;
+  /** 画面在本镜头第 0 秒的可见状态。 */
+  startState?: string;
+  /** 画面在本镜头结束时的可见状态。 */
+  endState?: string;
+  /** 镜头级随机种子。 */
+  seed?: number;
   imagePrompt?: string;
+  imageNegativePrompt?: string;
+  videoNegativePrompt?: string;
+  /** Whether this shot starts a new edit or continues the previous moment. */
+  transition?: ShotTransition;
+  imageParameters?: Record<string, unknown>;
+  videoParameters?: Record<string, unknown>;
   durationSeconds: number;
   narration?: string;
   dialogue?: {
@@ -461,8 +708,19 @@ export interface StoryboardShot {
     text: string;
     emotion?: string;
   }[];
+  /** Legacy visible-character references (names or placeholder ids). */
   characters: string[];
+  /** Visible-character references emitted by the storyboard planner. */
+  visibleCharacters?: string[];
+  /** Characters mentioned in dialogue or narration but excluded from the frame. */
+  offscreenCharacters?: string[];
   characterIds?: string[];
+  visibleCharacterIds?: string[];
+  offscreenCharacterIds?: string[];
+  characterBinding?: ShotCharacterBinding;
+  unresolvedCharacterRefs?: string[];
+  /** One human-approved shot image that already contains all visible subjects. */
+  manualReferenceImage?: string;
   location?: string;
   mood?: string;
   cameraMovement?: string;
@@ -471,16 +729,42 @@ export interface StoryboardShot {
 // --- Generated Assets ---
 
 export interface GeneratedClip {
+  importedVideo?: ImportedVideoReceipt;
   shotId: string;
+  /** Candidate version from which this clip was selected; preserved through audio post-processing. */
+  shotVersionId?: string;
   videoUrl: string;
   thumbnailUrl?: string;
+  /** FFmpeg 提取的实际视频尾帧，用于下一镜首帧承接。 */
+  lastFrameImage?: string;
   durationSeconds: number;
   provider: VideoProviderId;
   model: string;
   hasAudio: boolean;
   generatedAt: string;
+  /** Seed actually sent for this candidate, when the provider accepts one. */
+  seed?: number;
+  /** Fingerprint of the editable shot inputs used by the provider request. */
+  inputFingerprint?: string;
+  /** Provider/output facts used to create this candidate. */
+  generationContext?: ShotGenerationExecutionContext;
+  /** Exact normalized provider request used for this clip. */
+  requestSnapshot?: GenerationRequestSnapshot;
+  /** Provider/output facts captured for this clip. */
+  responseSnapshot?: GenerationResponseSnapshot;
   /** 步 9 产物:关键帧 base64(若有) */
   keyframeImage?: string;
+  /** 视频 provider 本次实际收到的参考图，按发送顺序保留来源。 */
+  videoReferenceAssets?: ShotReferenceAsset[];
+  /** 本次最终成功请求使用的模式；I2V 失败回退时明确记录为 T2V。 */
+  videoReferenceMode?: 'i2v' | 't2v';
+  /** Exact provider control semantic used for this clip. */
+  videoControlMode?: VideoControlMode;
+  videoReferenceFallbackReason?: string;
+  /** Deterministic technical gate recorded before a clip can enter post-production. */
+  qualityReview?: VideoClipQualityReview;
+  /** Multimodal review of sampled frames against the shot contract. */
+  visualReview?: VideoVisualQualityReview;
   /** 步 8/11 产物:音轨路径/URL */
   audioTrack?: string;
   /** 来源:'novel' | 'direct' */
@@ -522,11 +806,15 @@ export interface VideoProjectState {
   spec: VideoSpec;
   /** 用户选择的步骤开关 */
   options?: PipelineOptions;
+  /** Provider/model choices fixed for this project's generation run. */
+  executionBinding?: VideoExecutionBinding;
   stages: Record<VideoStage, VideoStageState>;
   currentStage: VideoStage;
   shots: StoryboardShot[];
   /** SceneSpec(步 3 产物,跨步复用) */
   sceneSpec?: SceneSpec;
+  /** 用户在成片时间轴上的非破坏性编辑，随项目持久化。 */
+  timelineState?: VideoTimelineState;
   anchorImages: AnchorImage[];
   clips: GeneratedClip[];
   audios: GeneratedAudio[];
@@ -537,6 +825,80 @@ export interface VideoProjectState {
   error?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VideoTimelineTrim {
+  startSeconds: number;
+  endSeconds: number;
+}
+
+export interface VideoTimelineState {
+  /** Ordered shot ids used for composition. Missing ids are appended in scene order. */
+  shotOrder: string[];
+  /** Shot ids excluded from the final composition without deleting their generated assets. */
+  disabledShotIds: string[];
+  /** Non-destructive trim values applied during composition. */
+  trims: Record<string, VideoTimelineTrim>;
+  /** Mixed clip audio volume, 0..1. */
+  dialogueVolume: number;
+}
+
+export type VideoQualityCheckStatus = 'pass' | 'warning' | 'fail';
+
+export interface VideoQualityCheck {
+  id: 'asset' | 'reference_mode' | 'reference_payload' | 'temporal_authority' | 'continuity_handoff' | 'duration' | 'tail_frame' | 'decoded_picture' | 'aspect_ratio';
+  status: VideoQualityCheckStatus;
+  message: string;
+}
+
+export interface VideoClipQualityReview {
+  status: 'passed' | 'warning' | 'failed';
+  score: number;
+  reviewedAt: string;
+  checks: VideoQualityCheck[];
+}
+
+export type VideoVisualReviewStatus = 'passed' | 'warning' | 'failed' | 'unavailable';
+export type VideoVisualCheckStatus = 'pass' | 'warning' | 'fail';
+export type VideoVisualCheckId =
+  | 'subject_count'
+  | 'subject_identity'
+  | 'scene_match'
+  | 'composition'
+  | 'temporal_consistency';
+
+export interface VideoVisualQualityCheck {
+  id: VideoVisualCheckId;
+  status: VideoVisualCheckStatus;
+  score: number;
+  message: string;
+  evidence?: string;
+}
+
+export interface VideoVisualQualityReview {
+  status: VideoVisualReviewStatus;
+  score?: number;
+  reviewedAt: string;
+  provider?: string;
+  model?: string;
+  frameCount: number;
+  checks: VideoVisualQualityCheck[];
+  summary?: string;
+  error?: string;
+}
+
+export interface VideoExecutionBinding {
+  image?: {
+    provider: ImageProviderId;
+    model: string;
+    endpointId?: string;
+  };
+  video: {
+    provider: VideoProviderId;
+    model: string;
+    endpointId?: string;
+  };
+  createdAt: string;
 }
 
 export interface VideoSpec {
@@ -570,10 +932,11 @@ export const VIDEO_PIPELINE_STAGES: VideoStage[] = [
   'extraction',
   'character_anchor',
   'scene_image',
+  'keyframe_image',
   'voice_assignment',
   'tts',
-  'keyframe_image',
   'video_generation',
+  'video_review',
   'audio_merge',
   'composing',
 ];
@@ -632,19 +995,6 @@ export interface StageInputFieldDef {
 /** 各 stage 可编辑的字段配置。空数组 = 该 stage 暂不支持改输入(只能纯重跑)。
  *  字段 label 走 i18n,key 格式 'video.pipeline.field.<key>'。 */
 export const STAGE_INPUT_FIELDS: Partial<Record<VideoStage, StageInputFieldDef[]>> = {
-  audio_merge: [
-    {
-      key: 'bgmStyle',
-      label: 'video.pipeline.field.bgmStyle',
-      type: 'radio',
-      options: [
-        { value: 'epic_action', labelKey: '热血打斗/宏大爆发 (Action)' },
-        { value: 'suspense_thriller', labelKey: '悬疑惊悚/阴谋潜行 (Suspense)' },
-        { value: 'warm_emotional', labelKey: '治愈温馨/日常相伴 (Warm)' },
-        { value: 'cyberpunk', labelKey: '赛博朋克/科幻电音 (Cyberpunk)' },
-      ],
-    },
-  ],
   storyboard_prompt: [
     { key: 'prompt', label: 'video.pipeline.field.prompt', type: 'textarea' },
   ],

@@ -1,160 +1,104 @@
-# 15. Doubao (Seedance 2.0) Video Provider
+# 15. Seedance 视频 Provider
 
-> 状态:已实现
-> 关联代码:`src/services/providers/video-adapters.ts::DoubaoVideoProvider`
-> 官方文档:
-> - API 参考: https://www.volcengine.com/docs/82379/1520757
-> - 模型列表: https://www.volcengine.com/docs/82379/1330310
+更新日期：2026-11-16。关联代码：`src/services/providers/video-adapters.ts::DoubaoVideoProvider`。
 
-## 背景
+## 接入状态
 
-接入火山方舟(Volcano Ark / 火山引擎方舟)**Seedance 2.0** 视频生成模型,用于替代/补充 Kling/Runway/Vidu。
+已实现火山方舟异步视频生成协议，支持文生视频、首帧、首尾帧和图片／音频／视频多模态参考。
+本次验证为模拟 HTTP 的请求／响应契约测试，尚未用真实账号调用 Seedance。
 
-民间常叫"小云雀流水线",实际后端是火山方舟的 Doubao Seedance 系列模型,与豆包 LLM **共用 API Key**(Bearer token)。
+小云雀是产品或渠道名称，不能直接认定其与火山方舟公开 API 相同。
+若使用小云雀或第三方中转服务，需要核对该渠道的鉴权、模型名称、任务接口及素材格式，
+再增加独立适配器或明确兼容配置。
 
-## 模型 ID
+## 模型与当前实现的约束
 
-| Model ID | 用途 | 备注 |
-|---|---|---|
-| `doubao-seedance-2-0-260128` | 标准版,1080p,默认 | 公开 API 2026-04-02 开放,`260128` = 版本日期戳(2026-01-28) |
-| `doubao-seedance-2-0-fast-260128` | 极速版,720p | 更低延迟、更低成本 |
+| Model ID | 时长 | 当前支持的分辨率 |
+| --- | --- | --- |
+| `doubao-seedance-2-5-260628` | 整数 4–30 秒 | 720P／1080P |
+| `doubao-seedance-2-5-flash-261115` | 整数 4–30 秒 | 720P |
+| `doubao-seedance-2-0-260128` | 整数 4–15 秒 | 720P／1080P |
+| `doubao-seedance-2-0-fast-260128` | 整数 4–15 秒 | 720P |
 
-**注意:**
-- 2.0 系列**没有** `pro` / `lite` 后缀(`pro` / `lite` 只在 1.0 系列)
-- Seedance 2.5 在 2026-06-23 FORCE 大会发布,7 月正式上线,届时追加 `doubao-seedance-2-5-*` 即可
+这些 ID 已按官方模型列表核对，账号能否调用取决于开通状态与权限。
+官方后续提供的更高规格不等于本项目已支持；当前界面没有启用 4K 视频。
+默认模型保留现有配置，新增建议模型不会自动切换账号或产生付费生成。
 
-## API 端点
+## 设置步骤
 
+1. 在「设置 → 模型 Provider」新增或编辑 `Doubao Video` 视频接口。
+2. Base URL 填 `https://ark.cn-beijing.volces.com`，也支持完整的 `/api/v3` 前缀。
+3. 配置有视频模型调用权限的 Ark API Key，并填写账号实际可用的模型列表。
+4. 选择视频主接口和默认模型，创建项目时绑定；单镜工作台可切换该接口已配置的模型。
+
+LLM 和视频可以使用同一个有相应权限的 Ark Key，但应用内是独立 Provider 配置，
+不要假定配置了文本接口就会自动配置视频接口。密钥只填设置，不写入文档或测试。
+
+## 请求协议
+
+```text
+POST /api/v3/contents/generations/tasks
+GET  /api/v3/contents/generations/tasks/{id}
+Authorization: Bearer <ARK_API_KEY>
 ```
-POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks
-```
 
-异步任务模式:**提交 → 轮询 → 拉取结果**。
+创建返回 `{ id }`；查询成功时从 `content.video_url` 读取视频。
+终态为 `succeeded`／`success` 时必须存在视频 URL；`failed`／`error`／`cancelled` 返回失败原因。
+流水线下载持久化结果，避免依赖临时 CDN URL。
 
-- 提交:返回 `{ id: "..." }`
-- 查询:`GET /api/v3/contents/generations/tasks/{id}` → `data.status` ∈ `running` / `succeeded` / `failed`
-- 结果:`data.content.video_url`(临时 CDN URL,需立即下载)
-
-## 鉴权
-
-Bearer token,与 Doubao LLM provider 共用:
-
-```
-Authorization: Bearer ${ARK_API_KEY}
-```
-
-## 请求体
-
-```jsonc
+```json
 {
-  "model": "doubao-seedance-2-0-260128",
+  "model": "doubao-seedance-2-5-260628",
   "content": [
-    { "type": "text", "text": "prompt..." },
-    { "type": "image_url", "image_url": { "url": "https://..." }, "role": "first_frame" }
+    { "type": "text", "text": "店员拿起书册，缓慢递给来客；镜头平稳跟随。" },
+    { "type": "image_url", "image_url": { "url": "https://example.com/first.png" }, "role": "first_frame" },
+    { "type": "image_url", "image_url": { "url": "https://example.com/last.png" }, "role": "last_frame" }
   ],
-  "duration": 5,            // [4, 15] 秒
-  "ratio": "16:9",          // 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive
-  "resolution": "1080p",    // 480p / 720p / 1080p(fast 不支持 1080p)
-  "generate_audio": false,  // 我们的 TTS 流水线处理音频,关掉避免冲突
-  "watermark": false
+  "duration": 8,
+  "ratio": "16:9",
+  "resolution": "1080p",
+  "generate_audio": false,
+  "watermark": false,
+  "seed": 1234
 }
 ```
 
-### `content` 数组 — mode 选择关键
+项目使用现有 TTS 和合成流程，默认关闭模型原生音频。自由创作工作台可显式启用原生声音。
 
-| 模式 | content 组成 |
-|---|---|
-| **T2V**(文生视频) | `[{ type: 'text', text }]` |
-| **I2V first_frame**(首帧驱动,默认) | `text` + `{ type: 'image_url', image_url: { url }, role: 'first_frame' }` |
-| **I2V last_frame**(尾帧驱动) | role 改成 `'last_frame'` |
-| 视频编辑(参考素材) | role 改成 `'reference_image'` |
+| 控制方式 | `content` 中的图片角色 |
+| --- | --- |
+| 纯文本 | 无图片 |
+| 首帧驱动 | `first_frame` |
+| 首尾帧驱动 | `first_frame` + `last_frame` |
+| 图片参考 | 2.0 最多 9 张、2.5 最多 30 张、2.5 Flash 最多 10 张 `reference_image`，提示词用 `@图像1` 等明确对应主体 |
+| 音频参考 | `audio_url` + `reference_audio`；2.0 最多 3 段、2.5 最多 10 段、2.5 Flash 最多 5 段 |
+| 视频参考 | `video_url` + `reference_video`；数量与音频相同，使用公网链接或 Ark 素材 ID |
 
-### 关键约束
+首尾帧与主体参考遵循独立控制方式，不把人物参考图当作时间首帧。
+参考图超限会在提交前报错，不静默截断。图片可使用公网 URL 或 data URI；本地文件由上层读取为 data URI。
+音频支持 MP3／WAV 的 URL／Data URI；本地 MP4／MOV 可经 [S3 兼容上传](./22-media-upload.md) 获得临时读取链接，视频请求发送该链接。WebM 需先用桌面 MP4 转换，不直接作为受支持格式提交。该上传流程尚未注册 Ark 私有 `asset://` 素材。
+2.0 音频不能单独使用，2.5 支持音频单独使用。具体限制与验证见 [18-media-editing-and-shot-transfer.md](./18-media-editing-and-shot-transfer.md)。
 
-- **duration**:整数,范围 `[4, 15]` 秒。Adapter `clampDuration` 做了 clamp。
-- **ratio**:必须从枚举里选,不能传任意比例。Adapter `pickRatio` 用 `TOLERANCE=0.05` 匹配最接近的标准比例,匹配不到 fallback 到 `'adaptive'`。
-- **resolution**:fast 版最大 720p,pro 版最大 1080p。
-- **first_frame 图片必须是 URL**:`data:` URI 接受,但本地文件 URL(`file:///`)后端拉不到。Adapter `normalizeImageRef` 做了 base64 → data URI 转换,纯本地路径会抛清晰错误。
+## 参数与结果记录
 
-## Adapter 实现
+时长根据当前模型归一到合法整数范围。标准模型按请求宽高选择原生尺寸，
+Fast／Flash 强制使用 720P。真实响应包含宽高或时长时优先记录响应；
+没有时使用本次提交的原生参数，不把请求的 1080P 错记为极速模型的实际产出。
+请求预览和实际提交使用同一套分辨率与时长选择逻辑。
 
-`DoubaoVideoProvider extends BaseVideoProvider`(~230 行,在 `video-adapters.ts`)。
+模型能力声明位于 `provider-capabilities.ts`，负责约束 UI、参数过滤和参考模式；
+适配器负责转换原生协议。新增模型需同时核对两者，不能只追加一个模型名。
 
-### 关键内部方法
+## 验证
 
-```typescript
-private normalizeImageRef(raw: string): string
-// 三种输入:
-//   - http(s):// / data: / asset: → 原样
-//   - base64 字符串(长度>100) → 补全为 data:image/png;base64,...
-//   - 本地文件路径 → 抛错(后端拉不到)
+`npm.cmd run test:capabilities` 与 `npm.cmd run test:video-reference-payloads` 覆盖：
 
-private pickRatio(width?: number, height?: number): string
-// 用 TOLERANCE=0.05 在标准比例表里查,匹配不到返回 'adaptive'
+- 标准、Fast、2.5 Flash 的时长与分辨率约束。
+- 首尾帧都进入真实提交的 `content`，主体参考的编号对应及超限处理。
+- 2.5 的 30 秒请求和随机种子透传。
+- 结果尺寸采用实际响应或提交档位。
 
-private clampDuration(seconds?: number): number
-// [4, 15] clamp,非整数 round
+真实账号的成功生成、下载、画质和费用仍需实际联调验证。
 
-private async pollUntilComplete(taskId: string, startTime: number): Promise<VideoGenerateResponse>
-// 120 polls × 5s = 10 min max,3 次连续 error → 失败
-```
-
-### `generate(request)` 主流程
-
-```typescript
-1. 拼 submitUrl:如果 endpoint.baseUrl 已含 /api/vN 直接追加 /contents/generations/tasks,
-   否则追加 /api/v3/contents/generations/tasks
-2. content 数组:prompt 进 text;I2V 时把 referenceImages[0] 用 normalizeImageRef 转,
-   放 image_url 带 role='first_frame'
-3. body:duration/ratio/generate_audio=false/watermark=false
-4. 根据 width×height 选 resolution(fast 强制 720p;≥1920×1080 → 1080p;≥1280×720 → 720p;否则 480p)
-5. POST submit → 拿 task id → pollUntilComplete
-```
-
-### `checkStatus(taskId)` 单次查询
-
-```typescript
-GET /api/v3/contents/generations/tasks/{taskId}
-→ data.status:
-   'succeeded'/'success' → completed, video_url = data.content.video_url
-   'failed'/'error'/'cancelled' → failed
-   其他 → running
-```
-
-## 注册位置
-
-| 文件 | 改动 |
-|---|---|
-| `src/types/providers.ts` | `VideoProviderId` 加 `'doubao-video'` |
-| `src/stores/providerStore.ts` | `PROVIDER_CATEGORY['doubao-video']: 'video'` |
-| `src/components/Settings/ProviderSettings.tsx` | `VIDEO_PROVIDER_OPTIONS` 加 entry |
-| `src/components/Settings/ProviderSettings.tsx` | `PROVIDER_MODEL_SUGGESTIONS['doubao-video']` 加两个 Seedance ID |
-| `src/components/Settings/ProviderSettings.tsx` | `PROVIDER_DEFAULT_URLS['doubao-video']: 'https://ark.cn-beijing.volces.com'` |
-| `src/services/providers/video-adapters.ts` | `DoubaoVideoProvider` 类 + factory `case 'doubao-video'` |
-| `src/i18n/locales/zh-CN.ts` / `en-US.ts` | `provider.provider.doubao-video` |
-
-## 与 LLM 共用 Key
-
-Doubao LLM provider 和 Doubao Video provider **共用一个 Ark API Key**,在「设置 → 模型 Provider」里配一次即可。两者端点都是 `https://ark.cn-beijing.volces.com`,只是 path 不同(LLM 走 `/api/v3/chat/completions`,Video 走 `/api/v3/contents/generations/tasks`)。
-
-## 与流水线的整合
-
-### 视频生成阶段(`step-video-gen.ts`)
-
-`providerRouter.generateVideo` 根据 endpoint 配置路由到 `DoubaoVideoProvider.generate()`。
-
-- I2V:shot.keyframeImage 经 `readAsDataUri` 转 data URI 喂入(Seedance 后端能读 base64)
-- T2V:只有 prompt,无 image_url
-
-**返回的 clip.hasAudio = false**(因为 `generate_audio: false`),这影响下游 audio_merge 的策略选择,详见 [14-audio-merge-fix.md](./14-audio-merge-fix.md)。
-
-### 音视合并阶段(`step-audio-merge.ts` + Rust `ffmpeg_merge_audio`)
-
-视频本身无音轨 → Rust 走 mux-only 分支(`-map 0:v -map 1:a -shortest`),把 TTS 直接接进视频。**必须加 `-shortest`**,否则 TTS 比视频长时输出文件损坏。
-
-## 后续可扩展
-
-- **Seedance 2.5 接入**:7 月正式上线后,在 `PROVIDER_MODEL_SUGGESTIONS` 追加 `doubao-seedance-2-5-*`,Adapter 内部逻辑无需改(只是 model ID)。
-- **首尾帧 I2V**:`content` 数组支持同时放 first_frame + last_frame,可用于"关键帧 → 末帧"的双向驱动。需要在 `VideoGenerateRequest` 加 `referenceLastFrame` 字段,Adapter 里 push 一个 `role: 'last_frame'` 项。当前只用了首帧。
-- **视频编辑模式**:`role: 'reference_image'` 可用于"参考视频生成新视频",目前 pipeline 没用到。
-- **fractional seconds**:`frames` 参数(格式 `25+4n`)可生成 4-15 秒之间的非整数时长,目前用 `duration` 整数已够。
+官方依据：[视频生成 API](https://www.volcengine.com/docs/82379/1520757)、
+[模型列表](https://www.volcengine.com/docs/82379/1330310)。

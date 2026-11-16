@@ -1,0 +1,46 @@
+.video-timeline-workspace {
+  box-sizing: border-box;
+}
+
+.video-timeline-preview-grid {
+  min-width: 0;
+}
+
+.video-timeline-preview-grid > .ant-card {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .video-timeline-workspace {
+    padding: 8px !important;
+  }
+
+  .video-timeline-preview-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    height: auto !important;
+  }
+
+  .video-timeline-preview-grid > .ant-card {
+    height: 270px !important;
+    min-height: 230px;
+  }
+}
+
+@media (max-width: 560px) {
+  .video-timeline-workspace {
+    gap: 8px !important;
+  }
+
+  .video-timeline-workspace > div:first-of-type {
+    align-items: flex-start !important;
+    flex-direction: column;
+  }
+
+  .video-timeline-workspace > div:first-of-type > .ant-space {
+    width: 100%;
+  }
+
+  .video-timeline-workspace > div:first-of-type > .ant-space:last-child {
+    justify-content: flex-start;
+  }
+}

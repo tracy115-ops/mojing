@@ -1,0 +1,5 @@
+.studio-commerce-layout { display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.studio-commerce-brief > label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.studio-commerce-reference { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: center; gap: 10px; }
+.studio-commerce-production { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@media (max-width: 1000px) { .studio-commerce-layout { grid-template-columns: minmax(0, 1fr); }.studio-commerce-brief { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } }

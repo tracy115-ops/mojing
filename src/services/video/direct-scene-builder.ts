@@ -14,6 +14,7 @@ import { stepRewrite } from './core/step-rewrite';
 import { stepStoryboard } from './core/step-storyboard';
 import { stepExtract } from './core/step-extract';
 import { estimateSmartShotDuration } from './core/duration-estimator';
+import { providerRouter } from '@/services/providers';
 
 export interface DirectBuildContext {
   aspectRatio: AspectRatio;
@@ -22,6 +23,11 @@ export interface DirectBuildContext {
   style?: string;
   /** 剧情承接信息，只注入分镜规划提示词。 */
   continuityContext?: string;
+  /** Pin planning and execution to the same configured endpoints. */
+  imageEndpointId?: string;
+  imageModel?: string;
+  videoEndpointId?: string;
+  videoModel?: string;
 }
 
 /**
@@ -61,6 +67,7 @@ export async function buildSceneFromPrompt(
     const extract = await stepExtract({
       text: prompt,
       shots: [singleShot],
+      allowFallback: false,
     });
 
     return {
@@ -78,6 +85,7 @@ export async function buildSceneFromPrompt(
     const extract = await stepExtract({
       text: prompt,
       shots: structuredShots,
+      allowFallback: false,
     });
     return {
       characters: extract.characters,
@@ -96,11 +104,23 @@ export async function buildSceneFromPrompt(
     targetDurationSeconds: ctx.targetDurationSeconds,
     style: ctx.style,
     continuityContext: ctx.continuityContext,
+    allowFallback: false,
+    imageCapabilities: providerRouter.getImageCapabilities(
+      'storyboard',
+      ctx.imageModel,
+      ctx.imageEndpointId,
+    ),
+    videoCapabilities: providerRouter.getVideoCapabilities(
+      'clip',
+      ctx.videoModel,
+      ctx.videoEndpointId,
+    ),
   });
 
   const extract = await stepExtract({
     text: prompt,
     shots: storyboard.shots,
+    allowFallback: false,
   });
 
   return {
@@ -124,7 +144,7 @@ export function parseStructuredPromptShots(prompt: string, ctx: DirectBuildConte
   if (blocks.length === 0) return null;
 
   return blocks.map((block, index) => {
-    // 匹配类似 "女生台词：大师，我有一事相求！" 或 "猫咪台词: 竹篮打水一场空"
+    // Match a speaker label followed by a dialogue delimiter.
     const linePattern = /(?:^|[，。\s\n])([一-龥A-Za-z0-9_]{1,8})(?:台词|对白)?[:：]\s*([“"「『]?[^，。\n”"」』]{1,200}[”"」』]?)/g;
     const dialogue: { speaker: string; text: string }[] = [];
     let lm: RegExpExecArray | null;

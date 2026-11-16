@@ -1,0 +1,263 @@
+.video-production-overview {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 24px 30px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.video-production-overview-header,
+.video-production-overview-next,
+.video-production-overview-section-heading,
+.video-production-overview-next-title,
+.video-production-overview-quality {
+  display: flex;
+  align-items: center;
+}
+
+.video-production-overview-header,
+.video-production-overview-quality {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.video-production-overview-header h4.ant-typography {
+  margin: 3px 0 4px;
+  color: var(--text-primary);
+}
+
+.video-production-overview-eyebrow {
+  display: block;
+  color: var(--accent-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.video-production-overview-header .ant-typography-secondary,
+.video-production-overview-section-heading .ant-typography-secondary,
+.video-production-overview-quality > div:first-child .ant-typography-secondary {
+  display: block;
+  font-size: 12px;
+}
+
+.video-production-overview-next {
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, var(--border-base));
+  border-left: 3px solid var(--accent-primary);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-container));
+}
+
+.video-production-overview-next-copy {
+  min-width: 0;
+}
+
+.video-production-overview-next-title {
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.video-production-overview-next-title h5.ant-typography {
+  margin: 0 0 2px;
+}
+
+.video-production-overview-next-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-primary) 15%, var(--bg-tertiary));
+  color: var(--accent-primary);
+  font-size: 17px;
+}
+
+.video-production-overview > .ant-alert {
+  border-radius: var(--radius-sm);
+}
+
+.video-production-overview-section,
+.video-production-overview-quality {
+  padding: 16px;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-container);
+}
+
+.video-production-overview-section-heading {
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.video-production-overview-section-heading .ant-progress {
+  width: min(220px, 35%);
+}
+
+.video-production-overview-phases {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.video-production-overview-phase {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-height: 124px;
+  padding: 12px 10px;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.video-production-overview-phase:hover,
+.video-production-overview-phase:focus-visible,
+.video-production-overview-phase.is-next {
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, var(--border-base));
+  outline: none;
+  background: color-mix(in srgb, var(--accent-primary) 6%, var(--bg-container));
+}
+
+.video-production-overview-phase.is-done .video-production-overview-phase-status {
+  color: var(--accent-success);
+}
+
+.video-production-overview-phase.is-blocked .video-production-overview-phase-status {
+  color: var(--accent-warning);
+}
+
+.video-production-overview-phase-number,
+.video-production-overview-phase-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-production-overview-phase-number {
+  width: 23px;
+  height: 23px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-production-overview-phase-icon {
+  height: 23px;
+  color: var(--accent-primary);
+  font-size: 15px;
+}
+
+.video-production-overview-phase-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.video-production-overview-phase-copy strong,
+.video-production-overview-phase-copy small,
+.video-production-overview-phase-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.video-production-overview-phase-copy strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.video-production-overview-phase-copy small {
+  min-height: 28px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.video-production-overview-phase-copy > span {
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.video-production-overview-phase-copy > span .anticon {
+  margin: 0 3px;
+  color: var(--text-tertiary);
+}
+
+.video-production-overview-phase-status {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.video-production-overview-quality {
+  align-items: flex-start;
+}
+
+.video-production-overview-quality-items {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.video-production-overview-quality-items .ant-tag {
+  margin: 0;
+}
+
+@media (max-width: 1080px) {
+  .video-production-overview-phases {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .video-production-overview {
+    padding: 16px 12px 24px;
+  }
+
+  .video-production-overview-header,
+  .video-production-overview-next,
+  .video-production-overview-quality {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .video-production-overview-next .ant-btn {
+    width: 100%;
+  }
+
+  .video-production-overview-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .video-production-overview-section-heading .ant-progress {
+    width: 100%;
+  }
+
+  .video-production-overview-phases {
+    grid-template-columns: 1fr;
+  }
+
+  .video-production-overview-quality-items {
+    justify-content: flex-start;
+  }
+}

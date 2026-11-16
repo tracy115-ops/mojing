@@ -4,8 +4,17 @@ import type {
   VideoProviderId,
   ApiEndpoint,
 } from '@/types/providers';
-import { BaseVideoProvider } from './base';
-import { fetch as httpFetch } from './fetch-proxy';
+import { BaseVideoProvider } from './base.ts';
+import { fetch as httpFetch } from './fetch-proxy.ts';
+import { applyUnconsumedGenerationParameters } from './parameter-transport.ts';
+import { getVideoGenerationCapabilities } from './provider-capabilities.ts';
+import { validateVideoMediaReferences } from './video-media-contract.ts';
+
+function videoControlModeForRequest(request: VideoGenerateRequest): 'text' | 'reference' | 'keyframe' {
+  return request.controlMode ?? (request.firstFrame || request.lastFrame ? 'keyframe'
+    : request.subjectReferences?.length || request.audioReferences?.length || request.videoReferences?.length ? 'reference'
+    : request.referenceImages?.length ? 'keyframe' : 'text');
+}
 
 /**
  * 把 data URI 形式的图片字符串剥成纯 base64。
@@ -71,6 +80,121 @@ function pickAgnesFramesTier(durationSeconds?: number): { numFrames: number; fra
   return closest;
 }
 
+function pickStandardAspectRatio(width?: number, height?: number, explicit?: string): string {
+  const supported = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const;
+  if (explicit && supported.includes(explicit as typeof supported[number])) return explicit;
+  if (!width || !height) return '16:9';
+
+  const ratio = width / height;
+  return supported.reduce((closest, candidate) => {
+    const [w, h] = candidate.split(':').map(Number);
+    const [closestW, closestH] = closest.split(':').map(Number);
+    return Math.abs(w / h - ratio) < Math.abs(closestW / closestH - ratio) ? candidate : closest;
+  }, supported[0]);
+}
+
+function dimensionsForAspect(
+  aspectRatio: string | undefined,
+  shortEdge: number,
+): { width: number; height: number } {
+  switch (aspectRatio) {
+    case '9:16':
+      return { width: shortEdge, height: Math.round(shortEdge * 16 / 9) };
+    case '1:1':
+      return { width: shortEdge, height: shortEdge };
+    case '4:3':
+      return { width: Math.round(shortEdge * 4 / 3), height: shortEdge };
+    case '3:4':
+      return { width: shortEdge, height: Math.round(shortEdge * 4 / 3) };
+    case '21:9':
+      return { width: Math.round(shortEdge * 21 / 9), height: shortEdge };
+    default:
+      return { width: Math.round(shortEdge * 16 / 9), height: shortEdge };
+  }
+}
+
+function numericDimension(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function readVideoDimensions(value: unknown): { width: number; height: number } | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const width = numericDimension(record.width);
+  const height = numericDimension(record.height);
+  return width && height ? { width, height } : undefined;
+}
+
+function findVideoDimensions(data: unknown): { width: number; height: number } | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const record = data as Record<string, unknown>;
+  const candidates = [
+    record,
+    record.metadata,
+    record.output,
+    record.data,
+    typeof record.metadata === 'object' && record.metadata ? (record.metadata as Record<string, unknown>).video : undefined,
+    typeof record.output === 'object' && record.output ? (record.output as Record<string, unknown>).video : undefined,
+    typeof record.data === 'object' && record.data ? (record.data as Record<string, unknown>).video : undefined,
+  ];
+  for (const candidate of candidates) {
+    const dimensions = readVideoDimensions(candidate);
+    if (dimensions) return dimensions;
+  }
+  return undefined;
+}
+
+/** Agnes 2.5 Flash currently exposes only the 720P output tier. */
+function pickAgnesV25Size(model: string, width?: number, height?: number): '720P' | '1080P' {
+  if (/flash/i.test(model)) return '720P';
+  return width && height && width * height >= 1920 * 1080 ? '1080P' : '720P';
+}
+
+function agnesV25Dimensions(model: string, ratio: string, size: '720P' | '1080P') {
+  // Flash uses its own published map, including the 1280x704 landscape output.
+  const flash: Record<string, [number, number]> = {
+    '21:9': [1680, 720], '16:9': [1280, 704], '4:3': [960, 720],
+    '1:1': [720, 720], '3:4': [720, 960], '9:16': [720, 1280],
+  };
+  const standard: Record<string, [number, number]> = {
+    '21:9': [1470, 630], '16:9': [1280, 720], '4:3': [1112, 834],
+    '1:1': [960, 960], '3:4': [834, 1112], '9:16': [720, 1280],
+  };
+  const hd: Record<string, [number, number]> = {
+    '21:9': [2206, 946], '16:9': [1920, 1080], '4:3': [1664, 1248],
+    '1:1': [1440, 1440], '3:4': [1248, 1664], '9:16': [1080, 1920],
+  };
+  const table = /flash/i.test(model) ? flash : size === '1080P' ? hd : standard;
+  const [width, height] = table[ratio] ?? table['16:9'];
+  return { width, height };
+}
+
+/** Resolve only temporal frame controls. Subject references must be handled by a provider's native API. */
+function resolveKeyframeImages(
+  request: VideoGenerateRequest,
+  providerName: string,
+): { firstImage?: string; lastImage?: string } {
+  if (request.controlMode === 'text') return {};
+  if (request.controlMode === 'reference') {
+    throw new Error(`${providerName} does not support native subject-reference video generation`);
+  }
+
+  const firstImage = request.firstFrame || request.referenceImages?.[0];
+  const lastImage = request.lastFrame || request.referenceImages?.[1];
+  if (request.controlMode === 'keyframe' && !firstImage) {
+    throw new Error(`${providerName} keyframe mode requires firstFrame`);
+  }
+  return { firstImage, lastImage };
+}
+
+function bindSubjectReferencePrompt(request: VideoGenerateRequest, token: (index: number) => string): string {
+  const bindings = (request.subjectReferences ?? []).filter((reference) => !!reference.image)
+    .map((reference, index) => `${token(index + 1)}: ${reference.label || reference.id}; preserve this subject's identity and wardrobe.`);
+  return bindings.length ? `${request.prompt}\n\n[Reference assignments]\n${bindings.join('\n')}` : request.prompt;
+}
+
 /** 递归扫描任意 JSON 响应对象，精确提取合法的 HTTP/HTTPS 视频文件 URL */
 function findHttpVideoUrlInObject(obj: unknown): string | null {
   if (!obj || typeof obj !== 'object') return null;
@@ -110,6 +234,8 @@ function findHttpVideoUrlInObject(obj: unknown): string | null {
 
 export class KlingVideoProvider extends BaseVideoProvider {
   readonly providerId = 'kling';
+  private lastModel = 'kling-v2';
+  private requestedDurationSeconds = 5;
 
   /** 本次提交用的路径(text2video 或 image2video),checkStatus 需要同前缀 */
   private lastSubmitPath: 'text2video' | 'image2video' = 'text2video';
@@ -125,31 +251,43 @@ export class KlingVideoProvider extends BaseVideoProvider {
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
+    const model = request.model?.trim() || 'kling-v2';
+    this.lastModel = model;
+    this.requestedDurationSeconds = request.durationSeconds ?? 5;
     const [width, height] = (request.width && request.height)
       ? [request.width, request.height]
       : [1920, 1080];
 
-    const isI2V = !!request.referenceImages?.length;
+    const { firstImage, lastImage: tailImage } = resolveKeyframeImages(request, 'Kling');
+    const isI2V = !!firstImage;
     this.lastSubmitPath = isI2V ? 'image2video' : 'text2video';
 
     const body: Record<string, unknown> = {
-      model: request.model || 'kling-v2',
+      model,
       prompt: request.prompt,
       negative_prompt: request.negativePrompt ?? '',
       cfg_scale: 0.5,
       // mode/duration:Kling 仅支持 5s / 10s,std / pro 模式
       mode: request.durationSeconds && request.durationSeconds > 5 ? 'pro' : 'std',
       duration: request.durationSeconds && request.durationSeconds > 5 ? '10' : '5',
-      aspect_ratio: `${width}:${height}`,
+      aspect_ratio: pickStandardAspectRatio(width, height, request.aspectRatio),
     };
 
     if (isI2V) {
       // 首尾帧双图控制 (First-Last Frame Continuity)
-      body.image = request.referenceImages![0];
-      if (request.referenceImages!.length > 1) {
-        body.image_tail = request.referenceImages![1];
+      body.image = firstImage;
+      if (tailImage) {
+        body.image_tail = tailImage;
       }
     }
+    if (typeof request.seed === 'number' && Number.isInteger(request.seed)) {
+      body.seed = request.seed;
+    }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'durationSeconds', 'aspectRatio', 'seed'],
+    );
 
     const submitUrl = `${this.klingBase()}/v1/videos/${this.lastSubmitPath}`;
     const submitResponse = await httpFetch(submitUrl, {
@@ -200,8 +338,8 @@ export class KlingVideoProvider extends BaseVideoProvider {
           videoData: video?.url ?? '',
           width: 1920,
           height: 1080,
-          durationSeconds: 5,
-          model: 'kling-v2',
+          durationSeconds: this.requestedDurationSeconds,
+          model: this.lastModel,
           provider: 'kling',
           latencyMs: 0,
         },
@@ -256,27 +394,38 @@ export class KlingVideoProvider extends BaseVideoProvider {
 
 export class RunwayProvider extends BaseVideoProvider {
   readonly providerId = 'runway';
+  private lastModel = 'gen4_turbo';
+  private requestedDurationSeconds = 5;
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
+    const model = request.model?.trim() || 'gen4_turbo';
+    this.lastModel = model;
+    this.requestedDurationSeconds = request.durationSeconds ?? 5;
 
     const body: Record<string, unknown> = {
-      model: request.model || 'gen4_turbo',
+      model,
       promptText: request.prompt,
       duration: request.durationSeconds ?? 5,
-      ratio: '16:9',
+      ratio: pickStandardAspectRatio(request.width, request.height, request.aspectRatio),
     };
 
-    if (request.referenceImages?.length) {
-      if (request.referenceImages.length > 1) {
+    const { firstImage, lastImage } = resolveKeyframeImages(request, 'Runway');
+    if (firstImage) {
+      if (lastImage) {
         body.promptImage = [
-          { uri: request.referenceImages[0], position: 'first' },
-          { uri: request.referenceImages[1], position: 'last' },
+          { uri: firstImage, position: 'first' },
+          { uri: lastImage, position: 'last' },
         ];
       } else {
-        body.promptImage = request.referenceImages[0];
+        body.promptImage = firstImage;
       }
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'durationSeconds', 'aspectRatio'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/v1/image_to_video`, {
       method: 'POST',
@@ -308,7 +457,7 @@ export class RunwayProvider extends BaseVideoProvider {
           width: 1920,
           height: 1080,
           durationSeconds: request.durationSeconds ?? 5,
-          model: request.model || 'gen4_turbo',
+          model,
           provider: 'runway',
           latencyMs: Date.now() - startTime,
         };
@@ -336,8 +485,8 @@ export class RunwayProvider extends BaseVideoProvider {
           videoData: data.output?.[0] ?? '',
           width: 1920,
           height: 1080,
-          durationSeconds: 5,
-          model: 'gen4_turbo',
+          durationSeconds: this.requestedDurationSeconds,
+          model: this.lastModel,
           provider: 'runway',
           latencyMs: 0,
         },
@@ -352,27 +501,38 @@ export class RunwayProvider extends BaseVideoProvider {
 
 export class ViduProvider extends BaseVideoProvider {
   readonly providerId = 'vidu';
+  private lastModel = 'vidu-1.5';
+  private requestedDurationSeconds = 4;
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
+    const model = request.model?.trim() || 'vidu-1.5';
+    this.lastModel = model;
+    this.requestedDurationSeconds = request.durationSeconds ?? 4;
 
     const body: Record<string, unknown> = {
-      model: request.model || 'vidu-1.5',
+      model,
       prompt: request.prompt,
       duration: request.durationSeconds ?? 4,
       resolution: '1080p',
-      aspect_ratio: '16:9',
+      aspect_ratio: pickStandardAspectRatio(request.width, request.height, request.aspectRatio),
     };
 
-    if (request.referenceImages?.length) {
-      if (request.referenceImages.length > 1) {
-        body.start_image = request.referenceImages[0];
-        body.end_image = request.referenceImages[1];
+    const { firstImage, lastImage } = resolveKeyframeImages(request, 'Vidu');
+    if (firstImage) {
+      if (lastImage) {
+        body.start_image = firstImage;
+        body.end_image = lastImage;
       } else {
-        body.image = request.referenceImages[0];
+        body.image = firstImage;
       }
       body.img_boost = true;
     }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'durationSeconds', 'aspectRatio'],
+    );
 
     const response = await httpFetch(`${this.endpoint.baseUrl}/v1/video/generate`, {
       method: 'POST',
@@ -416,8 +576,8 @@ export class ViduProvider extends BaseVideoProvider {
           videoData: data.data?.video_url ?? '',
           width: 1920,
           height: 1080,
-          durationSeconds: 4,
-          model: 'vidu-1.5',
+          durationSeconds: this.requestedDurationSeconds,
+          model: this.lastModel,
           provider: 'vidu',
           latencyMs: 0,
         },
@@ -447,17 +607,94 @@ export class AgnesVideoProvider extends BaseVideoProvider {
    * Agnes 创建任务响应同时返回 task_id(`task_xxx` 前缀)和 video_id (`video_xxx` 前缀)
    */
   private requestedDurationSeconds: number | undefined = 5;
+  private requestedWidth: number | undefined;
+  private requestedHeight: number | undefined;
+  private requestedAspectRatio: string | undefined;
+  private requestedSize: '720P' | '1080P' | undefined;
   private lastQueryKind: 'video_id' | 'task_id' = 'video_id';
   private lastQueryId: string = '';
+
+  getWireParameterSnapshot(request: VideoGenerateRequest): Record<string, unknown> {
+    const model = request.model?.trim() || 'agnes-video-2.5-flash';
+    const isV25 = !/2\.0|v2\.0/i.test(model);
+    const subjectImages = (request.subjectReferences ?? []).filter((reference) => !!reference.image);
+    const referenceImages = (request.referenceImages ?? []).filter(Boolean);
+    const controlMode = videoControlModeForRequest(request);
+
+    if (isV25) {
+      const seconds = Math.max(4, Math.min(12, Math.round(request.durationSeconds || 5)));
+      const firstFrame = request.firstFrame || referenceImages[0];
+      const lastFrame = request.lastFrame || referenceImages[1];
+      const wire: Record<string, unknown> = {
+        model,
+        size: pickAgnesV25Size(model, request.width, request.height),
+        aspect_ratio: pickStandardAspectRatio(request.width, request.height, request.aspectRatio),
+        seconds: String(seconds),
+        ...(request.seed !== undefined ? { seed: request.seed } : {}),
+        mode: controlMode,
+        ...(controlMode === 'keyframe' && firstFrame ? { first_frame: 'provided' } : {}),
+        ...(controlMode === 'keyframe' && lastFrame ? { last_frame: 'provided' } : {}),
+        ...(controlMode === 'reference' ? { imagesCount: subjectImages.length || referenceImages.length } : {}),
+        ...(request.audioReferences?.length ? { audiosCount: request.audioReferences.length } : {}),
+        ...(request.videoReferences?.length ? { videosCount: request.videoReferences.length } : {}),
+      };
+      applyUnconsumedGenerationParameters(
+        wire,
+        request,
+        ['model', 'durationSeconds', 'width', 'height', 'aspectRatio', 'seed'],
+      );
+      return wire;
+    }
+
+    let width = request.width || 1152;
+    let height = request.height || 768;
+    if (width > 0 && height > 0) {
+      const aspect = width / height;
+      if (Math.abs(aspect - 16 / 9) < 0.1) {
+        width = 1152;
+        height = 768;
+      } else if (Math.abs(aspect - 9 / 16) < 0.1) {
+        width = 768;
+        height = 1152;
+      } else if (Math.abs(aspect - 1) < 0.1) {
+        width = 896;
+        height = 896;
+      } else {
+        width = Math.round(width / 32) * 32;
+        height = Math.round(height / 32) * 32;
+      }
+    }
+    const tier = pickAgnesFramesTier(request.durationSeconds);
+    const firstFrame = request.firstFrame || referenceImages[0];
+    const lastFrame = request.lastFrame || referenceImages[1];
+    const wire: Record<string, unknown> = {
+      model,
+      width,
+      height,
+      num_frames: tier.numFrames,
+      frame_rate: tier.frameRate,
+      ...(request.numInferenceSteps ? { num_inference_steps: request.numInferenceSteps } : {}),
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      ...(request.negativePrompt ? { negative_prompt: request.negativePrompt } : {}),
+      ...(firstFrame ? { mode: lastFrame ? 'keyframes' : (request.mode || 'ti2vid') } : request.mode ? { mode: request.mode } : {}),
+      ...(firstFrame ? { imageCount: lastFrame ? 2 : 1 } : {}),
+    };
+    applyUnconsumedGenerationParameters(
+      wire,
+      request,
+      ['model', 'durationSeconds', 'width', 'height', 'numInferenceSteps', 'seed', 'negativePrompt', 'mode'],
+    );
+    return wire;
+  }
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
     let model = request.model?.trim() || 'agnes-video-2.5-flash';
-    if (!model.startsWith('agnes-video')) {
-      model = 'agnes-video-2.5-flash';
-    }
     this.lastModel = model;
     this.requestedDurationSeconds = request.durationSeconds;
+    this.requestedWidth = request.width;
+    this.requestedHeight = request.height;
+    this.requestedAspectRatio = pickStandardAspectRatio(request.width, request.height, request.aspectRatio);
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     // baseUrl 可能是 https://apihub.agnes-ai.com 或 https://apihub.agnes-ai.com/v1
@@ -465,32 +702,24 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       ? `${baseUrl}/videos`
       : `${baseUrl}/v1/videos`;
 
-    const isV25 = model === 'agnes-video-2.5' || model.includes('2.5');
+    const isV25 = !/2\.0|v2\.0/i.test(model);
+    this.requestedSize = isV25
+      ? pickAgnesV25Size(model, request.width, request.height)
+      : undefined;
+
+    validateVideoMediaReferences({ ...request, controlMode: videoControlModeForRequest(request) }, getVideoGenerationCapabilities('agnes-video', model), request.subjectReferences?.length || request.referenceImages?.length || 0);
 
     let body: Record<string, unknown>;
 
     if (isV25) {
       // ===== Agnes Video 2.5 OpenAPI 规范 =====
       const seconds = Math.max(4, Math.min(12, Math.round(request.durationSeconds || 5)));
-      let aspect_ratio = '16:9';
-      if (request.aspectRatio) {
-        if (['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].includes(request.aspectRatio)) {
-          aspect_ratio = request.aspectRatio;
-        }
-      } else if (request.width && request.height) {
-        const aspect = request.width / request.height;
-        if (Math.abs(aspect - 9 / 16) < 0.1) aspect_ratio = '9:16';
-        else if (Math.abs(aspect - 1) < 0.1) aspect_ratio = '1:1';
-        else if (Math.abs(aspect - 4 / 3) < 0.1) aspect_ratio = '4:3';
-        else if (Math.abs(aspect - 3 / 4) < 0.1) aspect_ratio = '3:4';
-        else if (Math.abs(aspect - 21 / 9) < 0.1) aspect_ratio = '21:9';
-      }
+      const aspect_ratio = pickStandardAspectRatio(request.width, request.height, request.aspectRatio);
 
-      const targetModel = model.startsWith('agnes-video-2.5') ? model : 'agnes-video-2.5';
       body = {
-        model: targetModel,
+        model,
         prompt: request.prompt,
-        size: '720P',
+        size: pickAgnesV25Size(model, request.width, request.height),
         aspect_ratio,
         seconds: String(seconds),
       };
@@ -499,19 +728,38 @@ export class AgnesVideoProvider extends BaseVideoProvider {
         body.seed = request.seed;
       }
 
-      if (request.referenceImages && request.referenceImages.length > 0) {
-        const cleanedImages = request.referenceImages.filter(Boolean);
-        if (cleanedImages.length === 1) {
-          body.mode = 'keyframe';
-          body.first_frame = cleanedImages[0];
-        } else if (cleanedImages.length === 2) {
-          body.mode = 'keyframe';
-          body.first_frame = cleanedImages[0];
-          body.last_frame = cleanedImages[1];
-        } else {
-          body.mode = 'reference';
-          body.images = cleanedImages;
+      const cleanedImages = (request.referenceImages ?? []).filter(Boolean);
+      const subjectImages = (request.subjectReferences ?? []).map((reference) => reference.image).filter(Boolean);
+      const controlMode = videoControlModeForRequest(request);
+
+      if (controlMode === 'keyframe') {
+        const firstFrame = request.firstFrame || cleanedImages[0];
+        const lastFrame = request.lastFrame || cleanedImages[1];
+        if (!firstFrame) {
+          throw new Error('Agnes Video 2.5 keyframe mode requires firstFrame');
         }
+        if (lastFrame) {
+          body.mode = 'keyframe';
+          body.first_frame = firstFrame;
+          body.last_frame = lastFrame;
+        } else {
+          body.mode = 'keyframe';
+          body.first_frame = firstFrame;
+        }
+      } else if (controlMode === 'reference') {
+        const images = subjectImages.length > 0 ? subjectImages : cleanedImages;
+        if (images.length === 0 && !request.audioReferences?.length && !request.videoReferences?.length) {
+          throw new Error('Agnes Video 2.5 reference mode requires images, audio or video');
+        }
+        const maxImages = /flash/i.test(model) ? 5 : 8;
+        if (images.length > maxImages) {
+          throw new Error(`Agnes Video ${model} accepts at most ${maxImages} reference images; received ${images.length}`);
+        }
+        body.mode = 'reference';
+        if (images.length) body.images = images;
+        if (request.audioReferences?.length) body.audios = request.audioReferences.map((reference) => reference.url);
+        if (request.videoReferences?.length) body.videos = request.videoReferences.map((reference) => ({ url: reference.url }));
+        body.prompt = bindSubjectReferencePrompt(request, (index) => `<Picture ${index}>`);
       } else {
         body.mode = 'text';
       }
@@ -550,7 +798,7 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       // 2. 帧数 (num_frames) & 帧率 (frame_rate): 遵循 8n + 1 规则且 <= 441
       const tier = pickAgnesFramesTier(request.durationSeconds);
       body.num_frames = tier.numFrames;
-      body.frame_rate = request.fps && request.fps >= 1 && request.fps <= 60 ? request.fps : tier.frameRate;
+      body.frame_rate = tier.frameRate;
 
       // 3. 推理步数 (num_inference_steps)
       if (request.numInferenceSteps && request.numInferenceSteps > 0) {
@@ -563,29 +811,48 @@ export class AgnesVideoProvider extends BaseVideoProvider {
       }
 
       // 5. 反向提示词 (negative_prompt): 过滤模糊、畸变与杂质
-      body.negative_prompt = request.negativePrompt || 'blurry, low quality, distorted, bad anatomy, deformed limbs, watermark, text, flicker, artifacts, glitch';
+      if (request.negativePrompt) {
+        body.negative_prompt = request.negativePrompt;
+      }
 
-      // 6. 模式 (mode) & 图生视频 (image) / 多关键帧模式 (extra_body)
-      if (request.referenceImages && request.referenceImages.length > 0) {
-        const cleanedImages = request.referenceImages
+      // 6. Agnes 2.0 只支持时间关键帧，不支持 2.5 的主体参考模式。
+      const { firstImage, lastImage } = resolveKeyframeImages(request, 'Agnes Video 2.0');
+      if (firstImage) {
+        const cleanedImages = (request.referenceImages ?? [])
           .map((img) => stripDataUriPrefix(img))
           .filter((img): img is string => !!img);
+        const firstFrame = stripDataUriPrefix(firstImage || cleanedImages[0]);
+        const lastFrame = stripDataUriPrefix(lastImage || cleanedImages[1]);
 
-        if (cleanedImages.length === 1) {
-          body.image = cleanedImages[0];
-          body.mode = request.mode || 'ti2vid';
-        } else if (cleanedImages.length > 1) {
-          body.image = cleanedImages[0];
+        if (firstFrame && lastFrame) {
+          body.image = firstFrame;
           body.mode = 'keyframes';
           body.extra_body = {
-            image: cleanedImages,
+            image: [firstFrame, lastFrame],
             mode: 'keyframes',
           };
+        } else if (firstFrame) {
+          body.image = firstFrame;
+          body.mode = request.mode || 'ti2vid';
         }
       } else if (request.mode) {
         body.mode = request.mode;
       }
     }
+
+    this.requestedDurationSeconds = isV25
+      ? Number(body.seconds)
+      : Number(body.num_frames) / Number(body.frame_rate);
+
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      isV25
+        // width/height and durationSeconds are normalized application inputs;
+        // Agnes 2.5 has already consumed them as size/seconds above.
+        ? ['model', 'durationSeconds', 'width', 'height', 'aspectRatio', 'seed']
+        : ['model', 'durationSeconds', 'width', 'height', 'numInferenceSteps', 'seed', 'negativePrompt', 'mode'],
+    );
 
     const submitResp = await httpFetch(submitUrl, {
       method: 'POST',
@@ -632,8 +899,9 @@ export class AgnesVideoProvider extends BaseVideoProvider {
     // 时没经过 generate,此时 taskId 参数是上次的 id,我们根据前缀猜类型:
     //   - `video_` 开头 → video_id → 走推荐接口
     //   - `task_` 开头或别的 → task_id → 走兼容接口
-    const kind: 'video_id' | 'task_id' =
-      this.lastQueryKind ?? (taskId.startsWith('video_') ? 'video_id' : 'task_id');
+    const kind: 'video_id' | 'task_id' = taskId === this.lastQueryId
+      ? this.lastQueryKind
+      : taskId.startsWith('video_') ? 'video_id' : 'task_id';
 
     let statusUrl: string;
     if (kind === 'video_id') {
@@ -664,7 +932,7 @@ export class AgnesVideoProvider extends BaseVideoProvider {
 
     const data = await resp.json();
     // 兼容字段:state / status / task_status
-    const state = (data.state ?? data.status ?? data.task_status ?? '').toLowerCase();
+    const state = (data.status ?? data.state ?? data.task_status ?? '').toLowerCase();
 
     if (state === 'success' || state === 'succeeded' || state === 'completed') {
       // 严禁误取 `remixed_from_video_id`(此字段为 video_xxx 格式的 ID 字符串，非播放 URL，会导致播放器显示纯文字与合成失败)。
@@ -689,17 +957,24 @@ export class AgnesVideoProvider extends BaseVideoProvider {
         );
       }
 
-      // 用提交时的档位算实际时长(更准)。兜底 5s。
-      const tier = pickAgnesFramesTier(this.requestedDurationSeconds);
+      const returnedDuration = [data.seconds, data.duration, data.duration_seconds, data.metadata?.seconds, data.metadata?.duration]
+        .map((value) => typeof value === 'string' || typeof value === 'number' ? Number(value) : NaN)
+        .find((value) => Number.isFinite(value) && value > 0);
+      const dimensions = findVideoDimensions(data)
+        ?? (this.requestedSize
+          ? agnesV25Dimensions(model, this.requestedAspectRatio ?? '16:9', this.requestedSize)
+          : this.requestedWidth && this.requestedHeight
+            ? { width: this.requestedWidth, height: this.requestedHeight }
+            : dimensionsForAspect(this.requestedAspectRatio, 720));
       return {
         status: 'completed',
         progress: 1,
         result: {
           videoData: videoUrl,
-          width: 1920,
-          height: 1080,
-          durationSeconds: tier.numFrames / tier.frameRate,
-          model: 'agnes-video-v2.0',
+          width: dimensions.width,
+          height: dimensions.height,
+          durationSeconds: returnedDuration ?? this.requestedDurationSeconds ?? 5,
+          model: this.lastModel,
           provider: 'agnes-video',
           latencyMs: 0,
         },
@@ -796,6 +1071,37 @@ export class AgnesVideoProvider extends BaseVideoProvider {
 
 export class DoubaoVideoProvider extends BaseVideoProvider {
   readonly providerId = 'doubao-video';
+  private lastModel = 'doubao-seedance-2-0-260128';
+  private requestedDurationSeconds = 5;
+  private requestedAspectRatio?: string;
+  private requestedResolution?: string;
+
+  getWireParameterSnapshot(request: VideoGenerateRequest): Record<string, unknown> {
+    const model = request.model?.trim() || 'doubao-seedance-2-0-260128';
+    const duration = this.clampDuration(request.durationSeconds, model);
+    const ratio = this.pickRatio(request.width, request.height, request.aspectRatio);
+    const resolution = this.pickResolution(request, model);
+    const wire: Record<string, unknown> = {
+      model,
+      duration,
+      ratio,
+      generate_audio: request.generateAudio ?? false,
+      watermark: false,
+      ...(resolution ? { resolution } : {}),
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      controlMode: videoControlModeForRequest(request),
+      referenceImageCount: request.referenceImages?.length ?? 0,
+      subjectReferenceCount: request.subjectReferences?.length ?? 0,
+      audioReferenceCount: request.audioReferences?.length ?? 0,
+      videoReferenceCount: request.videoReferences?.length ?? 0,
+    };
+    applyUnconsumedGenerationParameters(
+      wire,
+      request,
+      ['model', 'durationSeconds', 'aspectRatio', 'width', 'height', 'seed', 'generateAudio'],
+    );
+    return wire;
+  }
 
   /** 把任意图片引用规范化成 Seedance 能接受的字符串:
    *  - http(s) URL / data:image/...;base64,... / asset:// → 原样返回
@@ -819,7 +1125,9 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
   /** 把 (width, height) 映射到 Seedance 支持的 ratio 字符串。
    *  Seedance 接受 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive。
    *  对不上就 adaptive,让模型按 prompt 自行决定。 */
-  private pickRatio(width?: number, height?: number): string {
+  private pickRatio(width?: number, height?: number, explicit?: string): string {
+    const supported = ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'];
+    if (explicit && supported.includes(explicit)) return explicit;
     if (!width || !height) return '16:9';
     const ratio = width / height;
     // 容差 5%
@@ -838,18 +1146,28 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
     return 'adaptive';
   }
 
-  /** 时长 4-15 整数秒,默认 5。超范围截到边界。 */
-  private clampDuration(seconds?: number): number {
+  /** Native duration depends on the model generation: 2.0 up to 15s, 2.5 up to 30s. */
+  private clampDuration(seconds?: number, model = this.lastModel): number {
     if (!seconds || !Number.isFinite(seconds)) return 5;
     const n = Math.round(seconds);
     if (n < 4) return 4;
-    if (n > 15) return 15;
+    const maximum = /seedance-2-5/i.test(model) ? 30 : 15;
+    if (n > maximum) return maximum;
     return n;
+  }
+
+  private pickResolution(request: VideoGenerateRequest, model: string): string {
+    if (/fast|flash/i.test(model)) return '720p';
+    const pixels = (request.width ?? 1280) * (request.height ?? 720);
+    return pixels >= 1920 * 1080 ? '1080p' : pixels >= 1280 * 720 ? '720p' : '480p';
   }
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
-    const model = request.model || 'doubao-seedance-2-0-260128';
+    const model = request.model?.trim() || 'doubao-seedance-2-0-260128';
+    this.lastModel = model;
+    this.requestedDurationSeconds = this.clampDuration(request.durationSeconds);
+    this.requestedAspectRatio = this.pickRatio(request.width, request.height, request.aspectRatio);
 
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     // 用户可能填了完整 baseUrl (https://ark.cn-beijing.volces.com) 或带 /api
@@ -858,19 +1176,42 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
       ? `${baseUrl}/contents/generations/tasks`
       : `${baseUrl}/api/v3/contents/generations/tasks`;
 
-    // content 数组:text + 可选 image_url(first_frame 模式)
+    // content 数组:显式区分时间首帧与主体参考图。
     const content: Array<Record<string, unknown>> = [];
     if (request.prompt) {
       content.push({ type: 'text', text: request.prompt });
     }
-    const isI2V = !!request.referenceImages?.length;
-    if (isI2V) {
-      const imgRef = this.normalizeImageRef(request.referenceImages![0]);
+    const subjectImages = (request.subjectReferences ?? []).map((reference) => reference.image).filter(Boolean);
+    const controlMode = videoControlModeForRequest(request);
+    const capabilities = getVideoGenerationCapabilities('doubao-video', model);
+    validateVideoMediaReferences({ ...request, controlMode }, capabilities, subjectImages.length || request.referenceImages?.length || 0);
+    if (controlMode === 'keyframe') {
+      const firstImage = request.firstFrame || request.referenceImages?.[0];
+      if (!firstImage) throw new Error('Doubao Video keyframe mode requires firstFrame');
+      const imgRef = this.normalizeImageRef(firstImage);
       content.push({
         type: 'image_url',
         image_url: { url: imgRef },
         role: 'first_frame',
       });
+      const lastImage = request.lastFrame || request.referenceImages?.[1];
+      if (lastImage) {
+        content.push({ type: 'image_url', image_url: { url: this.normalizeImageRef(lastImage) }, role: 'last_frame' });
+      }
+    } else if (controlMode === 'reference') {
+      const images = subjectImages.length > 0 ? subjectImages : (request.referenceImages ?? []);
+      if (images.length === 0 && !request.audioReferences?.length && !request.videoReferences?.length) throw new Error('Doubao Video reference mode requires images, audio or video');
+      if (images.length > capabilities.references.maxImages) throw new Error(`Doubao Video accepts at most ${capabilities.references.maxImages} reference images`);
+      if (request.prompt) content[0].text = bindSubjectReferencePrompt(request, (index) => `@图像${index}`);
+      for (const image of images) {
+        content.push({
+          type: 'image_url',
+          image_url: { url: this.normalizeImageRef(image) },
+          role: 'reference_image',
+        });
+      }
+      for (const reference of request.audioReferences ?? []) content.push({ type: 'audio_url', audio_url: { url: reference.url }, role: 'reference_audio' });
+      for (const reference of request.videoReferences ?? []) content.push({ type: 'video_url', video_url: { url: reference.url }, role: 'reference_video' });
     }
 
     const body: Record<string, unknown> = {
@@ -879,28 +1220,23 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
       // 时长(秒,4-15)
       duration: this.clampDuration(request.durationSeconds),
       // 比例:按请求宽高推导,推不出就走 adaptive
-      ratio: this.pickRatio(request.width, request.height),
+      ratio: this.pickRatio(request.width, request.height, request.aspectRatio),
       // 默认关声音:本项目走自己的 TTS pipeline,不需要 Seedance 自带的 BGM/音效
-      generate_audio: false,
+      generate_audio: request.generateAudio ?? false,
       // 默认加水印按 false(测试期不希望被强制加水印)
       watermark: false,
     };
 
-    // 分辨率:fast 模型只支持到 720p,标准模型可到 1080p
-    // 这里按 width 粗判:≥1920 → 1080p,≥1280 → 720p,否则 480p
-    if (request.width && request.height) {
-      const pixels = request.width * request.height;
-      if (model.includes('fast')) {
-        body.resolution = '720p';
-      } else if (pixels >= 1920 * 1080) {
-        body.resolution = '1080p';
-      } else if (pixels >= 1280 * 720) {
-        body.resolution = '720p';
-      } else {
-        body.resolution = '480p';
-      }
-    }
+    body.resolution = this.pickResolution(request, model);
+    this.requestedResolution = String(body.resolution);
+    if (typeof request.seed === 'number' && Number.isInteger(request.seed)) body.seed = request.seed;
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'durationSeconds', 'aspectRatio', 'width', 'height', 'seed', 'generateAudio'],
+    );
 
+    if (new TextEncoder().encode(JSON.stringify(body)).length > 64 * 1024 * 1024) throw new Error('Seedance request exceeds 64 MB. Use public media URLs for large files.');
     const submitResp = await httpFetch(submitUrl, {
       method: 'POST',
       headers: this.getHeaders(),
@@ -944,15 +1280,18 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
 
     if (state === 'succeeded' || state === 'success') {
       const videoUrl = data.content?.video_url ?? data.content?.url ?? '';
+      if (!videoUrl) throw new Error('Doubao Video: task succeeded without a video URL');
+      const dimensions = findVideoDimensions(data)
+        ?? dimensionsForAspect(this.requestedAspectRatio, this.requestedResolution === '1080p' ? 1080 : this.requestedResolution === '480p' ? 480 : 720);
       return {
         status: 'completed',
         progress: 1,
         result: {
           videoData: videoUrl,
-          width: 1920,
-          height: 1080,
-          durationSeconds: typeof data.duration === 'number' ? data.duration : 5,
-          model: data.model ?? 'doubao-seedance-2-0-260128',
+          width: dimensions.width,
+          height: dimensions.height,
+          durationSeconds: typeof data.duration === 'number' ? data.duration : this.requestedDurationSeconds,
+          model: data.model ?? this.lastModel,
           provider: 'doubao-video',
           latencyMs: 0,
         },
@@ -1022,6 +1361,7 @@ export class DoubaoVideoProvider extends BaseVideoProvider {
 
 export class LeonardoVideoProvider extends BaseVideoProvider {
   readonly providerId = 'leonardo-video';
+  private lastModel = 'leonardo-motion';
 
   /** 记住提交拿到的查询 id,checkStatus 外部单独调用时也能用 */
   private lastQueryId: string = '';
@@ -1032,20 +1372,21 @@ export class LeonardoVideoProvider extends BaseVideoProvider {
     const startTime = Date.now();
     this.requestedDurationSeconds = request.durationSeconds;
 
-    if (!request.referenceImages?.length) {
+    const { firstImage: image } = resolveKeyframeImages(request, 'Leonardo Motion');
+    if (!image) {
       throw new Error(
         'Leonardo Motion 需要一张源图片(图生视频),请在视频设置里保留 I2V,或换用支持文生视频的 provider。',
       );
     }
 
-    const model = request.model || 'leonardo-motion';
+    const model = request.model?.trim() || 'leonardo-motion';
+    this.lastModel = model;
     const baseUrl = this.endpoint.baseUrl.replace(/\/+$/, '');
     // 兼容用户填 https://api.leonardo.ai/v1 或不带版本
     const base = /\/v\d+$/.test(baseUrl) ? baseUrl.replace(/\/v\d+$/, '/v1') : `${baseUrl}/v1`;
 
     // Leonardo Motion 接受 image 为公网 URL 或 data URI;本地 webview URL 后端拉不到,
     // 这里只做透传 + 基本校验 (data: / https:),其余交给后端报错或上层转 data URI。
-    const image = request.referenceImages[0];
     if (!/^(https?:|data:)/i.test(image)) {
       throw new Error(
         'Leonardo Motion: 源图必须是公网 URL 或 data URI,本地文件 URL 后端无法读取。请换用支持 URL 引用的 provider,或先把关键帧转成 data URI。',
@@ -1064,6 +1405,12 @@ export class LeonardoVideoProvider extends BaseVideoProvider {
       // Leonardo Motion 通常只支持 4-5s 档位,这里传秒数让它自行取整
       body.duration = request.durationSeconds;
     }
+
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'durationSeconds', 'negativePrompt'],
+    );
 
     const submitResp = await httpFetch(`${base}/rest/v1/video-generations`, {
       method: 'POST',
@@ -1133,7 +1480,7 @@ export class LeonardoVideoProvider extends BaseVideoProvider {
           width: 1920,
           height: 1080,
           durationSeconds: duration,
-          model: 'leonardo-motion',
+          model: this.lastModel,
           provider: 'leonardo-video',
           latencyMs: 0,
         },
@@ -1197,6 +1544,8 @@ export class LeonardoVideoProvider extends BaseVideoProvider {
 
 export class SiliconFlowVideoProvider extends BaseVideoProvider {
   readonly providerId: VideoProviderId = 'siliconflow-video';
+  private lastModel = 'Wan-AI/Wan2.2-T2V-A14B';
+  private requestedDurationSeconds = 5;
 
   private baseUrl(): string {
     const b = this.endpoint.baseUrl.replace(/\/+$/, '');
@@ -1205,62 +1554,50 @@ export class SiliconFlowVideoProvider extends BaseVideoProvider {
 
   async generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
     const startTime = Date.now();
-    const isI2V = request.referenceImages && request.referenceImages.length > 0;
-    const defaultModels = isI2V
-      ? ['Wan-AI/Wan2.2-I2V-A14B', 'Wan-AI/Wan2.1-I2V-14B-720P', 'wan2.1-i2v-720p', 'wan2.1-i2v-14b', 'wan2.1-i2v']
-      : ['Wan-AI/Wan2.2-T2V-A14B', 'Wan-AI/Wan2.1-T2V-1.4B', 'wan2.1-t2v-1.4b', 'wan2.1-t2v-14b', 'wan2.1-t2v'];
+    const { firstImage } = resolveKeyframeImages(request, 'SiliconFlow Video');
+    const model = request.model?.trim() || this.lastModel;
+    this.lastModel = model;
+    this.requestedDurationSeconds = request.durationSeconds ?? 5;
 
     // 优先尝试用户指定的或 endpoint 里配置的 model,然后再按备选列表重试
-    const specifiedModel = request.model || (this.endpoint.models && this.endpoint.models.length > 0 ? this.endpoint.models[0] : undefined);
-    const candidateModels = specifiedModel
-      ? [specifiedModel, ...defaultModels.filter((m) => m !== specifiedModel)]
-      : defaultModels;
+    const body: Record<string, unknown> = {
+      model,
+      prompt: request.prompt,
+    };
 
-    let lastError: Error | null = null;
+    if (firstImage) {
+      body.image = firstImage;
+    }
+    if (typeof request.seed === 'number') {
+      body.seed = request.seed;
+    }
+    applyUnconsumedGenerationParameters(
+      body,
+      request,
+      ['model', 'seed'],
+    );
 
-    for (const modelCandidate of candidateModels) {
-      const body: Record<string, unknown> = {
-        model: modelCandidate,
-        prompt: request.prompt,
-      };
+    const submitUrl = `${this.baseUrl()}/video/submit`;
+    const submitResponse = await httpFetch(submitUrl, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(body),
+      signal: this.timeoutSignal(60_000),
+    });
 
-      if (isI2V) {
-        body.image = request.referenceImages![0];
-      }
-      const seedVal = (request as unknown as Record<string, unknown>).seed;
-      if (typeof seedVal === 'number') {
-        body.seed = seedVal;
-      }
-
-      const submitUrl = `${this.baseUrl()}/video/submit`;
-      const submitResponse = await httpFetch(submitUrl, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(body),
-        signal: this.timeoutSignal(60_000),
-      });
-
-      if (!submitResponse.ok) {
-        const text = await submitResponse.text().catch(() => '');
-        // 如果是 400 且提示 Model does not exist,说明该中转站不支持这个 model 格式,尝试下一个 candidate
-        if (submitResponse.status === 400 && (text.includes('20012') || text.toLowerCase().includes('model does not exist'))) {
-          lastError = new Error(`SiliconFlow Video error 400 (Model '${modelCandidate}' 不存在)。请在设置或步骤输入中填入你中转站支持的有效视频模型名(如 wan2.1-i2v-720p / Wan-AI/Wan2.1-I2V-14B-720P)。`);
-          continue; // 尝试下一个备选模型名
-        }
-        throw new Error(`SiliconFlow Video API error ${submitResponse.status}: ${text}`);
-      }
-
-      const submitData = await submitResponse.json();
-      const requestId = submitData.requestId || submitData.request_id || submitData.task_id || submitData.id;
-
-      if (!requestId) {
-        throw new Error('SiliconFlow Video API: no requestId returned');
-      }
-
-      return this.pollUntilComplete(requestId, startTime, modelCandidate);
+    if (!submitResponse.ok) {
+      const text = await submitResponse.text().catch(() => '');
+      throw new Error(`SiliconFlow Video API error ${submitResponse.status}: ${text}`);
     }
 
-    throw lastError || new Error('SiliconFlow Video: 所有候选模型提交均被服务器拒绝。请检查 Endpoint 模型的拼写。');
+    const submitData = await submitResponse.json();
+    const requestId = submitData.requestId || submitData.request_id || submitData.task_id || submitData.id;
+
+    if (!requestId) {
+      throw new Error('SiliconFlow Video API: no requestId returned');
+    }
+
+    return this.pollUntilComplete(requestId, startTime, model);
   }
 
   async checkStatus(requestId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }> {
@@ -1291,8 +1628,8 @@ export class SiliconFlowVideoProvider extends BaseVideoProvider {
           videoData: videoUrl,
           width: 1280,
           height: 720,
-          durationSeconds: 5,
-          model: 'Wan2.1',
+          durationSeconds: this.requestedDurationSeconds,
+          model: this.lastModel,
           provider: 'siliconflow-video',
           latencyMs: 0,
         },
@@ -1345,13 +1682,10 @@ export function createVideoProvider(
     case 'siliconflow-video':
       return new SiliconFlowVideoProvider(endpoint);
     case '302ai-video':
-      return new SiliconFlowVideoProvider(endpoint);
+      throw new Error(`No video adapter is implemented for provider ${providerId}`);
     default:
       // 如果 Provider 是 custom 或者属于其他通用,检查 URL 特征。
       // 若包含 siliconflow 则自动走向 SiliconFlow 驱动,避免抛错成 Kling
-      if (endpoint.baseUrl.includes('siliconflow')) {
-        return new SiliconFlowVideoProvider(endpoint);
-      }
-      return new KlingVideoProvider(endpoint);
+      throw new Error(`No video adapter is implemented for provider ${providerId}`);
   }
 }

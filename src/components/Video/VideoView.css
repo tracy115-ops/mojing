@@ -1,0 +1,67 @@
+.video-view-shell,
+.video-view-main,
+.video-view-projects,
+.video-view-content {
+  min-width: 0;
+  min-height: 0;
+}
+
+.video-view-projects {
+  flex: 0 0 220px;
+}
+
+.video-view-main,
+.video-view-content {
+  overflow: hidden;
+}
+
+.video-view-toolbar {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 760px) {
+  .video-view-shell {
+    flex-direction: column;
+    overflow: auto;
+  }
+
+  .video-view-projects {
+    width: 100% !important;
+    height: 168px;
+    flex: 0 0 168px;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border-secondary);
+  }
+
+  .video-view-main {
+    width: 100%;
+    flex: 0 0 auto !important;
+    overflow: visible;
+  }
+
+  .video-view-content {
+    flex: 0 0 auto !important;
+    overflow: visible;
+  }
+
+  .video-view-toolbar {
+    align-items: flex-start !important;
+    padding: 8px !important;
+  }
+
+  .video-view-toolbar .ant-typography {
+    flex: 1 0 100%;
+    margin-left: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .video-view-projects {
+    height: 148px;
+    flex-basis: 148px;
+  }
+
+  .video-view-toolbar .ant-btn {
+    max-width: 100%;
+  }
+}

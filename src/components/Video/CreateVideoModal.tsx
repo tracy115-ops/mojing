@@ -24,12 +24,14 @@ interface CreateVideoModalProps {
   open: boolean;
   onOk: (values: CreateVideoFormValues) => void;
   onCancel: () => void;
+  seriesMode?: boolean;
 }
 
 const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
   open,
   onOk,
   onCancel,
+  seriesMode = false,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
@@ -39,27 +41,28 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
 
   return (
     <Modal
+      className="video-create-episode-modal"
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 16, fontWeight: 600 }}>新建视频项目</span>
         </div>
       }
       open={open}
-      onOk={() =>
-        form.validateFields().then((values) => {
+      onOk={() => {
+        return form.validateFields().then((values) => {
           if (!values.novelId && !values.scriptText?.trim()) {
             form.setFields([{ name: 'scriptText', errors: [t('video.series.episodeSourceRequired')] }]);
             return;
           }
           onOk(values);
           form.resetFields();
-        })
-      }
+        });
+      }}
       onCancel={() => {
         form.resetFields();
         onCancel();
       }}
-      okText={t('video.series.newEpisode')}
+      okText={seriesMode ? t('video.series.newEpisode') : t('video.newProject')}
       cancelText={t('common.cancel')}
       width={560}
       styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}

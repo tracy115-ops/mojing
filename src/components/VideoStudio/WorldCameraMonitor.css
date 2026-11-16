@@ -1,0 +1,18 @@
+.world-engine-body.is-monitor { flex: 0 0 auto; }
+.world-engine-body.is-monitor .world-engine-stage { min-height: min-content; }
+.world-engine-viewport.is-monitor { min-height: 460px; container: world-monitor / inline-size; }
+.world-camera-monitor-grid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); pointer-events: none; }
+.world-camera-monitor-grid[data-count="2"] { grid-template-rows: minmax(0, 1fr); }
+.world-camera-monitor-tile { display: flex; flex-direction: column; justify-content: space-between; min-width: 0; min-height: 0; border: 1px solid var(--border-secondary); overflow: hidden; }
+.world-camera-monitor-tile.is-program { border-color: var(--accent-primary); }
+.world-camera-monitor-header, .world-camera-monitor-footer { padding: 5px; background: color-mix(in srgb, var(--bg-container) 92%, transparent); pointer-events: auto; }
+.world-camera-monitor-header .ant-select { width: 100%; }
+.world-camera-monitor-footer { display: flex; flex-direction: column; gap: 4px; }
+.world-camera-monitor-footer > span { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.world-camera-monitor-footer > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.world-camera-monitor-footer .ant-btn { font-size: 11px; padding-inline: 5px; }
+.world-camera-monitor-empty { align-self: center; margin: auto; padding: 12px; color: var(--text-tertiary); text-align: center; font-size: 12px; overflow-wrap: anywhere; }
+.world-camera-monitor-hint { padding: 8px 10px; color: var(--text-secondary); font-size: 12px; background: var(--bg-container); border-top: 1px solid var(--border-secondary); }
+@container world-monitor (max-width: 519px) {
+  .world-camera-monitor-grid[data-count="2"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+}

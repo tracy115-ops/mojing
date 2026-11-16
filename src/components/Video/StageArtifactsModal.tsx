@@ -7,7 +7,7 @@
 //
 // 账本数据来自 router 自动上报的 invocations[] + 总账 totals。
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   Modal, Empty, Image, Typography, Tag, Space, Card, Divider, Alert, Spin,
   Collapse, Tooltip, Statistic, Row, Col, Tabs,
@@ -44,17 +44,12 @@ const StageArtifactsModal: React.FC<Props> = ({ open, onClose, stage, pipelineId
 
   // 仅在「open 从 false→true」或「打开期间 stage 切换」时拉一次快照,
   // 之后不再订阅 store —— 避免父级 selector 变化触发 Modal 重 mount → 死循环。
-  const [snapshot, setSnapshot] = useState<VideoProjectState | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const next = pipelineId
-      ? useVideoStore.getState().projects[pipelineId] ?? null
-      : projectProp ?? null;
-    setSnapshot(next);
-  }, [open, stage, pipelineId, projectProp]);
-
-  const project = snapshot;
+  // Keep the artifact view live while a stage is running. This makes provider
+  // calls and newly persisted outputs visible without reopening the modal.
+  const liveProject = useVideoStore((state) => (
+    pipelineId ? state.projects[pipelineId] : undefined
+  ));
+  const project = liveProject ?? projectProp ?? null;
 
   if (!stage || !project) {
     return (
@@ -468,26 +463,34 @@ export function renderStageContent(
       );
 
     case 'video_review':
+      const expectedClips = project.sceneSpec?.shots.length ?? 0;
+      const validClips = project.clips.filter((clip) => !!clip.videoUrl);
+      const i2vClips = validClips.filter((clip) => clip.videoReferenceMode === 'i2v');
+      const tracedClips = validClips.filter((clip) => (clip.videoReferenceAssets?.length ?? 0) > 0);
+      const tailFrames = validClips.filter((clip) => !!clip.lastFrameImage);
       return (
-        <Section title="视频画质与连贯度智能质检 (AI Quality Audit)">
+        <Section title={t('video.artifacts.review.title')}>
           <Row gutter={16} style={{ marginBottom: 12 }}>
             <Col span={8}>
               <Card size="small">
-                <Statistic title="画质清晰度 (Visual Sharpness)" value={96.8} suffix="%" valueStyle={{ color: '#3f8600', fontSize: 18 }} />
+                <Statistic title={t('video.artifacts.review.validClips')} value={validClips.length} suffix={`/ ${expectedClips}`} />
               </Card>
             </Col>
             <Col span={8}>
               <Card size="small">
-                <Statistic title="角色脸部一致性 (Face Consistency)" value={94.2} suffix="%" valueStyle={{ color: '#108ee9', fontSize: 18 }} />
+                <Statistic title={t('video.artifacts.review.i2vClips')} value={i2vClips.length} suffix={`/ ${expectedClips}`} />
               </Card>
             </Col>
             <Col span={8}>
               <Card size="small">
-                <Statistic title="镜头转场连贯度 (Transition Pacing)" value={98.0} suffix="%" valueStyle={{ color: '#722ed1', fontSize: 18 }} />
+                <Statistic title={t('video.artifacts.review.tracedClips')} value={tracedClips.length} suffix={`/ ${expectedClips}`} />
               </Card>
             </Col>
           </Row>
-          <Alert type="success" showIcon message="所有镜头与音频帧无缝对齐，无撕裂或模糊变形，通过生产级导出质检。" />
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Text type="secondary">{t('video.artifacts.review.tailFrames', { count: tailFrames.length })}</Text>
+            <Alert type="warning" showIcon message={t('video.artifacts.review.visualPending')} />
+          </Space>
         </Section>
       );
 
@@ -554,7 +557,6 @@ const LedgerSection: React.FC<{
 };
 
 const InvocationLabel: React.FC<{ inv: StageInvocation }> = ({ inv }) => {
-  const { t } = useTranslation();
   const catColor = (() => {
     switch (inv.category) {
       case 'llm': return 'blue';
@@ -602,13 +604,29 @@ const InvocationLabel: React.FC<{ inv: StageInvocation }> = ({ inv }) => {
 
 const InvocationDetail: React.FC<{ inv: StageInvocation }> = ({ inv }) => {
   const { t } = useTranslation();
-  if (!inv.promptPreview && !inv.error) {
+  if (!inv.promptPreview && !inv.error && !inv.requestSnapshot) {
     return <Text type="secondary">{t('video.artifacts.ledger.noDetail')}</Text>;
   }
   return (
     <Space direction="vertical" style={{ width: '100%' }} size={6}>
       {inv.error && (
         <Alert type="error" message={inv.error} style={{ fontSize: 12 }} />
+      )}
+      {inv.requestSummary && inv.requestSummary.length > 0 && (
+        <Text type="secondary">{inv.requestSummary.join(' · ')}</Text>
+      )}
+      {inv.requestSnapshot && (
+        <details>
+          <summary>{t('video.production.actualRequest')}</summary>
+          <pre style={{
+            margin: 0, padding: 8,
+            background: 'var(--bg-secondary)', borderRadius: 4,
+            fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            maxHeight: 280, overflowY: 'auto',
+          }}>
+            {JSON.stringify(inv.requestSnapshot, null, 2)}
+          </pre>
+        </details>
       )}
       {inv.promptPreview && (
         <pre style={{

@@ -114,6 +114,8 @@ export interface CreativeSettings {
   autoSaveIntervalSeconds: number;
   exportFormat: string;
   maxConcurrentGenerations: number;
+  /** Custom prompt instructions are opt-in; legacy persisted defaults stay inert. */
+  promptTemplatesEnabled?: boolean;
   promptTemplates?: PromptTemplatesSettings;
 }
 

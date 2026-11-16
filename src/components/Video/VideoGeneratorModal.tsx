@@ -10,30 +10,33 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Modal, Button, Select, Checkbox, Tag, Progress, Alert,
-  Typography, Divider, Empty, Tooltip, Steps, Card, Spin,
-  Dropdown, Menu, Space,
+  Modal, Button, Select, Checkbox, Tag, Alert,
+  Typography, Divider, Empty, Progress, Space,
+  Dropdown, Menu,
 } from 'antd';
 import {
-  VideoCameraOutlined, PlayCircleOutlined, ReloadOutlined,
-  CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined,
-  DownloadOutlined, EyeOutlined, DownOutlined,
+  VideoCameraOutlined, ReloadOutlined, DownloadOutlined, EyeOutlined, DownOutlined,
+  CheckCircleOutlined, ExclamationCircleOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
-import { useProviderStore } from '@/stores/providerStore';
+import { getEndpointCategory, useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
 import { VideoPipeline } from '@/services/video/pipeline';
 import type {
-  VideoProjectState, VideoStage, VideoStageStatus, VideoSpec,
-  StoryboardShot, AspectRatio, ModelTier, CharacterAnchor, SceneAnchor,
+  VideoProjectState, VideoStage, VideoSpec,
+  AspectRatio, ModelTier, CharacterAnchor, SceneAnchor,
 } from '@/types/video';
+import { DEFAULT_PIPELINE_OPTIONS } from '@/types/video';
+import type { PipelinePreflightResult } from '@/services/video/core/pipeline-preflight-rules';
+import { collectVideoPipelinePreflight } from '@/services/video/core/pipeline-preflight';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES } from '@/types/video';
 import ExportVideoModal from './ExportVideoModal';
 import StageArtifactsModal from './StageArtifactsModal';
 import ProviderModelsSummary from './ProviderModelsSummary';
+import PipelinePreflightAlert from './PipelinePreflightAlert';
 import type { NovelMetadata, NovelChapter } from '@/types';
 
 const { Text, Paragraph, Title } = Typography;
@@ -52,12 +55,16 @@ interface VideoGeneratorModalProps {
   seriesContinuityContext?: string;
 }
 
-type ModalPhase = 'config' | 'running' | 'done';
+type ModalPhase = 'config' | 'preflight' | 'running' | 'done';
 
 const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose, defaultNovelId, episodeProjectId, seriesCharacters, seriesScenes, seriesStyleGuide, seriesContinuityContext }) => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
-  const videoEndpoints = useProviderStore(useShallow((s) => s.endpoints.filter((e) => e.enabled)));
+  const providerState = useProviderStore(useShallow((s) => ({ endpoints: s.endpoints, config: s.config })));
+  const videoEndpoints = useMemo(
+    () => providerState.endpoints.filter((endpoint) => endpoint.enabled && getEndpointCategory(endpoint) === 'video'),
+    [providerState.endpoints],
+  );
 
   // Config state
   const [selectedNovelId, setSelectedNovelId] = useState<string | undefined>(defaultNovelId);
@@ -80,17 +87,22 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
   const [errorMsg, setErrorMsg] = useState<string | undefined>(undefined);
   const pipelineRef = useRef<VideoPipeline | null>(null);
 
-  // Sync default novel when modal opens
   useEffect(() => {
-    if (open && defaultNovelId) {
-      setSelectedNovelId(defaultNovelId);
-    }
-  }, [open, defaultNovelId]);
+    if (!open) return;
+    setSelectedNovelId(defaultNovelId);
+    setSelectedChapterIds([]);
+    setErrorMsg(undefined);
+  }, [open, defaultNovelId, episodeProjectId]);
 
   // If a video project already exists for this novel, jump to "done" view
   useEffect(() => {
     if (open && videoProject?.currentStage === 'complete') {
       setPhase('done');
+    } else if (open && videoProject?.currentStage && (
+      videoProject.stages[videoProject.currentStage]?.status === 'running'
+      || videoProject.stages[videoProject.currentStage]?.status === 'awaiting_review'
+    )) {
+      setPhase('running');
     } else if (open) {
       setPhase('config');
     }
@@ -110,6 +122,16 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
 
   const hasVideoProvider = videoEndpoints.length > 0;
 
+  const pipelinePreflight = useMemo(() => collectVideoPipelinePreflight({
+    channel: 'novel',
+    sourceMode: 'multishot',
+    options: DEFAULT_PIPELINE_OPTIONS,
+    startStage: 'script_slicing',
+    planningRequired: true,
+    hasCharacterReferences: true,
+    hasSpeech: selectedChapterIds.length > 0,
+  }), [providerState, selectedChapterIds.length, spec.videoTier]);
+
   // Estimated shot count for hint
   const estimatedShots = useMemo(() => {
     const totalWords = selectedChapterIds
@@ -127,6 +149,24 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
     );
   };
 
+  const handleSelectNovel = (id: string) => {
+    setSelectedNovelId(id);
+    setSelectedChapterIds([]);
+  };
+
+  const preflight = useMemo(() => {
+    const blocking: string[] = [];
+    const warnings: string[] = [];
+    if (!selectedNovelId) blocking.push(t('video.gen.preflightNovelMissing'));
+    if (selectedChapterIds.length === 0) blocking.push(t('video.gen.preflightChaptersMissing'));
+    if (selectedChapterIds.some((id) => !allChapters.some((chapter) => chapter.id === id))) {
+      blocking.push(t('video.gen.preflightChapterChanged'));
+    }
+    return { blocking, warnings, pipeline: pipelinePreflight };
+  }, [allChapters, pipelinePreflight, selectedChapterIds, selectedNovelId, t]);
+
+  const hasBlockingPreflight = preflight.blocking.length > 0 || !preflight.pipeline.ok;
+
   const handleSelectAllChapters = () => {
     setSelectedChapterIds(chaptersWithContent.map((c) => c.id));
   };
@@ -135,7 +175,10 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
 
   const handleStart = async () => {
     if (!selectedNovelId || selectedChapterIds.length === 0) return;
-    if (!hasVideoProvider) return;
+    if (hasBlockingPreflight) {
+      setPhase('preflight');
+      return;
+    }
 
     void logger.info(`[modal] handleStart novel=${selectedNovelId} chapters=${selectedChapterIds.length}`, 'modal');
 
@@ -174,10 +217,12 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
 
     // 切到主面板的流水线 tab,然后立即关闭 Modal —— 执行过程改由 VideoPipelinePanel 展示。
     useVideoStore.getState().setActivePipelineId(pipelineProjectId);
-    onClose();
+    setPhase('running');
 
     // 后台跑流水线;Modal 已关闭,phase 状态不再相关。
-    pipeline.run().catch((err) => {
+    pipeline.run().then((result) => {
+      if (result?.currentStage === 'complete') setPhase('done');
+    }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
       void logger.error(`[modal] pipeline.run threw: ${msg}`, 'modal');
       setErrorMsg(msg);
@@ -205,16 +250,35 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
         </Button>,
       ];
     }
+    if (phase === 'preflight') {
+      return [
+        <Button key="back" onClick={() => setPhase('config')}>{t('video.gen.preflightBack')}</Button>,
+        <Button
+          key="confirm"
+          type="primary"
+          icon={<VideoCameraOutlined />}
+          disabled={hasBlockingPreflight}
+          onClick={handleStart}
+        >
+          {t('video.gen.preflightConfirm')}
+        </Button>,
+      ];
+    }
+    if (phase === 'running') {
+      return [
+        <Button key="close" onClick={onClose}>{t('video.gen.runningBackground')}</Button>,
+      ];
+    }
     return [
       <Button key="cancel" onClick={onClose}>{t('common.cancel')}</Button>,
       <Button
-        key="start"
+          key="start"
         type="primary"
         icon={<VideoCameraOutlined />}
-        disabled={!selectedNovelId || selectedChapterIds.length === 0 || !hasVideoProvider}
-        onClick={handleStart}
+        disabled={!selectedNovelId || selectedChapterIds.length === 0}
+        onClick={() => setPhase('preflight')}
       >
-        {t('video.gen.start')}
+        {t('video.gen.preflightOpen')}
       </Button>,
     ];
   })();
@@ -258,7 +322,7 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
         <ConfigPane
           novelProjects={novelProjects}
           selectedNovelId={selectedNovelId}
-          onSelectNovel={setSelectedNovelId}
+          onSelectNovel={handleSelectNovel}
           chapters={chaptersWithContent}
           selectedChapterIds={selectedChapterIds}
           onToggleChapter={handleToggleChapter}
@@ -268,8 +332,24 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
           onSpecChange={setSpec}
           estimatedShots={estimatedShots}
           estimatedMinutes={estimatedMinutes}
-          hasVideoProvider={hasVideoProvider}
         />
+      )}
+
+      {phase === 'preflight' && (
+        <PreflightPane
+          selectedChapterCount={selectedChapterIds.length}
+          estimatedShots={estimatedShots}
+          estimatedMinutes={estimatedMinutes}
+          pipeline={preflight.pipeline}
+          blocking={preflight.blocking}
+          warnings={preflight.warnings}
+          seriesCharacterCount={seriesCharacters?.length ?? 0}
+          seriesSceneCount={seriesScenes?.length ?? 0}
+        />
+      )}
+
+      {phase === 'running' && (
+        <RunningPane project={videoProject} onOpenWorkbench={onClose} />
       )}
 
       {phase === 'done' && videoProject && (
@@ -282,6 +362,92 @@ const VideoGeneratorModal: React.FC<VideoGeneratorModalProps> = ({ open, onClose
 // ============================================================================
 // Config Pane
 // ============================================================================
+
+interface PreflightPaneProps {
+  selectedChapterCount: number;
+  estimatedShots: number;
+  estimatedMinutes: number;
+  pipeline: PipelinePreflightResult;
+  blocking: string[];
+  warnings: string[];
+  seriesCharacterCount: number;
+  seriesSceneCount: number;
+}
+
+const PreflightPane: React.FC<PreflightPaneProps> = ({
+  selectedChapterCount,
+  estimatedShots,
+  estimatedMinutes,
+  pipeline,
+  blocking,
+  warnings,
+  seriesCharacterCount,
+  seriesSceneCount,
+}) => {
+  const { t } = useTranslation();
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <div>
+        <Title level={5} style={{ margin: 0 }}>{t('video.gen.preflightTitle')}</Title>
+        <Text type="secondary">{t('video.gen.preflightDescription')}</Text>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+        <Tag style={{ margin: 0, padding: '8px 10px' }}>{t('video.gen.preflightChapters', { count: selectedChapterCount })}</Tag>
+        <Tag style={{ margin: 0, padding: '8px 10px' }}>{t('video.gen.preflightShots', { count: estimatedShots })}</Tag>
+        <Tag style={{ margin: 0, padding: '8px 10px' }}>{t('video.gen.preflightTime', { minutes: estimatedMinutes })}</Tag>
+      </div>
+
+      <div style={{ padding: 12, border: '1px solid var(--border-secondary)', borderRadius: 6, background: 'var(--bg-tertiary)' }}>
+        <Text strong>{t('video.gen.preflightSeriesAssets')}</Text>
+        <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+          {t('video.gen.preflightSeriesAssetsValue', { characters: seriesCharacterCount, scenes: seriesSceneCount })}
+        </Text>
+      </div>
+
+      <PipelinePreflightAlert
+        result={pipeline}
+        additionalBlocking={blocking}
+        additionalWarnings={warnings}
+      />
+    </Space>
+  );
+};
+
+const RunningPane: React.FC<{ project?: VideoProjectState; onOpenWorkbench: () => void }> = ({ project, onOpenWorkbench }) => {
+  const { t } = useTranslation();
+  const stages = VIDEO_PIPELINE_STAGES.filter((stage) => !DEFAULT_SKIPPED_STAGES.has(stage));
+  const activeStage = project
+    ? stages.find((stage) => project.stages[stage]?.status === 'running' || project.stages[stage]?.status === 'awaiting_review')
+      ?? project.currentStage
+    : undefined;
+  const progress = project
+    ? Math.round(stages.reduce((total, stage) => {
+      const state = project.stages[stage];
+      if (state?.status === 'completed' || state?.status === 'skipped') return total + 1;
+      if (state?.status === 'running' || state?.status === 'awaiting_review') return total + Math.max(0, Math.min(1, state.progress || 0));
+      return total;
+    }, 0) / Math.max(stages.length, 1) * 100)
+    : 0;
+
+  return (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <div>
+        <Title level={5} style={{ margin: 0 }}>{t('video.gen.runningTitle')}</Title>
+        <Text type="secondary">{t('video.gen.runningDescription')}</Text>
+      </div>
+      <Progress percent={progress} status="active" />
+      <Alert
+        type={project?.error ? 'error' : 'info'}
+        showIcon
+        icon={project?.error ? <ExclamationCircleOutlined /> : <LoadingOutlined spin />}
+        message={project?.error || (activeStage ? t(`video.gen.stage.${activeStage}`) : t('video.gen.runningPreparing'))}
+        description={activeStage ? project?.stages[activeStage]?.inputSummary?.headline : undefined}
+      />
+      <Button type="primary" onClick={onOpenWorkbench}>{t('video.gen.runningOpenWorkbench')}</Button>
+    </Space>
+  );
+};
 
 interface ConfigPaneProps {
   novelProjects: { id: string; title: string }[];
@@ -296,7 +462,6 @@ interface ConfigPaneProps {
   onSpecChange: (spec: VideoSpec) => void;
   estimatedShots: number;
   estimatedMinutes: number;
-  hasVideoProvider: boolean;
 }
 
 const ConfigPane: React.FC<ConfigPaneProps> = ({
@@ -304,7 +469,7 @@ const ConfigPane: React.FC<ConfigPaneProps> = ({
   chapters, selectedChapterIds, onToggleChapter,
   onSelectAll, onClearAll,
   spec, onSpecChange,
-  estimatedShots, estimatedMinutes, hasVideoProvider,
+  estimatedShots, estimatedMinutes,
 }) => {
   const { t } = useTranslation();
 

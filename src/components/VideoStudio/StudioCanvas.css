@@ -1,0 +1,37 @@
+.studio-canvas-workspace { display: flex; flex: 1; min-height: 420px; flex-direction: column; padding: 0 18px 18px; }
+.studio-canvas-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding-bottom: 12px; }
+.studio-canvas-toolbar > .ant-select { min-width: 160px; max-width: 240px; }
+.studio-canvas-toolbar > .ant-input { max-width: 180px; }
+.studio-canvas-body { display: flex; flex: 1; min-height: 0; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); overflow: hidden; }
+.studio-canvas-surface { position: relative; flex: 1; min-width: 0; min-height: 480px; overflow: hidden; touch-action: none; outline: none; background-color: var(--bg-base); background-image: radial-gradient(var(--border-secondary) 1px, transparent 1px); background-size: 24px 24px; }
+.studio-canvas-layer { position: absolute; inset: 0; transform-origin: 0 0; width: 0; height: 0; }
+.studio-canvas-edges { position: absolute; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.studio-canvas-edges path { fill: none; stroke: var(--accent-primary); stroke-width: 2; }
+.studio-canvas-group { position: absolute; pointer-events: none; border: 1px dashed var(--text-tertiary); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-primary) 4%, transparent); }
+.studio-canvas-group.is-selected { border-color: var(--accent-primary); }
+.studio-canvas-group > button { position: absolute; top: 5px; left: 10px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: auto; border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: grab; user-select: none; }
+.studio-canvas-marquee { position: absolute; pointer-events: none; border: 1px solid var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
+.studio-canvas-gesture-hint { position: absolute; top: 8px; left: 12px; right: 12px; pointer-events: none; font-size: 11px; color: var(--text-tertiary); }
+.studio-canvas-node { position: absolute; display: flex; flex-direction: column; width: 260px; gap: 10px; padding: 12px; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); background: var(--bg-container); box-shadow: var(--shadow-sm); }
+.studio-canvas-node.is-selected { outline: 2px solid var(--accent-primary); }
+.studio-canvas-node { box-sizing: border-box; }
+.studio-canvas-node footer { margin-top: auto; }
+.studio-canvas-resize { position: absolute; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 0; background: linear-gradient(135deg, transparent 50%, var(--text-tertiary) 50%, var(--text-tertiary) 60%, transparent 60%, transparent 72%, var(--text-tertiary) 72%, var(--text-tertiary) 82%, transparent 82%); cursor: nwse-resize; touch-action: none; }
+.studio-canvas-node header { display: flex; position: relative; gap: 8px; align-items: center; cursor: grab; user-select: none; min-height: 24px; }
+.studio-canvas-node header strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-canvas-node header .ant-tag { font-size: 10px; margin: 0; }
+.studio-canvas-node footer { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+.studio-canvas-node .video-studio-media { min-height: 100px; }
+.studio-canvas-port { position: absolute; top: 6px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent-primary); background: var(--bg-container); cursor: crosshair; }
+.studio-canvas-port:hover { background: var(--accent-primary); }
+.studio-canvas-port.is-input { left: -19px; }.studio-canvas-port.is-output { right: -19px; }
+.studio-canvas-zoom { display: flex; position: absolute; bottom: 12px; left: 12px; align-items: center; gap: 8px; padding: 6px; background: var(--bg-container); border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); }
+.studio-canvas-zoom > span { min-width: 42px; font-size: 12px; text-align: center; }
+.studio-canvas-minimap { position: absolute; right: 12px; bottom: 12px; width: 180px; height: 110px; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); background: var(--bg-container); cursor: pointer; }
+.studio-canvas-minimap rect { fill: var(--bg-tertiary); stroke: var(--text-tertiary); stroke-width: 1; }
+.studio-canvas-minimap rect.is-selected { stroke: var(--accent-primary); fill: color-mix(in srgb, var(--accent-primary) 20%, var(--bg-container)); }
+.studio-canvas-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; pointer-events: none; }
+.studio-canvas-empty button { pointer-events: auto; }
+.studio-canvas-connect-hint { position: absolute; top: 12px; left: 12px; white-space: normal; }
+.studio-canvas-inspector { display: flex; flex-direction: column; gap: 12px; flex: 0 0 230px; padding: 16px; border-left: 1px solid var(--border-secondary); background: var(--bg-container); overflow-y: auto; max-height: 650px; }
+@media (max-width: 900px) { .studio-canvas-inspector { flex-basis: 190px; width: 190px; padding: 10px; } .studio-canvas-minimap { width: 130px; height: 80px; } }

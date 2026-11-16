@@ -19,8 +19,10 @@ export type AssetKind =
   | 'portrait'
   | 'background'
   | 'keyframe'
+  | 'last-frame'
   | 'clip'
   | 'audio'
+  | 'model'
   | 'final';
 
 let cachedAppDataDir: string | null = null;
@@ -71,12 +73,18 @@ async function ensureWorkDir(projectId: string, kind: AssetKind): Promise<string
   return dir;
 }
 
+/** Return the durable directory for a project asset kind. */
+export async function getAssetDirectory(projectId: string, kind: AssetKind): Promise<string> {
+  return ensureWorkDir(projectId, kind);
+}
+
 function sanitizeId(id: string): string {
   // 文件系统不友好的字符替换掉,避免路径异常
   return id.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
 function guessExtFromUrl(url: string, kind: AssetKind): string {
+  if (kind === 'model') return '.glb';
   // 视频
   const v = url.match(/\.(mp4|mov|webm|mkv)(\?|$)/i);
   if (v) return `.${v[1].toLowerCase()}`;
@@ -93,6 +101,7 @@ function guessExtFromUrl(url: string, kind: AssetKind): string {
 }
 
 function guessExtFromDataUri(dataUri: string, kind: AssetKind): string {
+  if (kind === 'model') return '.glb';
   const m = dataUri.match(/^data:(image|audio|video)\/([\w-]+);/i);
   if (m) {
     const fmt = m[2].toLowerCase();
@@ -340,6 +349,36 @@ export function isRemoteUrl(url: string): boolean {
   // asset.localhost 是 Tauri 的 asset protocol host,算本地
   if (/^https?:\/\/(asset\.localhost|localhost)\//i.test(url)) return false;
   return true;
+}
+
+export interface AssetPathStat {
+  exists: boolean;
+  bytes: number;
+}
+
+/**
+ * Verify durable local assets without downloading remote URLs. A null result
+ * means availability cannot be determined in the current runtime.
+ */
+export async function statAssetPath(urlOrPath: string): Promise<AssetPathStat | null> {
+  if (!urlOrPath) return { exists: false, bytes: 0 };
+  if (urlOrPath.startsWith('data:')) return { exists: true, bytes: urlOrPath.length };
+  if (urlOrPath.startsWith('blob:')) return { exists: false, bytes: 0 };
+  const localPath = resolveLocalPath(urlOrPath);
+  if (isRemoteUrl(localPath) || !isTauri()) return null;
+  try {
+    return await tauriInvoke<AssetPathStat>('asset_stat_path', { path: localPath });
+  } catch (err) {
+    void logger.warn(`[asset-store] statAssetPath failed: ${err instanceof Error ? err.message : String(err)}`, 'asset');
+    return null;
+  }
+}
+
+/** True when an asset is known to exist; remote URLs remain usable until fetched. */
+export async function isAssetAvailable(urlOrPath: string | undefined): Promise<boolean> {
+  if (!urlOrPath) return false;
+  const stat = await statAssetPath(urlOrPath);
+  return stat === null || (stat.exists && stat.bytes > 0);
 }
 
 /** 字节数 → 可读字符串(KB/MB/GB) */

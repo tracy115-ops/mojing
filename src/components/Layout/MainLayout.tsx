@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { Button, Tooltip, Modal, Dropdown } from 'antd';
+import React, { lazy, Suspense, useState, useCallback, useEffect } from 'react';
+import { Button, Tooltip, Modal, Dropdown, Spin } from 'antd';
 import {
   BookOutlined,
   PictureOutlined,
@@ -18,13 +18,15 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tauriWin = () => getCurrentWindow() as any;
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import { useTranslation } from '@/i18n';
-import NovelView from '@/components/Novel/NovelView';
-import ComicView from '@/components/Comic/ComicView';
-import VideoView from '@/components/Video/VideoView';
-import SettingsPanel from '@/components/Settings/SettingsPanel';
-import MusicView from '@/components/Music/MusicView';
 import { CustomerServiceOutlined } from '@ant-design/icons';
+
+const NovelView = lazy(() => import('@/components/Novel/NovelView'));
+const ComicView = lazy(() => import('@/components/Comic/ComicView'));
+const VideoView = lazy(() => import('@/components/VideoStudio/StudioWorkspace'));
+const MusicView = lazy(() => import('@/components/Music/MusicView'));
+const SettingsPanel = lazy(() => import('@/components/Settings/SettingsPanel'));
 
 type ViewKey = 'novels' | 'comics' | 'videos' | 'music';
 
@@ -42,6 +44,12 @@ const MainLayout: React.FC = () => {
   const currentTheme = useSettingsStore((s) => s.currentTheme);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const settings = useSettingsStore((s) => s.settings);
+
+  useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener('mojing:open-settings', handler);
+    return () => window.removeEventListener('mojing:open-settings', handler);
+  }, []);
 
   const handleWindowAction = useCallback(async (action: 'minimize' | 'maximize' | 'close') => {
     try {
@@ -78,6 +86,12 @@ const MainLayout: React.FC = () => {
     : settings.appearance.theme === 'anchor' ? t('settings.general.theme.anchor')
     : t('settings.general.theme.system');
 
+  const loadingView = (
+    <div className="ws-view-loading">
+      <Spin tip={t('common.loading')} />
+    </div>
+  );
+
   const navTabs: NavTab[] = [
     { key: 'novels', icon: <BookOutlined />, label: t('sidebar.novels'), color: '#3b82f6' },
     { key: 'comics', icon: <PictureOutlined />, label: t('sidebar.comics'), color: '#f59e0b' },
@@ -102,7 +116,7 @@ const MainLayout: React.FC = () => {
     // Switch to the corresponding view and dispatch a custom event
     if (type === 'novel') setActiveView('novels');
     else if (type === 'comic') setActiveView('comics');
-    else if (type === 'video') setActiveView('videos');
+    else if (type === 'video') { useVideoStudioStore.getState().requestCreateProject(); setActiveView('videos'); }
     setSettingsOpen(false);
     window.dispatchEvent(new CustomEvent('mojing:create-project', { detail: { type } }));
   }, []);
@@ -123,12 +137,14 @@ const MainLayout: React.FC = () => {
       {/* Titlebar with integrated horizontal nav */}
       <div className="ws-titlebar" onMouseDown={handleTitlebarMouseDown}>
         {/* Nav tabs — integrated into titlebar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
+        <div className="ws-titlebar-nav" style={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
           {navTabs.map((tab) => {
             const isActive = activeKey === tab.key;
             return (
               <button
                 key={tab.key}
+                className="ws-nav-tab"
+                aria-label={tab.label}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (tab.key === 'settings') {
@@ -158,14 +174,14 @@ const MainLayout: React.FC = () => {
                 }}
               >
                 {tab.icon}
-                <span>{tab.label}</span>
+                  <span className="ws-nav-label">{tab.label}</span>
               </button>
             );
           })}
         </div>
 
         {/* New project — dropdown before window controls */}
-        <div style={{ display: 'flex', alignItems: 'center', marginRight: 2 }}>
+        <div className="ws-titlebar-project-actions" style={{ display: 'flex', alignItems: 'center', marginRight: 2 }}>
           <Dropdown
             menu={{
               items: [
@@ -189,7 +205,7 @@ const MainLayout: React.FC = () => {
         </div>
 
         {/* Window controls */}
-        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        <div className="ws-titlebar-window-controls" style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
           <Tooltip title={themeTooltip}>
             <Button
               type="text"
@@ -214,7 +230,7 @@ const MainLayout: React.FC = () => {
       {/* Body — no sidebar, content takes full width */}
       <div className="ws-body">
         <div className="ws-content">
-          {renderContent()}
+          <Suspense fallback={loadingView}>{renderContent()}</Suspense>
         </div>
       </div>
 
@@ -231,7 +247,7 @@ const MainLayout: React.FC = () => {
           body: { maxHeight: 'calc(100vh - 200px)', overflow: 'auto' },
         }}
       >
-        <SettingsPanel />
+        <Suspense fallback={loadingView}><SettingsPanel /></Suspense>
       </Modal>
 
       {/* StatusBar */}

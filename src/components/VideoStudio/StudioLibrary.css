@@ -1,0 +1,19 @@
+.studio-library-layout { display: flex; align-items: flex-start; gap: 20px; min-width: 0; }
+.studio-library-folders { display: flex; flex-direction: column; flex: 0 0 190px; gap: 5px; padding: 12px; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); background: var(--bg-container); position: sticky; top: 12px; max-height: 75vh; overflow: auto; }
+.studio-library-folder-list { border-top: 1px solid var(--border-secondary); padding-top: 10px; margin-top: 6px; display: flex; flex-direction: column; gap: 5px; }
+.studio-library-folders button:not(.ant-btn) { display: flex; align-items: center; gap: 8px; min-height: 36px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); padding: 8px; text-align: left; cursor: pointer; }
+.studio-library-folders button:not(.ant-btn):hover { background: var(--bg-hover); }
+.studio-library-folders button.is-active { background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-container)); color: var(--accent-primary); }
+.studio-library-folders button > span:not(.anticon) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-library-folders small { color: var(--text-tertiary); }
+.studio-library-folders > .ant-btn { padding-inline: 8px; font-size: 12px; }
+.studio-library-main { min-width: 0; flex: 1; }
+.studio-library-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.studio-library-batch { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; margin-bottom: 16px; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); background: var(--bg-container); }
+.studio-library-batch > span { color: var(--text-secondary); font-size: 12px; }
+.studio-library .video-studio-card.is-selected { border-color: var(--accent-primary); }
+.studio-library-card-top { display: flex; justify-content: space-between; align-items: center; min-height: 22px; }
+.studio-library-card-top .ant-tag { margin: 0; }
+.studio-library-main > .ant-alert { margin-bottom: 16px; }
+@media (max-width: 1000px) { .studio-library-layout { gap: 12px; } .studio-library-folders { flex-basis: 150px; padding: 8px; } }
+@media (max-width: 700px) { .studio-library-layout { flex-direction: column; } .studio-library-folders { position: static; flex: auto; width: 100%; box-sizing: border-box; max-height: 240px; } .studio-library-main { width: 100%; } }

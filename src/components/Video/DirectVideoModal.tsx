@@ -9,13 +9,12 @@
 
 import React, { useState, useMemo } from 'react';
 import {
-  Modal, Button, Input, Select, Form, Progress, Alert,
+  Modal, Button, Input, Select, Form, Alert,
   Typography, Tag, Tooltip, Radio, Checkbox, InputNumber, Spin,
-  Dropdown, Menu,
 } from 'antd';
 import {
   VideoCameraOutlined, BulbOutlined, CopyOutlined, DeleteOutlined,
-  UserOutlined, ReloadOutlined, EyeOutlined, DownOutlined,
+  UserOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from '@/i18n';
@@ -23,16 +22,16 @@ import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
-import { providerRouter } from '@/services/providers';
 import type {
-  AspectRatio, GeneratedClip, DirectSourceMode, PipelineOptions, CharacterAnchor,
-  VideoStage,
+  AspectRatio, DirectSourceMode, PipelineOptions, CharacterAnchor,
 } from '@/types/video';
-import { DIRECT_MODE_PRESETS } from '@/types/video';
+import { DIRECT_MODE_PRESETS, VISUAL_STYLE_PRESETS } from '@/types/video';
 import { buildSceneFromPrompt } from '@/services/video/direct-scene-builder';
 import { runPipeline } from '@/services/video/core/pipeline-runner';
-import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { planVideoPrompt } from '@/services/video/core/prompt-enricher';
+import { collectVideoPipelinePreflight } from '@/services/video/core/pipeline-preflight';
 import ProviderModelsSummary from './ProviderModelsSummary';
+import PipelinePreflightAlert from './PipelinePreflightAlert';
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
@@ -48,8 +47,6 @@ interface DirectVideoModalProps {
   open: boolean;
   onClose: () => void;
 }
-
-const DEFAULT_PROMPT_EN = 'A young woman in white T-shirt pushes open a wooden door, revealing a rainy night street, neon lights reflecting in puddles, close-up on her surprised expression, cinematic, 4k';
 
 const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
@@ -88,23 +85,20 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
   const initProject = useVideoStore((s) => s.initProject);
 
   // 基础字段
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT_EN);
+  const [prompt, setPrompt] = useState('');
   const [taskName, setTaskName] = useState('');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [shotDuration, setShotDuration] = useState<5 | 10>(5);
+  const [style, setStyle] = useState<string>();
   const [optimizing, setOptimizing] = useState(false);
-
-  // 步骤账本预览(指向最近一次 direct 生成的临时 projectId)
-  const [lastDirectProjectId, setLastDirectProjectId] = useState<string | undefined>(undefined);
-  const lastDirectProject = useVideoStore((s) =>
-    lastDirectProjectId ? s.projects[lastDirectProjectId] : undefined,
-  );
 
   // 基础字段(部分已在上方声明,这里继续 Phase 2 字段)
 
   // Phase 2 新字段
-  const [mode, setMode] = useState<DirectSourceMode>('pure');
-  const [options, setOptions] = useState<PipelineOptions>(DIRECT_MODE_PRESETS.pure);
+  // Quality-first is the default for a new task. Pure T2V remains available
+  // as an explicit draft mode, but it cannot provide stable subject identity.
+  const [mode, setMode] = useState<DirectSourceMode>('extract');
+  const [options, setOptions] = useState<PipelineOptions>(DIRECT_MODE_PRESETS.extract);
   const [extracting, setExtracting] = useState(false);
   const [characters, setCharacters] = useState<CharacterAnchor[]>([]);
   const [characterLimit, setCharacterLimit] = useState(5);
@@ -126,6 +120,21 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
   // 方案 A:不再在 Modal 内选择 provider/model。所有生成调用直接走 router,
   // router 自动从 providerStore.config 读 primary + 任务模型。
   const activeVideoEndpoint = useProviderStore((s) => s.getActiveEndpoint('video'));
+  const activeImageEndpoint = useProviderStore((s) => s.getActiveEndpoint('image'));
+
+  const directPreflight = useMemo(() => collectVideoPipelinePreflight({
+    channel: 'direct',
+    sourceMode: mode,
+    options,
+    startStage: 'script_slicing',
+    planningRequired: mode !== 'pure',
+    // Character count is only known after extraction; the runner rechecks
+    // reference support against the resolved SceneSpec before image calls.
+    hasCharacterReferences: false,
+    hasSpeech: mode === 'multishot' && options.enableTTS,
+    imageEndpointId: activeImageEndpoint?.id,
+    videoEndpointId: activeVideoEndpoint?.id,
+  }), [activeImageEndpoint?.id, activeVideoEndpoint?.id, allEndpoints, mode, options]);
 
   const dims: Record<AspectRatio, { w: number; h: number }> = {
     '16:9': { w: 1920, h: 1080 },
@@ -171,6 +180,9 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       const spec = await buildSceneFromPrompt(trimmed, mode === 'pure' ? 'extract' : mode, {
         aspectRatio,
         defaultShotDuration: shotDuration,
+        style,
+        imageEndpointId: activeImageEndpoint?.id,
+        videoEndpointId: activeVideoEndpoint?.id,
       });
       setCharacters(spec.characters ?? []);
     } catch (err) {
@@ -190,9 +202,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       setDirectError(t('video.direct.errorNoProvider'));
       return;
     }
-    // extract/multishot 模式需要 image provider 才能跑下游
-    if (mode !== 'pure' && !hasImageProvider) {
-      setDirectError(t('video.direct.noImageProvider'));
+    if (!directPreflight.ok) {
+      setDirectError(t('video.preflight.blocked'));
       return;
     }
 
@@ -206,6 +217,9 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
       const sceneSpec = await buildSceneFromPrompt(trimmed, mode, {
         aspectRatio,
         defaultShotDuration: shotDuration,
+        style,
+        imageEndpointId: activeImageEndpoint?.id,
+        videoEndpointId: activeVideoEndpoint.id,
       });
 
       // 找到或创建真正的 video 对应项目 (统一挂载至 projectStore,确保在主列表同步展现与切换)
@@ -216,15 +230,13 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
 
       if (!targetProjectId) {
         const newProj = useProjectStore.getState().createProject('video', taskTitle, trimmed.slice(0, 100), {
-          style: 'cinematic',
+          style: style || 'cinematic',
           resolution: `${dims[aspectRatio].w}x${dims[aspectRatio].h}`,
           aspectRatio,
           fps: 24,
         });
         targetProjectId = newProj.id;
       }
-
-      setLastDirectProjectId(targetProjectId);
 
       initProject(targetProjectId, [], {
         aspectRatio,
@@ -235,72 +247,20 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         imageTier: 'value',
         ttsTier: 'free',
         hardcodeSubtitles: false,
-        bgmStyle: 'cinematic',
+        bgmStyle: style || 'cinematic',
       }, taskTitle);
 
       // 切到主面板并激活对应项目,不再切空
+      useVideoStore.getState().setPipelineOptions(targetProjectId, {
+        ...options,
+        characterAnchorLimit: characterLimit,
+      });
       useVideoStore.getState().setSceneSpec(targetProjectId, sceneSpec);
-      useVideoStore.getState().setStageStatus(targetProjectId, 'script_slicing', 'completed', { progress: 1 });
-      useVideoStore.getState().setStageStatus(targetProjectId, 'storyboard_prompt', 'completed', { progress: 1 });
-      useVideoStore.getState().setStageStatus(targetProjectId, 'extraction', 'completed', { progress: 1 });
 
       useProjectStore.getState().setActiveProject(targetProjectId);
       useVideoStore.getState().setActivePipelineId(targetProjectId);
       onClose();
 
-      // 2) pure 模式:不走 pipeline-runner,直接 T2V 出单 clip
-      if (mode === 'pure') {
-        const { w, h } = dims[aspectRatio];
-        const stage: VideoStage = 'video_generation';
-        useVideoStore.getState().advanceToStage(targetProjectId, stage);
-        useVideoStore.getState().setStageStatus(targetProjectId, stage, 'running');
-        useVideoStore.getState().setStageInputSummary(targetProjectId, stage, {
-          headline: `纯 T2V 模式,${shotDuration}s · ${dims[aspectRatio].w}×${dims[aspectRatio].h}`,
-          details: [trimmed.slice(0, 200)],
-        });
-
-        pushStageContext({ novelProjectId: targetProjectId, stage });
-        let response;
-        try {
-          response = await providerRouter.generateVideo({
-            taskType: 'clip',
-            prompt: trimmed,
-            width: w,
-            height: h,
-            durationSeconds: shotDuration,
-            fps: 24,
-          });
-          useVideoStore.getState().setStageStatus(targetProjectId, stage, 'completed', { progress: 1 });
-        } catch (err) {
-          useVideoStore.getState().setStageStatus(targetProjectId, stage, 'error', {
-            error: err instanceof Error ? err.message : String(err),
-          });
-          throw err;
-        } finally {
-          popStageContext();
-        }
-
-        const clip: GeneratedClip = {
-          shotId: `direct_${Date.now()}`,
-          videoUrl: response.videoData,
-          thumbnailUrl: undefined,
-          durationSeconds: shotDuration,
-          provider: response.provider,
-          model: response.model,
-          hasAudio: false,
-          generatedAt: new Date().toISOString(),
-          sceneSource: 'direct',
-          sourceMode: 'pure',
-          directProjectId: targetProjectId,
-        };
-        addDirectClip(clip);
-        // 同步写入 targetProjectId 对应的项目,让 VideoPipelinePanel 能看到 clip
-        useVideoStore.getState().addClip(targetProjectId, clip);
-        return;
-      }
-
-      // 3) extract / multishot:走 core/pipeline-runner
-      // 合并用户在 UI 里勾选的角色
       const finalOptions: PipelineOptions = {
         ...options,
         characterAnchorLimit: characterLimit,
@@ -317,6 +277,8 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
             fps: 24,
             videoTier: 'value',
           },
+          endpointId: activeVideoEndpoint.id,
+          imageEndpointId: activeImageEndpoint?.id,
           sceneSource: 'direct',
           sourceMode: mode,
         },
@@ -393,30 +355,14 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
     setOptimizing(true);
 
     try {
-      const systemPrompt = [
-        'You are an AI video prompt engineer.',
-        'Rewrite the user\'s rough idea into a single, dense, English video prompt.',
-        'Constraints:',
-        '- Output ONLY the rewritten prompt, no preamble, no explanation, no quotes.',
-        '- 60-120 words.',
-        '- Must include: scene setting, character appearance, action, camera movement, lighting, mood.',
-        '- Use cinematic vocabulary (dolly-in, golden hour, shallow depth of field, etc.).',
-        '- No camera cuts within the shot — single continuous take.',
-        '- Present tense, third person.',
-      ].join('\n');
-
-      const response = await providerRouter.generate({
-        taskType: 'translation',
-        systemPrompt,
-        userPrompt: trimmed,
-        temperature: 0.6,
-        maxTokens: 400,
+      const plan = await planVideoPrompt({
+        shot: { sourceText: trimmed, videoPrompt: trimmed },
+        style,
+        requestedAspectRatio: aspectRatio,
+        durationSeconds: shotDuration,
+        endpointId: activeVideoEndpoint?.id,
       });
-
-      const optimized = (response.content || '').trim();
-      if (optimized) {
-        setPrompt(optimized);
-      }
+      if (plan.prompt.trim()) setPrompt(plan.prompt);
     } catch (err) {
       setDirectError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -425,7 +371,6 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
   };
 
   const showAdvanced = mode !== 'pure';
-  const showCharacters = mode !== 'pure' && characters.length > 0;
 
   return (
     <Modal
@@ -491,7 +436,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             rows={5}
-            placeholder={DEFAULT_PROMPT_EN}
+            placeholder={t('video.direct.promptHint')}
             disabled={generating}
             maxLength={2000}
             showCount
@@ -501,28 +446,14 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         {/* 画面风格与画质预设 */}
         <Form.Item label={t('video.style')} style={{ marginBottom: 12 }}>
           <Select
-            placeholder="选择画面风格与画质预设"
+            placeholder={t('video.direct.stylePlaceholder')}
+            value={style}
             allowClear
-            onChange={(styleId) => {
-              if (!styleId) return;
-              import('@/types/video').then(({ VISUAL_STYLE_PRESETS }) => {
-                const preset = VISUAL_STYLE_PRESETS.find((s) => s.id === styleId);
-                if (preset) {
-                  setPrompt((prev) => {
-                    const clean = prev.trim();
-                    if (clean.includes(preset.promptPrefix.trim())) return clean;
-                    return `${preset.promptPrefix}${clean}${preset.promptSuffix}`;
-                  });
-                }
-              });
-            }}
-            options={[
-              { value: 'cinematic', label: '电影大片 (Cinematic) — 真实质感, 35mm 景深光影' },
-              { value: 'anime', label: '日漫风 (Anime Shinkai) — 唯美二次元, 细腻色彩' },
-              { value: 'cyberpunk', label: '赛博朋克 (Cyberpunk) — 霓虹灯影, 雨夜街景' },
-              { value: 'ink_wash', label: '国风水墨 (Ink Wash) — 东方水墨留白, 意境山水' },
-              { value: 'vintage', label: '胶片复古 (80s Vintage) — 暖调胶片颗粒, 怀旧氛围' },
-            ]}
+            onChange={(styleId) => setStyle(styleId)}
+            options={VISUAL_STYLE_PRESETS.map((preset) => ({
+              value: preset.id,
+              label: preset.name,
+            }))}
           />
         </Form.Item>
 
@@ -661,6 +592,9 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
         {/* 本次将使用的 provider/model(只读,在设置页修改) */}
         <div style={{ marginBottom: 8 }}>
           <ProviderModelsSummary categories={mode === 'pure' ? ['video'] : ['video', 'image', 'llm']} />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <PipelinePreflightAlert result={directPreflight} />
         </div>
 
         {/* Aspect/Duration */}
@@ -817,7 +751,7 @@ const DirectVideoModal: React.FC<DirectVideoModalProps> = ({ open, onClose }) =>
               type="primary"
               icon={<VideoCameraOutlined />}
               loading={generating}
-              disabled={!hasVideoProvider || !prompt.trim() || (showAdvanced && !hasImageProvider)}
+              disabled={!hasVideoProvider || !prompt.trim() || !directPreflight.ok}
               onClick={handleGenerate}
             >
               {generating ? t('video.direct.generating') : t('video.direct.generate')}

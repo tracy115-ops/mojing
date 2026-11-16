@@ -1,0 +1,14 @@
+.studio-upload-settings { display: flex; flex-direction: column; gap: 16px; max-width: 900px; }
+.studio-upload-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.studio-upload-config-grid > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 13px; color: var(--text-secondary); }
+.studio-upload-config-grid .span-all { grid-column: 1 / -1; }
+.studio-upload-config-grid .ant-select { width: 100%; }
+.studio-upload-form { width: 100%; }
+.studio-upload-form > .ant-space-item > .ant-select { width: 100%; }
+.studio-upload-form details { border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); padding: 12px; }
+.studio-upload-form summary { cursor: pointer; color: var(--text-primary); }
+.studio-upload-form details[open] > summary { margin-bottom: 14px; }
+.studio-upload-form [data-testid=studio-upload-state] { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.studio-upload-form .ant-alert { overflow-wrap: anywhere; }
+.studio-upload-tasks { margin: 22px 0; }
+@media (max-width: 700px) { .studio-upload-config-grid { grid-template-columns: minmax(0, 1fr); } }

@@ -64,6 +64,20 @@ export const PROVIDER_CATEGORY: Record<string, 'llm' | 'image' | 'video' | 'tts'
   custom: 'llm',
 };
 
+export type ProviderCategory = 'llm' | 'image' | 'video' | 'tts';
+
+/** Resolve the category of one endpoint without applying enabled filtering. */
+export function getEndpointCategory(endpoint: Pick<ApiEndpoint, 'provider' | 'category'>): ProviderCategory | undefined {
+  return endpoint.category ?? PROVIDER_CATEGORY[endpoint.provider];
+}
+
+export function isEndpointInCategory(
+  endpoint: Pick<ApiEndpoint, 'provider' | 'category'>,
+  category: ProviderCategory,
+): boolean {
+  return getEndpointCategory(endpoint) === category;
+}
+
 const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
   llm: {
     primary: 'glm',
@@ -186,10 +200,7 @@ export const useProviderStore = create<ProviderState>()(
 
       setLLMProvider: (provider, model, endpointId) => {
         const endpoint = endpointId ? get().endpoints.find((ep) => ep.id === endpointId) : undefined;
-        let validModel = model ?? endpoint?.models?.[0] ?? get().config.llm.defaultModel;
-        if (provider === 'deepseek' && (!validModel || validModel.includes('gpt') || validModel.includes('claude'))) {
-          validModel = 'deepseek-chat';
-        }
+        const validModel = model ?? endpoint?.models?.[0] ?? get().config.llm.defaultModel;
         set((s) => ({
           config: {
             ...s.config,
@@ -206,12 +217,8 @@ export const useProviderStore = create<ProviderState>()(
       },
 
       setImageProvider: (provider, model, endpointId) => {
-        let validModel = model ?? get().config.image.defaultModel;
-        if (provider === 'agnes-image' && (!validModel || !validModel.startsWith('agnes-image') || validModel.includes('Kolors'))) {
-          validModel = 'agnes-image-2.1-flash';
-        } else if (provider === 'siliconflow-image' && (!validModel || validModel.startsWith('agnes-image'))) {
-          validModel = 'black-forest-labs/FLUX.1-schnell';
-        }
+        const endpoint = endpointId ? get().endpoints.find((ep) => ep.id === endpointId) : undefined;
+        const validModel = model ?? endpoint?.models?.[0] ?? get().config.image.defaultModel;
         set((s) => ({
           config: {
             ...s.config,
@@ -226,10 +233,8 @@ export const useProviderStore = create<ProviderState>()(
       },
 
       setVideoProvider: (provider, model, endpointId) => {
-        let validModel = model ?? get().config.video.defaultModel;
-        if (provider === 'agnes-video' && (!validModel || !validModel.startsWith('agnes-video'))) {
-          validModel = 'agnes-video-2.5-flash';
-        }
+        const endpoint = endpointId ? get().endpoints.find((ep) => ep.id === endpointId) : undefined;
+        const validModel = model ?? endpoint?.models?.[0] ?? get().config.video.defaultModel;
         set((s) => ({
           config: {
             ...s.config,
@@ -516,9 +521,7 @@ export const useProviderStore = create<ProviderState>()(
         const { endpoints } = get();
         return endpoints.filter((ep) => {
           if (!ep.enabled) return false;
-          // 优先用 endpoint 显式声明的 category(custom endpoint 必须有)
-          const cat = ep.category ?? PROVIDER_CATEGORY[ep.provider];
-          return cat === category;
+          return isEndpointInCategory(ep, category);
         });
       },
 
@@ -527,8 +530,11 @@ export const useProviderStore = create<ProviderState>()(
         const cfg = config[category];
         const endpointId = cfg?.endpointId;
         if (endpointId) {
-          const found = endpoints.find((ep) => ep.id === endpointId && ep.enabled);
-          if (found) return found;
+          const found = endpoints.find((ep) => ep.id === endpointId);
+          // An explicit binding is authoritative. Never silently switch to a
+          // different category or endpoint when that binding is stale.
+          if (found?.enabled && isEndpointInCategory(found, category)) return found;
+          return undefined;
         }
         // Fallback: first enabled endpoint whose provider belongs to this category.
         return get().getEndpointsByCategory(category)[0];
@@ -540,7 +546,7 @@ export const useProviderStore = create<ProviderState>()(
         const fallbackId = cfg?.fallbackEndpointId;
         if (fallbackId) {
           const found = endpoints.find((ep) => ep.id === fallbackId);
-          if (found) return found;
+          if (found?.enabled && isEndpointInCategory(found, category)) return found;
         }
         return undefined;
       },

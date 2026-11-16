@@ -2,10 +2,12 @@
 // 对 SceneAnchor[] 生成场景背景图。同 sceneId 跨镜共享一张。
 
 import { providerRouter } from '@/services/providers';
-import type { SceneAnchor, AspectRatio, ModelTier } from '@/types/video';
+import type { CharacterAnchor, SceneAnchor, AspectRatio, ModelTier } from '@/types/video';
 import { saveAsset } from '../asset-store';
-import { enrichScenePromptWithLLM, getStyleNameZh } from './prompt-enricher';
-import { detectInputLanguage } from './lang-detector';
+import { planImagePrompt } from './prompt-enricher';
+import { ENVIRONMENT_REFERENCE_VERSION } from './asset-reference-contract';
+
+export { ENVIRONMENT_REFERENCE_VERSION } from './asset-reference-contract';
 
 export interface SceneImageResult {
   scenes: SceneAnchor[];
@@ -14,7 +16,16 @@ export interface SceneImageResult {
 
 export async function runSceneImage(
   scenes: SceneAnchor[],
-  ctx: { aspectRatio: AspectRatio; style?: string; imageTier: ModelTier; novelProjectId: string; shouldAbort?: () => boolean },
+  ctx: {
+    aspectRatio: AspectRatio;
+    style?: string;
+    imageTier: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
+    novelProjectId: string;
+    characters?: CharacterAnchor[];
+    shouldAbort?: () => boolean;
+  },
   onProgress?: (done: number, total: number) => void,
 ): Promise<SceneImageResult> {
   if (!scenes.length) return { scenes, failed: [] };
@@ -25,7 +36,7 @@ export async function runSceneImage(
   let done = 0;
   let okCount = 0;
   let lastErr: unknown = null;
-  const total = scenes.filter((scene) => !scene.backgroundImage).length;
+  const total = scenes.filter((scene) => !isReusableEnvironmentReference(scene)).length;
   if (total === 0) return { scenes: result, failed: [] };
 
   for (let i = 0; i < scenes.length; i++) {
@@ -33,18 +44,35 @@ export async function runSceneImage(
       break;
     }
     const s = scenes[i];
-    if (result[i].backgroundImage) continue;
+    if (isReusableEnvironmentReference(result[i])) continue;
+    // Keep stale output visible if generation fails, but remove its verified
+    // status so downstream keyframe generation cannot reuse it.
+    result[i].backgroundReferenceRole = undefined;
+    result[i].backgroundReferenceVersion = undefined;
     try {
       if (i > 0) {
         await new Promise((resolve) => setTimeout(resolve, 800));
       }
-      const scenePrompt = await enrichScenePromptWithLLM(s, ctx.style);
+      const plan = await planImagePrompt({
+        purpose: 'scene_background',
+        scene: s,
+        style: ctx.style,
+        requestedAspectRatio: ctx.aspectRatio,
+        excludedEntities: collectEntityReferences(ctx.characters),
+        endpointId: ctx.imageEndpointId,
+        model: ctx.imageModel,
+      });
       const img = await providerRouter.generateImage({
         taskType: 'scene',
-        prompt: scenePrompt,
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+        parameters: plan.parameters,
+        aspectRatio: ctx.aspectRatio,
         width: dims.w,
         height: dims.h,
         style: ctx.style,
+        endpointId: ctx.imageEndpointId,
+        model: ctx.imageModel,
       });
       result[i].backgroundImage = await saveAsset(
         ctx.novelProjectId,
@@ -52,6 +80,8 @@ export async function runSceneImage(
         img.imageData,
         `scene_${sanitizeFileName(s.name)}`,
       );
+      result[i].backgroundReferenceRole = 'environment_only';
+      result[i].backgroundReferenceVersion = ENVIRONMENT_REFERENCE_VERSION;
       okCount++;
     } catch (err) {
       console.warn(`scene_image: failed for ${s.name}`, err);
@@ -72,16 +102,37 @@ export async function runSceneImage(
 
 export async function generateSingleSceneImage(
   scene: SceneAnchor,
-  ctx: { aspectRatio?: AspectRatio; style?: string; imageTier?: ModelTier; novelProjectId: string },
+  ctx: {
+    aspectRatio?: AspectRatio;
+    style?: string;
+    imageTier?: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
+    novelProjectId: string;
+    characters?: CharacterAnchor[];
+  },
 ): Promise<string> {
   const dims = aspectRatioToDims(ctx.aspectRatio || '16:9');
-  const scenePrompt = await enrichScenePromptWithLLM(scene, ctx.style);
+  const plan = await planImagePrompt({
+    purpose: 'scene_background',
+    scene,
+    style: ctx.style,
+    requestedAspectRatio: ctx.aspectRatio || '16:9',
+    excludedEntities: collectEntityReferences(ctx.characters),
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
+  });
   const img = await providerRouter.generateImage({
     taskType: 'scene',
-    prompt: scenePrompt,
+    prompt: plan.prompt,
+    negativePrompt: plan.negativePrompt,
+    parameters: plan.parameters,
+    aspectRatio: ctx.aspectRatio || '16:9',
     width: dims.w,
     height: dims.h,
     style: ctx.style,
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
   });
   const savedPath = await saveAsset(
     ctx.novelProjectId,
@@ -92,40 +143,21 @@ export async function generateSingleSceneImage(
   return savedPath;
 }
 
-function sanitizeFileName(s: string): string {
-  return s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+function collectEntityReferences(characters?: CharacterAnchor[]): string[] {
+  return [...new Set((characters ?? []).flatMap((character) => [
+    character.name,
+    ...(character.aliases ?? []),
+  ]).map((value) => value.trim()).filter(Boolean))];
 }
 
-function buildScenePrompt(s: SceneAnchor, style?: string): string {
-  const desc = s.description || '';
-  const fullText = `${s.name} ${desc} ${style || ''}`;
-  const isChinese = detectInputLanguage(fullText) === 'zh';
-  const styleZh = getStyleNameZh(style);
+function isReusableEnvironmentReference(scene: SceneAnchor): boolean {
+  return !!scene.backgroundImage
+    && scene.backgroundReferenceRole === 'environment_only'
+    && scene.backgroundReferenceVersion === ENVIRONMENT_REFERENCE_VERSION;
+}
 
-  if (isChinese) {
-    return [
-      `环境空景图：${s.name}`,
-      desc,
-      '纯背景画面，无人物，无人影，无角色，仅风景建筑环境',
-      '广角视角，电影级构图，三分法，大气光影',
-      `${styleZh}风格`,
-      '高清细节大作',
-      '无文字，无水印，无签名，无人物',
-    ]
-      .filter(Boolean)
-      .join('，');
-  }
-  return [
-    `environment establishing shot of ${s.name}`,
-    desc,
-    'empty scene, no humans, no people, no character, background scenery only',
-    'wide angle, cinematic composition, rule of thirds, atmospheric lighting',
-    style ? `${style} style` : 'cinematic style',
-    '8k detail, photorealistic',
-    'no text, no watermark, no signature, no people',
-  ]
-    .filter(Boolean)
-    .join(', ');
+function sanitizeFileName(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 }
 
 function aspectRatioToDims(ar: AspectRatio): { w: number; h: number } {

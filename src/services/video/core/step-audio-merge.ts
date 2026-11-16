@@ -55,7 +55,7 @@ export async function runAudioMerge(
     const shot = shots[i];
     const clip = ctx.clips.find((c) => c.shotId === shot.id);
 
-    if (!shot.audioTrack || !clip) {
+    if (!shot.audioTrack || !clip || clip.importedVideo?.audio === 'preserve') {
       // 没音轨或没 clip,跳过
       onProgress?.(i + 1, total);
       continue;

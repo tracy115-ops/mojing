@@ -10,6 +10,7 @@ import type {
   TTSResponse,
   ApiEndpoint,
 } from '@/types/providers';
+import { applyUnconsumedGenerationParameters } from './parameter-transport.ts';
 
 // --- fetch timeout helper ---
 //
@@ -70,6 +71,34 @@ export abstract class BaseImageProvider {
 
   abstract generate(request: ImageGenerateRequest): Promise<ImageGenerateResponse>;
 
+  /**
+   * Return a sanitized preview of the parameters the adapter will transport.
+   * Concrete adapters can override this when their native API renames or
+   * derives normalized application fields.
+   */
+  getWireParameterSnapshot(request: ImageGenerateRequest): Record<string, unknown> {
+    const wire: Record<string, unknown> = {
+      ...(request.model !== undefined ? { model: request.model } : {}),
+      ...(request.size !== undefined ? { size: request.size } : {}),
+      ...(request.width !== undefined ? { width: request.width } : {}),
+      ...(request.height !== undefined ? { height: request.height } : {}),
+      ...(request.aspectRatio !== undefined ? { aspectRatio: request.aspectRatio } : {}),
+      ...(request.negativePrompt !== undefined ? { negativePrompt: request.negativePrompt } : {}),
+      ...(request.style !== undefined ? { style: request.style } : {}),
+      ...(request.quality !== undefined ? { quality: request.quality } : {}),
+      ...(request.steps !== undefined ? { steps: request.steps } : {}),
+      ...(request.guidanceScale !== undefined ? { guidanceScale: request.guidanceScale } : {}),
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      referenceImageCount: request.referenceImages?.length ?? 0,
+    };
+    applyUnconsumedGenerationParameters(
+      wire,
+      request,
+      ['model', 'size', 'width', 'height', 'aspectRatio', 'negativePrompt', 'style', 'quality', 'steps', 'guidanceScale', 'seed'],
+    );
+    return wire;
+  }
+
   protected getHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -110,6 +139,35 @@ export abstract class BaseVideoProvider {
 
   abstract generate(request: VideoGenerateRequest): Promise<VideoGenerateResponse>;
   abstract checkStatus(taskId: string): Promise<{ status: string; progress: number; result?: VideoGenerateResponse; failReason?: string }>;
+
+  /**
+   * Return a sanitized preview of the parameters the adapter will transport.
+   * Concrete adapters can override this when their native API renames or
+   * derives normalized application fields.
+   */
+  getWireParameterSnapshot(request: VideoGenerateRequest): Record<string, unknown> {
+    const wire: Record<string, unknown> = {
+      ...(request.model !== undefined ? { model: request.model } : {}),
+      ...(request.durationSeconds !== undefined ? { durationSeconds: request.durationSeconds } : {}),
+      ...(request.fps !== undefined ? { fps: request.fps } : {}),
+      ...(request.width !== undefined ? { width: request.width } : {}),
+      ...(request.height !== undefined ? { height: request.height } : {}),
+      ...(request.aspectRatio !== undefined ? { aspectRatio: request.aspectRatio } : {}),
+      ...(request.negativePrompt !== undefined ? { negativePrompt: request.negativePrompt } : {}),
+      ...(request.seed !== undefined ? { seed: request.seed } : {}),
+      ...(request.numInferenceSteps !== undefined ? { numInferenceSteps: request.numInferenceSteps } : {}),
+      ...(request.mode !== undefined ? { mode: request.mode } : {}),
+      ...(request.controlMode !== undefined ? { controlMode: request.controlMode } : {}),
+      referenceImageCount: request.referenceImages?.length ?? 0,
+      subjectReferenceCount: request.subjectReferences?.length ?? 0,
+    };
+    applyUnconsumedGenerationParameters(
+      wire,
+      request,
+      ['model', 'durationSeconds', 'fps', 'width', 'height', 'aspectRatio', 'negativePrompt', 'seed', 'numInferenceSteps', 'mode'],
+    );
+    return wire;
+  }
 
   protected getHeaders(): Record<string, string> {
     return {

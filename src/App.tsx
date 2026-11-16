@@ -105,7 +105,7 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
-      <Toaster position="top-center" theme={isDark ? 'dark' : 'light'} duration={3000} />
+      <Toaster position="bottom-right" offset={36} theme={isDark ? 'dark' : 'light'} duration={3000} />
       <StyleProvider>
         <ConfigProvider
           locale={antdLocale}

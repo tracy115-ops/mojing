@@ -51,3 +51,5 @@ npm-debug.log*
 # Zip & Temp
 *.zip
 leonardo-video-dropdown
+/artifacts/
+/temp_video_inspection/

@@ -15,8 +15,8 @@ import type {
   PropSpec,
   ShotSpec,
   CostumeVariant,
+  CharacterEntityType,
 } from '@/types/video';
-import { detectInputLanguage } from './lang-detector';
 import { useSettingsStore } from '@/stores/settingsStore';
 
 export interface ExtractInput {
@@ -26,6 +26,8 @@ export interface ExtractInput {
   shots?: ShotSpec[];
   /** 已有的角色(Novel 通道从 NovelBible 注入,合并去重) */
   existingCharacters?: CharacterAnchor[];
+  /** 正式生成关闭回退，避免伪角色进入参考图链路。 */
+  allowFallback?: boolean;
 }
 
 export interface ExtractResult {
@@ -39,11 +41,14 @@ export interface ExtractResult {
 interface LLMExtract {
   characters?: Array<{
     name?: string;
+    aliases?: string[];
     appearance?: string;
+    entityType?: string;
     gender?: string;
     ageGroup?: string;
     costumeVariants?: Array<{ id?: string; description?: string }>;
     firstAppearShotIndex?: number;
+    seed?: number;
   }>;
   scenes?: Array<{
     name?: string;
@@ -61,16 +66,17 @@ interface LLMExtract {
  * 失败不阻塞,返回空数组。
  */
 export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
-  const lang = detectInputLanguage(input.text);
-  const customSystem = lang === 'zh'
-    ? useSettingsStore.getState().settings.creative.promptTemplates?.extractZh
-    : useSettingsStore.getState().settings.creative.promptTemplates?.extractEn;
-
-  const systemPrompt = customSystem && customSystem.trim()
-    ? customSystem
-    : lang === 'zh'
-      ? SYSTEM_PROMPT_ZH
-      : SYSTEM_PROMPT_EN;
+  const templates = useSettingsStore.getState().settings.creative.promptTemplates;
+  const customSystem = useSettingsStore.getState().settings.creative.promptTemplatesEnabled
+    ? templates?.extractEn || templates?.extractZh
+    : undefined;
+  const systemPrompt = customSystem?.trim() || [
+    'You are a schema-constrained entity extraction model.',
+    'Extract only entities, attributes, locations, props, and shot bindings explicitly supported by the supplied source.',
+    'Preserve the source language and wording. Do not invent appearance, age, gender, clothing, identity, setting details, or visual style.',
+    'Classify entities as human, non_human, object, or unknown. A speaker or mentioned target is not automatically visible in a shot.',
+    'Return JSON with characters, scenes, props, characterIdMap, and sceneIdMap. Use unknown or an empty field when the source does not provide a fact.',
+  ].join('\n');
 
   const request: LLMGenerateRequest = {
     taskType: 'extraction',
@@ -84,7 +90,20 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
   try {
     const resp = await providerRouter.generate(request);
     let parsed: any = parseLLMJson<any>(resp.content);
-    if (!parsed) return fallbackHeuristicExtract(input);
+    if (!parsed) {
+      const repairResp = await providerRouter.generate({
+        ...request,
+        userPrompt: `${request.userPrompt}\n\n上一次输出格式无效。只返回符合 system schema 的 JSON 对象，不要 Markdown、解释或代码围栏。`,
+        temperature: 0.1,
+      });
+      parsed = parseLLMJson<any>(repairResp.content);
+    }
+    if (!parsed) {
+      if (input.allowFallback === false) {
+        throw new Error('角色场景提取模型未返回有效 JSON');
+      }
+      return fallbackHeuristicExtract(input);
+    }
 
     if (Array.isArray(parsed)) {
       parsed = { characters: parsed };
@@ -107,203 +126,185 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
 
     // 用 characterIdMap / sceneIdMap 把 ShotSpec 里的占位 id 换成真实 id
     const nameToId = new Map(characters.map((c) => [c.name, c.id]));
-    const sceneNameToId = new Map(scenes.map((s) => [s.name, s.id]));
+    const sceneNameToId = new Map(scenes.map((s) => [normalizeSceneLabel(s.name), s.id]));
     const charPlaceholderToName = parsed.characterIdMap ?? {};
     const scenePlaceholderToName = parsed.sceneIdMap ?? {};
     const resolvedShots = input.shots?.map((sh) => {
-      let charIds = (sh.characterIds || [])
-        .map((pid) => {
-          const name = charPlaceholderToName[pid];
-          return name ? nameToId.get(name) : undefined;
-        })
-        .filter((x): x is string => !!x);
+      const declaredCharacterRefs = getVisibleCharacterRefs(sh)
+        .map((ref) => String(ref).trim())
+        .filter(Boolean);
+      const offscreenCharacterRefs = getOffscreenCharacterRefs(sh)
+        .map((ref) => String(ref).trim())
+        .filter(Boolean);
+      const explicitBinding = hasExplicitCharacterBinding(sh);
+      const declaredIds = resolveCharacterRefs(
+        declaredCharacterRefs,
+        characters,
+        nameToId,
+        charPlaceholderToName,
+      );
 
-      // 如果通过占位符未匹配到角色，通过画面提示词、原文本与对白智能语义回填 characterIds
-      if (charIds.length === 0 && characters.length > 0) {
-        const fullText = [
-          sh.videoPrompt || '',
-          sh.sourceText || '',
-          sh.narration || '',
-          sh.dialogue?.map((d) => d.speaker).join(' ') || '',
-        ].join(' ').toLowerCase();
-
-        const matched = new Set<string>();
-        for (const c of characters) {
-          const cName = c.name.toLowerCase();
-          const aliases = (c.aliases || []).map((a) => a.toLowerCase());
-          if (
-            (cName.length >= 2 && fullText.includes(cName)) ||
-            aliases.some((a) => a.length >= 2 && fullText.includes(a))
-          ) {
-            matched.add(c.id);
-          }
-        }
-        charIds = Array.from(matched);
+      const offscreenIds = resolveLooseCharacterRefs(offscreenCharacterRefs, characters);
+      let charIds = declaredIds;
+      if (!explicitBinding) {
+        // Inferred shots may recover names that are present in visual text, but
+        // they must never inherit the only project character by default.
+        charIds = [...new Set([
+          ...charIds,
+          ...matchCharactersInText(buildShotSubjectText(sh), characters, new Set(offscreenIds)),
+        ])];
       }
+      charIds = charIds.filter((id) => !offscreenIds.includes(id));
 
-      const mappedSceneId = sh.sceneId
-        ? (() => {
-            const name = scenePlaceholderToName[sh.sceneId!];
-            return name ? sceneNameToId.get(name) : sh.sceneId;
-          })()
-        : (scenes[0]?.id || sh.sceneId);
+      const unresolvedCharacterRefs = explicitBinding
+        ? declaredCharacterRefs.filter((ref) => !resolveCharacterRefs(
+          [ref],
+          characters,
+          nameToId,
+          charPlaceholderToName,
+        ).length && !resolveLooseCharacterRefs([ref], characters).length)
+        : [];
+      const mappedSceneId = resolveShotSceneId(sh, scenes, scenePlaceholderToName, sceneNameToId);
 
+      const binding: 'explicit' | 'inferred' = explicitBinding ? 'explicit' : 'inferred';
       return {
         ...sh,
         characterIds: charIds,
+        visibleCharacterIds: charIds,
+        offscreenCharacterIds: offscreenIds,
+        characterBinding: binding,
+        unresolvedCharacterRefs: unresolvedCharacterRefs.length > 0
+          ? [...new Set(unresolvedCharacterRefs)]
+          : undefined,
         sceneId: mappedSceneId,
       };
     });
 
     return { characters, scenes, props, resolvedShots };
   } catch (err) {
+    if (input.allowFallback === false) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`角色与场景提取失败，已停止后续生成：${reason}`);
+    }
     console.warn('stepExtract: LLM failed, using heuristic rule fallback', err);
     return fallbackHeuristicExtract(input);
   }
 }
 
-const SYSTEM_PROMPT_ZH = `你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。所有输出的描述文本必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
-
-【输出 JSON】严格遵循:
-{
-  "characters": [
-    {
-      "name": "角色名",
-      "appearance": "纯中文完整外貌描述:性别/年龄/脸型/发型发色/服饰/体型特征",
-      "gender": "male | female | unknown",
-      "ageGroup": "child | teen | young | middle | elder | unknown",
-      "costumeVariants": [
-        {"id": "default", "description": "默认服装"},
-        {"id": "rain",    "description": "雨夜变装"}
-      ],
-      "firstAppearShotIndex": 0
-    }
-  ],
-  "scenes": [
-    {"name": "场景名", "description": "纯中文环境描述", "firstAppearShotIndex": 0}
-  ],
-  "props": [
-    {"name": "道具名", "description": "纯中文描述"}
-  ],
-  "characterIdMap": {"char_0": "角色名", "char_1": "角色名"},
-  "sceneIdMap":     {"scene_0": "场景名"}
-}
-
-【规则】
-- 同名角色合并,描述取所有提及的并集
-- 换装场景必须输出 costumeVariants
-- characterIdMap / sceneIdMap 用于回填分镜里的占位 id
-- 道具只提取推动剧情的关键道具,不提取背景物件
-
-【服饰与特色设定必须 100% 严格忠实于原文剧本，绝对禁止篡改或脑补】
-若原文中明确提及了角色的具体服装与造型（例如：淡青色长裙、古风襦裙、黄色僧袍、黑色圆墨镜、铠甲、现代西装、风衣等），appearance 字段中必须 100% 严格忠实采信原文指定的服装款式，绝不允许擅自更改，也绝对严禁凭空脑补原文未提及的现代短裙或异样服饰！
-
-【appearance 字段必须区分多角色 — 极重要】
-多个角色同时出现时,每个角色的 appearance **必须**写出可识别的、互不重叠的面部特征,
-不能只换衣服或换发型。必须包含:
-1. 脸型 + 五官特征(如:方脸浓眉/圆脸大眼/瘦削高鼻梁/苹果脸颊)
-2. 肤色 + 明显的标记(如:苍白肤色/小麦色皮肤/雀斑/疤痕/痣)
-3. 发色 + 发长 + 发型(如:黑色齐刘海短发/银白色波浪长发/红色扎马尾)
-4. 体型 + 身高(如:瘦高/娇小/健壮)
-5. 服饰(必须 100% 忠实原文指定的服装款式与色彩)
-6. 年龄感(如:20 岁出头/近 40 岁/少年)
-
-【动物 / 拟人化角色 / 灵兽 / 宠物 — 必须 100% 作为独立角色（character）提取】
-- 剧本中的任何动物角色（例如：胖橘猫、猫大师、大黄狗、灵狐、宠物、神兽、妖怪等），只要有动作、台词、交互或神态，**必须 100% 提取到 characters 数组中作为独立角色！绝对严禁遗漏！绝对严禁误放入道具（props）或场景中！**
-- 角色名称：忠实保留原文称谓（例如 "胖橘猫" 或 "猫大师"）。
-- appearance 字段：必须详尽描述其物理生物形态（如：一只体型圆滚微胖的橘色斑纹猫咪，白肚皮）以及服饰道具（如：佩戴一副精致的黑色圆墨镜，身穿黄色古风僧袍，神态沉稳老成）。
-
-如果原文没明确给出某些细节,请根据角色名字、性格、剧情定位主动补充合理的区分性特征,
-保证两个角色站在一起时,观众能一眼分辨谁是谁。
-不要写"普通长相""年轻女性"这种泛化描述。`;
-
-const SYSTEM_PROMPT_EN = `You are a script analyzer. Extract structured character, scene, and prop information from the text. All description fields MUST be 100% in English!
-
-[Output JSON Specs]:
-{
-  "characters": [
-    {
-      "name": "Character Name",
-      "appearance": "Full English appearance: gender/age/face/hair/clothing/distinguishing features",
-      "gender": "male | female | unknown",
-      "ageGroup": "child | teen | young | middle | elder | unknown",
-      "costumeVariants": [
-        {"id": "default", "description": "default outfit"}
-      ],
-      "firstAppearShotIndex": 0
-    }
-  ],
-  "scenes": [
-    {"name": "Scene Name", "description": "English environment description", "firstAppearShotIndex": 0}
-  ],
-  "props": [
-    {"name": "Prop Name", "description": "English description"}
-  ],
-  "characterIdMap": {"char_0": "Character Name"},
-  "sceneIdMap":     {"scene_0": "Scene Name"}
-}
-
-[Rules]
-- Merge characters with the same name.
-- Non-human / animal / unique characters (like anthropomorphic chubby orange cat wearing sunglasses and monk robes) MUST be extracted as characters, NEVER omit them or classify as props!
-- Keep descriptions clear and distinct.`;
-
 function buildUserPrompt(input: ExtractInput): string {
-  const shotsHint = input.shots?.length
-    ? `\n\n【已切分的镜头(含占位 id)】\n${input.shots
-        .map(
-          (s, i) =>
-            `- 镜头${i}: id=${s.id} prompt=${(s.videoPrompt || s.sourceText || '').slice(0, 100)} characters=${s.characterIds.join(',')} scene=${s.sceneId ?? '-'}`,
-        )
-        .join('\n')}`
-    : '';
-  return `请从下面的文本中提取所有角色（包含所有人类角色、动物/拟人化角色如胖橘猫/灵兽等，严禁遗漏动物角色！）、场景与道具。
-
-【重要约束】
-1. 绝对不要遗漏任何出场角色（包括人类、宠物、动物大师、灵兽等，如胖橘猫必须作为角色提取）！
-2. 角色服饰（如 JK裙、黄色僧袍等）必须严格遵循原文，绝不可篡改！
-${shotsHint}
-
-【正文与分镜文本】
-${input.text.slice(0, 6000)}`;
+  return JSON.stringify({
+    sourceText: input.text,
+    existingCharacters: input.existingCharacters?.map((character) => ({
+      id: character.id,
+      name: character.name,
+      aliases: character.aliases,
+      appearance: character.appearance,
+      entityType: character.entityType,
+      gender: character.gender,
+      ageGroup: character.ageGroup,
+      costumeVariants: character.costumeVariants,
+    })),
+    shots: input.shots?.map((shot) => ({
+      id: shot.id,
+      index: shot.index,
+      sourceText: shot.sourceText,
+      videoPrompt: shot.videoPrompt,
+      visibleCharacterRefs: getVisibleCharacterRefs(shot),
+      offscreenCharacterRefs: getOffscreenCharacterRefs(shot),
+      characterBinding: shot.characterBinding,
+      location: shot.location,
+      sceneId: shot.sceneId,
+    })),
+  }, null, 2);
 }
 
 function normalizeCharacters(arr: NonNullable<LLMExtract['characters']>): CharacterAnchor[] {
-  return arr.map((c, i) => {
+  return arr.flatMap((c, i) => {
+    const name = typeof c.name === 'string' ? c.name.trim() : '';
+    if (!name) return [];
     const variants: CostumeVariant[] | undefined =
       Array.isArray(c.costumeVariants) && c.costumeVariants.length
         ? c.costumeVariants.map((v) => ({
             id: String(v.id ?? 'default'),
             description: String(v.description ?? ''),
-          }))
+        }))
         : undefined;
-    return {
+    return [{
       id: `char_${Date.now()}_${i}`,
-      name: String(c.name ?? `角色${i + 1}`),
+      name,
+      aliases: Array.isArray(c.aliases)
+        ? c.aliases.map(String).map((value) => value.trim()).filter(Boolean)
+        : undefined,
       appearance: String(c.appearance ?? ''),
+      entityType: normalizeEntityType(c.entityType),
       gender: normalizeGender(c.gender),
       ageGroup: normalizeAgeGroup(c.ageGroup),
       costumeVariants: variants,
       firstAppearShotIndex: clampIndex(c.firstAppearShotIndex),
-    };
+      seed: typeof c.seed === 'number' && Number.isFinite(c.seed) ? c.seed : undefined,
+    }];
   });
 }
 
 function normalizeScenes(arr: NonNullable<LLMExtract['scenes']>): SceneAnchor[] {
-  return arr.map((s, i) => ({
-    id: `scene_${Date.now()}_${i}`,
-    name: String(s.name ?? `场景${i + 1}`),
-    description: String(s.description ?? ''),
-    firstAppearShotIndex: clampIndex(s.firstAppearShotIndex),
-  }));
+  return arr.flatMap((s, i) => {
+    const name = typeof s.name === 'string' ? s.name.trim() : '';
+    if (!name) return [];
+    return [{
+      id: `scene_${Date.now()}_${i}`,
+      name,
+      description: String(s.description ?? ''),
+      firstAppearShotIndex: clampIndex(s.firstAppearShotIndex),
+    }];
+  });
+}
+
+function normalizeSceneLabel(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function resolveShotSceneId(
+  shot: ShotSpec,
+  scenes: SceneAnchor[],
+  placeholderToName: Record<string, string>,
+  sceneNameToId: Map<string, string>,
+): string | undefined {
+  if (shot.sceneId) {
+    const mappedName = placeholderToName[shot.sceneId];
+    const mappedId = mappedName ? sceneNameToId.get(normalizeSceneLabel(mappedName)) : undefined;
+    if (mappedId) return mappedId;
+    if (scenes.some((scene) => scene.id === shot.sceneId)) return shot.sceneId;
+  }
+
+  const location = normalizeSceneLabel(shot.location || '');
+  if (location) {
+    const matches = scenes
+      .filter((scene) => {
+        const name = normalizeSceneLabel(scene.name);
+        return name && (name === location || name.includes(location) || location.includes(name));
+      })
+      .sort((a, b) => normalizeSceneLabel(b.name).length - normalizeSceneLabel(a.name).length);
+    if (matches[0]) return matches[0].id;
+  }
+
+  if (scenes.length === 1) return scenes[0].id;
+
+  const candidates = scenes
+    .filter((scene) => scene.firstAppearShotIndex <= shot.index)
+    .sort((a, b) => b.firstAppearShotIndex - a.firstAppearShotIndex);
+  return candidates[0]?.id;
 }
 
 function normalizeProps(arr: NonNullable<LLMExtract['props']>): PropSpec[] {
-  return arr.map((p, i) => ({
-    id: `prop_${Date.now()}_${i}`,
-    name: String(p.name ?? `道具${i + 1}`),
-    description: String(p.description ?? ''),
-  }));
+  return arr.flatMap((p, i) => {
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    if (!name) return [];
+    return [{
+      id: `prop_${Date.now()}_${i}`,
+      name,
+      description: String(p.description ?? ''),
+    }];
+  });
 }
 
 function mergeCharacters(
@@ -311,111 +312,73 @@ function mergeCharacters(
   existing: CharacterAnchor[],
 ): CharacterAnchor[] {
   if (!existing.length) return fresh;
-  const merged = new Map(existing.map((c) => [c.name, { ...c }]));
+  const merged: CharacterAnchor[] = existing.map((c) => ({
+    ...c,
+    aliases: c.aliases ? [...c.aliases] : undefined,
+    entityType: c.entityType ?? 'unknown',
+  }));
   for (const c of fresh) {
-    const prev = merged.get(c.name);
+    const prev = merged.find((candidate) => characterReferenceMatches(c.name, candidate));
     if (prev) {
-      // 合并描述,优先采信新提取
-      prev.appearance = c.appearance || prev.appearance;
-      prev.costumeVariants = c.costumeVariants ?? prev.costumeVariants;
-      prev.gender = c.gender ?? prev.gender;
-      prev.ageGroup = c.ageGroup ?? prev.ageGroup;
+      // Existing library facts are authoritative; only fill missing fields.
+      prev.appearance = prev.appearance || c.appearance;
+      prev.entityType = prev.entityType !== 'unknown' ? prev.entityType : c.entityType;
+      prev.costumeVariants = prev.costumeVariants ?? c.costumeVariants;
+      prev.gender = prev.gender !== 'unknown' ? prev.gender : c.gender;
+      prev.ageGroup = prev.ageGroup !== 'unknown' ? prev.ageGroup : c.ageGroup;
+      prev.aliases = [...new Set([...(prev.aliases ?? []), c.name, ...(c.aliases ?? [])])]
+        .filter((alias) => alias && alias !== prev.name);
+      prev.seed = prev.seed ?? c.seed;
     } else {
-      merged.set(c.name, c);
+      merged.push({ ...c });
     }
   }
-  return Array.from(merged.values());
+  return merged;
 }
 
 function fallbackHeuristicExtract(input: ExtractInput): ExtractResult {
   const characters: CharacterAnchor[] = [...(input.existingCharacters ?? [])];
-  const charNames = new Set(characters.map((c) => c.name));
+  // A heuristic fallback preserves only known library entities. It must never
+  // turn an untrusted storyboard label into a new character asset.
+  const scenes: SceneAnchor[] = [];
 
-  // 1. 从 shots 的 dialogue 和 sourceText/videoPrompt 中提取角色
-  if (input.shots && input.shots.length > 0) {
-    for (const shot of input.shots) {
-      if (shot.dialogue && shot.dialogue.length > 0) {
-        for (const d of shot.dialogue) {
-          const name = d.speaker?.trim();
-          if (name && name !== '未知' && name !== '旁白' && !charNames.has(name)) {
-            charNames.add(name);
-            const isFemale = /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹|清雪/i.test(name);
-            const isMale = /男|哥|弟|汉|僧|师兄|大师|宗主|尊者|父|林墨|张小凡|凡/i.test(name);
-            characters.push({
-              id: `char_${Date.now()}_${characters.length}`,
-              name,
-              gender: isFemale ? 'female' : isMale ? 'male' : 'unknown',
-              ageGroup: 'young',
-              appearance: `${name}，生动传神的形象外貌，服饰细节完整，高清电影级质感。`,
-              firstAppearShotIndex: shot.index ?? 0,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  // 2. 从 input.text 中通过正则匹配 "角色名：" 或 "【角色名】"
-  const speakerRegex = /(?:^|\n)(?:【([^】\n]+)】|([^\s:：\n"“]{2,8}))[：:]/g;
-  let match: RegExpExecArray | null;
-  while ((match = speakerRegex.exec(input.text)) !== null) {
-    const name = (match[1] || match[2])?.trim();
-    if (name && name !== '未知' && name !== '旁白' && !charNames.has(name) && name.length <= 8) {
-      charNames.add(name);
-      const isFemale = /女|妹|姐|娘|妇|姬|雪|琳|雅|母|儿|师妹|清雪/i.test(name);
-      const isMale = /男|哥|弟|汉|僧|师兄|大师|宗主|尊者|父|林墨|张小凡|凡/i.test(name);
-      characters.push({
-        id: `char_${Date.now()}_${characters.length}`,
-        name,
-        gender: isFemale ? 'female' : isMale ? 'male' : 'unknown',
-        ageGroup: 'young',
-        appearance: `${name}，生动传神的形象外貌，服饰细节完整，高清电影级质感。`,
-        firstAppearShotIndex: 0,
-      });
-    }
-  }
-
-  // 3. 若依然没有提取到任何角色，构造一个默认主角
-  if (characters.length === 0) {
-    characters.push({
-      id: `char_${Date.now()}_0`,
-      name: '故事主角',
-      gender: 'unknown',
-      ageGroup: 'young',
-      appearance: '故事核心主角，五官生动传神，服饰细节精致，高清电影级质感。',
-      firstAppearShotIndex: 0,
-    });
-  }
-
-  // 4. 构造默认场景
-  const scenes: SceneAnchor[] = [
-    {
-      id: `scene_${Date.now()}_0`,
-      name: '故事主场景',
-      description: '电影级故事环境背景，光影流动，环境细节丰富。',
-      firstAppearShotIndex: 0,
-    },
-  ];
-
-  // 5. 回填 shots 的 characterIds
-  const nameToId = new Map(characters.map((c) => [c.name, c.id]));
+  // Resolve only references that are already present in the entity library.
   const resolvedShots = input.shots?.map((sh) => {
+    const visibleRefs = getVisibleCharacterRefs(sh).map(String).map((ref) => ref.trim()).filter(Boolean);
+    const offscreenRefs = getOffscreenCharacterRefs(sh).map(String).map((ref) => ref.trim()).filter(Boolean);
+    const explicitBinding = hasExplicitCharacterBinding(sh);
     const matchedIds = new Set<string>();
-    if (sh.dialogue) {
-      for (const d of sh.dialogue) {
-        const id = nameToId.get(d.speaker);
-        if (id) matchedIds.add(id);
+    const nameToId = new Map(characters.map((c) => [c.name, c.id]));
+    for (const id of [
+      ...resolveCharacterRefs(visibleRefs, characters, nameToId, {}),
+      ...resolveLooseCharacterRefs(visibleRefs, characters),
+    ]) {
+      matchedIds.add(id);
+    }
+    const offscreenIds = resolveLooseCharacterRefs(offscreenRefs, characters);
+    if (!explicitBinding) {
+      for (const id of matchCharactersInText(buildShotSubjectText(sh), characters, new Set(offscreenIds))) {
+        matchedIds.add(id);
       }
     }
-    for (const c of characters) {
-      if (sh.videoPrompt?.includes(c.name) || sh.sourceText?.includes(c.name)) {
-        matchedIds.add(c.id);
-      }
-    }
+    offscreenIds.forEach((id) => matchedIds.delete(id));
+
+    const fallbackId = Array.from(matchedIds);
+    const unresolvedCharacterRefs = explicitBinding
+      ? visibleRefs.filter((ref) => !resolveCharacterRefs([ref], characters, nameToId, {}).length
+        && !resolveLooseCharacterRefs([ref], characters).length)
+      : [];
+    const binding: 'explicit' | 'inferred' = explicitBinding ? 'explicit' : 'inferred';
     return {
       ...sh,
-      characterIds: matchedIds.size > 0 ? Array.from(matchedIds) : (characters[0] ? [characters[0].id] : []),
-      sceneId: scenes[0].id,
+      characterIds: fallbackId,
+      visibleCharacterIds: fallbackId,
+      offscreenCharacterIds: offscreenIds,
+      characterBinding: binding,
+      unresolvedCharacterRefs: unresolvedCharacterRefs.length > 0
+        ? [...new Set(unresolvedCharacterRefs)]
+        : undefined,
+      sceneId: undefined,
     };
   });
 
@@ -427,6 +390,111 @@ function fallbackHeuristicExtract(input: ExtractInput): ExtractResult {
   };
 }
 
+function normalizeCharacterRef(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s·・._-]/g, '');
+}
+
+function characterReferenceMatches(reference: string, character: CharacterAnchor): boolean {
+  const normalized = normalizeCharacterRef(reference);
+  if (!normalized) return false;
+  return [character.id, character.name, ...(character.aliases ?? [])]
+    .map(normalizeCharacterRef)
+    .some((candidate) => candidate === normalized);
+}
+
+function resolveLooseCharacterRefs(refs: string[], characters: CharacterAnchor[]): string[] {
+  const resolved = new Set<string>();
+  for (const ref of refs) {
+    const exact = characters.filter((character) => characterReferenceMatches(ref, character));
+    if (exact.length > 0) {
+      exact.forEach((character) => resolved.add(character.id));
+      continue;
+    }
+  }
+  return Array.from(resolved);
+}
+
+function resolveCharacterRefs(
+  refs: string[],
+  characters: CharacterAnchor[],
+  nameToId: Map<string, string>,
+  placeholderToName: Record<string, string>,
+): string[] {
+  const byId = new Map(characters.map((c) => [c.id.toLowerCase(), c.id]));
+  const byName = new Map<string, string>();
+  for (const character of characters) {
+    byName.set(character.name.toLowerCase(), character.id);
+    for (const alias of character.aliases || []) byName.set(alias.toLowerCase(), character.id);
+  }
+
+  const resolved = new Set<string>();
+  for (const ref of refs) {
+    const normalized = ref.trim().toLowerCase();
+    if (!normalized) continue;
+    const mappedName = placeholderToName[ref] || placeholderToName[normalized];
+    const mappedId = mappedName ? (nameToId.get(mappedName) || byName.get(mappedName.toLowerCase())) : undefined;
+    const directId = byId.get(normalized);
+    const directName = byName.get(normalized);
+    const placeholderIndex = normalized.match(/^char[_-]?(\d+)$/)?.[1];
+    const indexed = placeholderIndex ? characters[Number(placeholderIndex)]?.id : undefined;
+    const id = mappedId || directId || directName || indexed;
+    if (id) resolved.add(id);
+  }
+  return Array.from(resolved);
+}
+
+function matchCharactersInText(
+  text: string,
+  characters: CharacterAnchor[],
+  excludedIds: Set<string> = new Set(),
+): string[] {
+  const normalized = text.toLowerCase();
+  const exact = characters
+    .filter((character) => {
+      if (excludedIds.has(character.id)) return false;
+      const names = [character.name, ...(character.aliases || [])]
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length >= 2);
+      return names.some((name) => normalized.includes(name));
+    })
+    .map((character) => character.id);
+
+  return [...new Set(exact)];
+}
+
+function getVisibleCharacterRefs(shot: ShotSpec): string[] {
+  const candidate = (shot as ShotSpec & { visibleCharacterIds?: string[] }).visibleCharacterIds;
+  return Array.isArray(candidate) ? candidate : (shot.characterIds || []);
+}
+
+function getOffscreenCharacterRefs(shot: ShotSpec): string[] {
+  const candidate = (shot as ShotSpec & { offscreenCharacterIds?: string[] }).offscreenCharacterIds;
+  return Array.isArray(candidate) ? candidate : [];
+}
+
+function hasExplicitCharacterBinding(shot: ShotSpec): boolean {
+  if (shot.characterBinding === 'explicit') return true;
+  if (shot.characterBinding === 'inferred') return false;
+  // Legacy shots with a non-empty characterIds list already carried a deliberate
+  // binding. An explicit visibleCharacterIds field also makes [] authoritative.
+  return getVisibleCharacterRefs(shot).length > 0 || Object.prototype.hasOwnProperty.call(shot, 'visibleCharacterIds');
+}
+
+/**
+ * Build the visible-subject text used for binding. Dialogue content may name
+ * an off-screen target, so only the visual prompt and
+ * dialogue speakers are allowed to introduce a reference subject.
+ */
+function buildShotSubjectText(shot: ShotSpec): string {
+  const visualText = shot.videoPrompt?.trim() || shot.sourceText?.trim() || '';
+  const speakerText = (shot.dialogue ?? []).map((dialogue) => dialogue.speaker || '').join(' ');
+  return [visualText, shot.location || '', shot.startState || '', shot.endState || '', speakerText]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+
 function normalizeGender(v: unknown): CharacterAnchor['gender'] {
   if (typeof v !== 'string') return 'unknown';
   const s = v.trim().toLowerCase();
@@ -434,9 +502,15 @@ function normalizeGender(v: unknown): CharacterAnchor['gender'] {
   // 英文
   if (s === 'male' || s === 'm' || s === 'man' || s === 'boy' || s === 'guy') return 'male';
   if (s === 'female' || s === 'f' || s === 'woman' || s === 'girl' || s === 'lady') return 'female';
-  // 中文(常见写法)
-  if (s.includes('男')) return 'male';
-  if (s.includes('女')) return 'female';
+  return 'unknown';
+}
+
+function normalizeEntityType(v: unknown): CharacterEntityType {
+  if (typeof v !== 'string') return 'unknown';
+  const normalized = v.trim().toLowerCase();
+  if (['human', 'person', 'people'].includes(normalized)) return 'human';
+  if (['non_human', 'non-human', 'animal', 'creature', 'entity'].includes(normalized)) return 'non_human';
+  if (['object', 'prop', 'item'].includes(normalized)) return 'object';
   return 'unknown';
 }
 

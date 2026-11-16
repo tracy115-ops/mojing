@@ -53,24 +53,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoSaveIntervalSeconds: 30,
     exportFormat: 'markdown',
     maxConcurrentGenerations: 1,
-    promptTemplates: {
-      portraitZh: '角色单人全身立绘：{name}，{aesthetic}，完整外貌特征：{appearance}，全身设计锁定：保持面部发型服装款式身材比例一致，自然站姿，纯色简洁背景，工作室光照，从头到脚全身完整可见，单人居中，{artType}，{style}，无文字无水印无签名',
-      portraitEn: 'solo, single character portrait of {name}, {aesthetic}, complete character appearance: {appearance}, full-body character design lock, neutral pose, plain simple solid background, studio lighting, full body visible from head to toe, {artType}, {style}, no text, no watermark',
-      turnaroundZh: '三视图角色模型板，三屏并列展现3个全身姿态（左侧正面视图，中间侧面视图，右侧背面视图）：{name}，100%保持与参考图0的角色外观一致，角色外貌：{appearance}，并排站立，纯色浅色背景，工作室光照，{artType}，{style}，100%保持正面侧面背面一致，高细节大作，无文字无数字无标签',
-      turnaroundEn: '3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of {name}, 100% exact identical full-body character design match with reference image 0, simple plain solid light background, studio lighting, {artType}, {style}, 100% identical face and facial features, no text, no watermark',
-      sceneZh: '环境空景图：{name}，{description}，纯背景画面，无人物，无人影，仅风景建筑环境，广角视角，电影级构图，三分法，大气光影，{style}，高清细节大作，无文字无水印',
-      sceneEn: 'environment establishing shot of {name}, {description}, empty scene, no humans, no people, no character, background scenery only, wide angle, cinematic composition, rule of thirds, atmospheric lighting, {style}, 8k detail, photorealistic, no text, no watermark',
-      keyframeZh: '电影级分镜关键帧，{prompt}，{charText}，{location}，{mood}，{camera}，{style}，{quality}，无文字无水印无多余肢体无分屏',
-      keyframeEn: 'cinematic movie keyframe storyboard, {prompt}, {charText}, {location}, {mood}, {camera}, {style}, {quality}, no text, no watermark, no fused limbs, no split screen',
-      rewriteZh: '你是 AI 视频提示词工程师。把用户的粗略输入标准化为视频模型可用的纯中文画面描述。必须使用 100% 纯中文！严禁包含英文单词或英汉混排。',
-      rewriteEn: 'You are an AI video prompt engineer. Standardize user rough input into accurate English video prompts suitable for AI models.',
-      extractZh: '你是剧本分析师。从给定文本中提取结构化的角色/场景/道具信息。所有输出的描述文本必须使用 100% 纯中文！严禁包含英文单词或英汉混排。',
-      extractEn: 'You are a script analyzer. Extract structured character, scene, and prop metadata from the text in clear English.',
-      storyboardZh: '你是影视分镜师 + AI 视频提示词工程师，把小说段落重写成 AI 视频模型能直接生成的精确纯中文 prompt。必须包含：(1) 场景环境 (2) 角色外貌服饰 (3) 具体动作 (4) 镜头视角 (5) 画面光影与氛围。',
-      storyboardEn: 'You are a film storyboard director and AI prompt engineer. Rewrite novel excerpts into detailed English video prompts including scene setting, character appearance, concrete action, camera angle, lighting, and mood.',
-      qualityZh: '电影级光影，35mm镜头景深虚化，自然动作，高细节大作构图，清晰无瑕',
-      qualityEn: 'cinematic movie lighting, 35mm lens depth of field, natural motion, high detail, masterpiece composition, no artifact, clean focus',
-    },
+    promptTemplatesEnabled: false,
+    // Empty by default. A non-empty value is an explicit user instruction;
+    // generation stages supply only neutral contracts and source facts.
+    promptTemplates: {},
   },
 };
 
@@ -133,6 +119,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       updateSettings: async (updates) => {
         const current = get().settings;
+        const creativeUpdates = updates.creative;
+        const promptTemplatesEdited = creativeUpdates?.promptTemplates !== undefined;
         const newSettings = normalizeSettings({
           ...current,
           ...updates,
@@ -144,7 +132,13 @@ export const useSettingsStore = create<SettingsState>()(
             ...updates.notifications,
             channels: updates.notifications?.channels ?? current.notifications.channels,
           },
-          creative: { ...current.creative, ...updates.creative },
+          creative: {
+            ...current.creative,
+            ...creativeUpdates,
+            ...(promptTemplatesEdited && creativeUpdates?.promptTemplatesEnabled === undefined
+              ? { promptTemplatesEnabled: true }
+              : {}),
+          },
         });
 
         set({

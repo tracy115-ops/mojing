@@ -57,6 +57,248 @@ export type MusicProviderId =
   | 'siliconflow-music' // 硅基流动语音/配乐
   | 'custom';
 
+export type VideoControlMode = 'text' | 'keyframe' | 'reference';
+
+/** Semantic role of a reference image in a provider request. */
+export type GenerationReferenceRole =
+  | 'first_frame'
+  | 'last_frame'
+  | 'subject'
+  | 'environment'
+  | 'continuity'
+  | 'opening'
+  | 'custom';
+
+/** Reference material prepared by the pipeline before an adapter serializes it. */
+export interface GenerationReferenceInput {
+  id: string;
+  role: GenerationReferenceRole;
+  image: string;
+  label?: string;
+  subjectId?: string;
+  subjectIds?: string[];
+}
+
+/** Persistable description of a reference slot. The image payload itself is intentionally omitted. */
+export interface GenerationReferenceSnapshot {
+  id: string;
+  role: GenerationReferenceRole;
+  label?: string;
+  subjectId?: string;
+  subjectIds?: string[];
+  providerIndex: number;
+  payloadFingerprint: string;
+  payloadKind: 'data_uri' | 'url' | 'base64' | 'unknown';
+  mediaKind?: 'image' | 'audio' | 'video';
+}
+
+/** Structured request contract captured for the execution trace. */
+export interface GenerationRequestSnapshot {
+  schemaVersion: 1;
+  taskType: string;
+  model: string;
+  controlMode?: VideoControlMode;
+  promptFingerprint: string;
+  parameterValues: Record<string, unknown>;
+  /** Provider adapter's sanitized native/wire-level parameter preview. */
+  wireParameterValues?: Record<string, unknown>;
+  acceptedParameterKeys: string[];
+  rejectedParameterKeys: string[];
+  referenceSlots: GenerationReferenceSnapshot[];
+}
+
+/** Structured result contract captured after a provider returns. */
+export interface GenerationResponseSnapshot {
+  schemaVersion: 1;
+  outputKind: 'image' | 'video' | 'audio';
+  outputFingerprint?: string;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  provider: string;
+  model: string;
+}
+
+/** One concrete provider attempt, kept separate from the final invocation result. */
+export interface GenerationAttemptSnapshot {
+  provider: string;
+  model: string;
+  endpointId?: string;
+  startedAt: string;
+  finishedAt: string;
+  status: 'succeeded' | 'failed';
+  error?: string;
+}
+
+// --- Generation capability contract ---
+
+/** Stable parameter names shared by the text planner and generation adapters. */
+export type GenerationParameterType = 'string' | 'number' | 'integer' | 'boolean' | 'enum';
+
+export type GenerationParameterLocation = 'body' | 'input' | 'parameters' | 'extraBody';
+
+export interface GenerationParameterTransport {
+  /** Where an adapter should place a provider-specific parameter. */
+  location?: GenerationParameterLocation;
+  /** Provider field name. Defaults to the normalized parameter key. */
+  key?: string;
+}
+
+export interface GenerationParameterSpec {
+  /** Normalized request key, for example `aspectRatio` or `guidanceScale`. */
+  key: string;
+  type: GenerationParameterType;
+  description: string;
+  enumValues?: string[];
+  /** Exact numeric values accepted by a provider/model, when applicable. */
+  allowedValues?: number[];
+  min?: number;
+  max?: number;
+  required?: boolean;
+  /** Optional wire mapping for endpoint-specific parameters. */
+  transport?: GenerationParameterTransport;
+}
+
+export interface ImageReferenceCapability {
+  supported: boolean;
+  maxImages: number;
+  mode: 'none' | 'single' | 'multiple';
+  /** Whether the adapter/provider preserves one independent semantic role per image slot. */
+  supportsReferenceRoles?: boolean;
+  /** Separate white-edit/black-keep mask transported by a concrete adapter. */
+  maskSupported?: boolean;
+}
+
+export interface ImageModelCapability {
+  model: string;
+  parameters: GenerationParameterSpec[];
+  references: ImageReferenceCapability;
+}
+
+export interface VideoReferenceCapability {
+  supported: boolean;
+  maxImages: number;
+  mode: 'none' | 'first_frame' | 'first_last' | 'subject_references' | 'multiple';
+  supportsFirstFrame: boolean;
+  supportsLastFrame: boolean;
+  supportsSubjectReferences: boolean;
+  audio?: VideoMediaReferenceCapability;
+  video?: VideoMediaReferenceCapability;
+  audioRequiresVisual?: boolean;
+  maxTotalMedia?: number;
+}
+
+export interface VideoMediaReferenceCapability {
+  maxCount: number;
+  transport: 'public_url' | 'public_url_or_data';
+  minSeconds: number;
+  maxSeconds: number;
+  maxTotalSeconds: number;
+  maxBytes: number;
+  mimeTypes: string[];
+}
+
+export interface VideoMediaReference {
+  id: string;
+  url: string;
+  label?: string;
+  durationSeconds?: number;
+  sizeBytes?: number;
+  mimeType?: string;
+}
+
+/** A provider/model output tier exposed to the production UI. */
+export interface VideoResolutionTier {
+  /** Stable normalized id, for example `720p` or `1080p`. */
+  id: string;
+  /** Optional human-readable label supplied by the endpoint contract. */
+  label?: string;
+  /** Short edge used to derive dimensions for the selected aspect ratio. */
+  shortEdge?: number;
+  /** Exact dimensions for providers that expose fixed-size outputs. */
+  width?: number;
+  height?: number;
+}
+
+export interface VideoModelCapability {
+  model: string;
+  parameters: GenerationParameterSpec[];
+  references: VideoReferenceCapability;
+  resolutionTiers?: VideoResolutionTier[];
+}
+
+/** Optional visual-input contract for an LLM endpoint/model. */
+export interface LLMModelCapabilityOverride {
+  supportsImageInputs?: boolean;
+  maxImageInputs?: number;
+}
+
+/** Provider/model facts used by visual review and other multimodal tasks. */
+export interface LLMGenerationCapabilities {
+  modality: 'llm';
+  provider: LLMProviderId;
+  model: string;
+  endpointId?: string;
+  supportsImageInputs: boolean;
+  maxImageInputs: number;
+}
+
+/** Optional per-model facts supplied by an endpoint configuration. */
+export interface ImageModelCapabilityOverride {
+  parameters?: GenerationParameterSpec[];
+  references?: ImageReferenceCapability;
+}
+
+/** Optional per-model facts supplied by an endpoint configuration. */
+export interface VideoModelCapabilityOverride {
+  parameters?: GenerationParameterSpec[];
+  references?: VideoReferenceCapability;
+  resolutionTiers?: VideoResolutionTier[];
+}
+
+/**
+ * Provider defaults describe known APIs. Endpoint overrides are for a proxy
+ * or a model whose contract differs from the provider default.
+ */
+export interface EndpointGenerationCapabilities {
+  llm?: Record<string, LLMModelCapabilityOverride>;
+  image?: Record<string, ImageModelCapabilityOverride>;
+  video?: Record<string, VideoModelCapabilityOverride>;
+}
+
+/** Provider/model facts supplied to the storyboard planner and router. */
+export interface ImageGenerationCapabilities {
+  modality: 'image';
+  provider: ImageProviderId;
+  model: string;
+  /** Whether the application has a concrete adapter for this provider. */
+  adapterAvailable?: boolean;
+  /** Models exposed by the selected endpoint, when the endpoint declares them. */
+  availableModels?: string[];
+  /** Per-model contracts when the endpoint exposes more than one model. */
+  modelCapabilities?: ImageModelCapability[];
+  endpointId?: string;
+  parameters: GenerationParameterSpec[];
+  references: ImageReferenceCapability;
+}
+
+/** Provider/model facts supplied to the storyboard planner and router. */
+export interface VideoGenerationCapabilities {
+  modality: 'video';
+  provider: VideoProviderId;
+  model: string;
+  /** Whether the application has a concrete adapter for this provider. */
+  adapterAvailable?: boolean;
+  /** Models exposed by the selected endpoint, when the endpoint declares them. */
+  availableModels?: string[];
+  /** Per-model contracts when the endpoint exposes more than one model. */
+  modelCapabilities?: VideoModelCapability[];
+  endpointId?: string;
+  parameters: GenerationParameterSpec[];
+  references: VideoReferenceCapability;
+  resolutionTiers?: VideoResolutionTier[];
+}
+
 // --- API Endpoint Config ---
 
 export interface ApiEndpoint {
@@ -71,6 +313,8 @@ export interface ApiEndpoint {
   baseUrl: string;
   apiKey: string;
   models?: string[];
+  /** Optional model-level parameter/reference contract for this endpoint. */
+  generationCapabilities?: EndpointGenerationCapabilities;
   organizationId?: string;
   customHeaders?: Record<string, string>;
   enabled: boolean;
@@ -189,6 +433,7 @@ export interface ProviderConfig {
 
 export interface LLMGenerateRequest {
   taskType: LLMTaskType;
+  endpointId?: string;
   systemPrompt: string;
   userPrompt: string;
   model?: string;
@@ -216,14 +461,31 @@ export interface TokenUsage {
 
 export interface ImageGenerateRequest {
   taskType: ImageTaskType;
+  /** Stable execution label for tracing one request back to a shot or asset. */
+  sourceLabel?: string;
   prompt: string;
   negativePrompt?: string;
   model?: string;
+  size?: string;
   width?: number;
   height?: number;
+  aspectRatio?: string;
   style?: string;
+  quality?: string;
+  steps?: number;
+  guidanceScale?: number;
   referenceImages?: string[];
+  /** Grayscale PNG Data URI, white edits and black preserves; same dimensions as the sole source. */
+  mask?: string;
+  editStrength?: number;
+  /** Semantic reference slots used for tracing and provider capability checks. */
+  referenceSlots?: GenerationReferenceInput[];
   seed?: number;
+  /** Planner-selected normalized values. Router validates these against capabilities. */
+  parameters?: Record<string, unknown>;
+  /** Contract entries used to transport endpoint-specific parameters. */
+  parameterSpecs?: GenerationParameterSpec[];
+  endpointId?: string;
 }
 
 export interface ImageGenerateResponse {
@@ -232,11 +494,19 @@ export interface ImageGenerateResponse {
   height: number;
   model: string;
   provider: ImageProviderId;
+  /** Endpoint that actually returned the artifact, including fallback routing. */
+  endpointId?: string;
+  /** Normalized request that was actually sent, including provider wire values. */
+  requestSnapshot?: GenerationRequestSnapshot;
+  /** Provider/output facts captured for the returned artifact. */
+  responseSnapshot?: GenerationResponseSnapshot;
   latencyMs: number;
 }
 
 export interface VideoGenerateRequest {
   taskType: VideoTaskType;
+  /** Stable execution label for tracing one request back to a shot or asset. */
+  sourceLabel?: string;
   prompt: string;
   negativePrompt?: string;
   model?: string;
@@ -246,11 +516,32 @@ export interface VideoGenerateRequest {
   durationSeconds?: number;
   fps?: number;
   referenceImages?: string[];
+  /** Semantic reference slots used for tracing and provider capability checks. */
+  referenceSlots?: GenerationReferenceInput[];
+  /** Provider-independent control semantics. Adapters must not infer reference mode from array positions. */
+  controlMode?: VideoControlMode;
+  /** Explicit first/last frame semantics for providers that support them. */
+  firstFrame?: string;
+  lastFrame?: string;
+  /** Identity references used by providers with native subject-reference support. */
+  subjectReferences?: Array<{
+    id: string;
+    image: string;
+    label?: string;
+  }>;
   audioPrompt?: string;
+  audioReferences?: VideoMediaReference[];
+  videoReferences?: VideoMediaReference[];
+  /** Omitted by the project pipeline, which mixes its own TTS and music. */
+  generateAudio?: boolean;
   endpointId?: string; // Optional: use a specific endpoint instead of the configured primary
   seed?: number;
   numInferenceSteps?: number;
   mode?: string;
+  /** Planner-selected normalized values. Router validates these against capabilities. */
+  parameters?: Record<string, unknown>;
+  /** Contract entries used to transport endpoint-specific parameters. */
+  parameterSpecs?: GenerationParameterSpec[];
 }
 
 export interface VideoGenerateResponse {
@@ -260,6 +551,12 @@ export interface VideoGenerateResponse {
   durationSeconds: number;
   model: string;
   provider: VideoProviderId;
+  /** Endpoint that actually returned the artifact, including fallback routing. */
+  endpointId?: string;
+  /** Normalized request that was actually sent, including provider wire values. */
+  requestSnapshot?: GenerationRequestSnapshot;
+  /** Provider/output facts captured for the returned artifact. */
+  responseSnapshot?: GenerationResponseSnapshot;
   latencyMs: number;
 }
 

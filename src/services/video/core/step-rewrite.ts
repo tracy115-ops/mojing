@@ -6,8 +6,8 @@
 import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { parseLLMJson } from '@/services/novel/llm-json';
-
 import { detectInputLanguage } from './lang-detector';
+
 import { useSettingsStore } from '@/stores/settingsStore';
 
 export interface RewriteResult {
@@ -20,20 +20,24 @@ export interface RewriteResult {
 }
 
 /**
- * 步 2:把用户输入标准化。
- * 根据输入的语言占比识别，选择对应语言的 System Prompt 并命令大模型输出对应语言。
+ * Normalize the source without changing its language or adding visual facts.
  */
 export async function stepRewrite(rawPrompt: string): Promise<RewriteResult> {
-  const lang = detectInputLanguage(rawPrompt);
-  const customSystem = lang === 'zh'
-    ? useSettingsStore.getState().settings.creative.promptTemplates?.rewriteZh
-    : useSettingsStore.getState().settings.creative.promptTemplates?.rewriteEn;
-
-  const systemPrompt = customSystem && customSystem.trim()
-    ? customSystem
-    : lang === 'zh'
-      ? SYSTEM_PROMPT_ZH
-      : SYSTEM_PROMPT_EN;
+  const sourceLanguage = detectInputLanguage(rawPrompt);
+  const templates = useSettingsStore.getState().settings.creative.promptTemplates;
+  const customSystem = useSettingsStore.getState().settings.creative.promptTemplatesEnabled
+    ? templates?.rewriteEn || templates?.rewriteZh
+    : undefined;
+  const systemPrompt = customSystem?.trim() || [
+    'You are a provider-agnostic visual planning model.',
+    sourceLanguage === 'zh'
+      ? 'Write all natural-language output fields in Simplified Chinese. Do not translate the source into English.'
+      : 'Write all natural-language output fields in English. Do not translate the source into Chinese.',
+    'Preserve every explicit event, entity, action, state, and dialogue detail.',
+    'Improve clarity only where the source supports it. Do not invent identity, appearance, clothing, location, style, camera, or quality claims.',
+    'Return one JSON object with rewrittenPrompt, detectedShotCount, and an optional title.',
+    'The rewrittenPrompt is a concise visual description usable by a downstream planner; it is not a provider-specific parameter list.',
+  ].join('\n');
 
   const request: LLMGenerateRequest = {
     taskType: 'translation',
@@ -66,38 +70,6 @@ interface RewriteLLMOutput {
   detectedShotCount?: number;
   title?: string;
 }
-
-const SYSTEM_PROMPT_ZH = `你是 AI 视频提示词工程师。把用户的粗略输入标准化为视频模型可用的纯中文画面描述。
-
-任务:
-1. 必须使用 100% 纯中文！严禁包含英文单词或英汉混排。
-2. 扩写成完整的中文视觉描述:场景环境 / 角色外貌服饰 / 具体动作肢体 / 镜头视角 / 光影与氛围
-3. 检测输入是否是多镜头脚本
-4. 单镜头:输出 60-150 字的纯中文 prompt
-5. 多镜头:输出整体纯中文风格描述,并报告镜头数量
-
-输出 JSON:
-{
-  "rewrittenPrompt": "纯中文画面描述",
-  "detectedShotCount": <number, 1=单镜头, >1=多镜头>,
-  "title": "可选的标题"
-}`;
-
-const SYSTEM_PROMPT_EN = `You are an AI video prompt engineer. Standardize the user's rough input into accurate English video prompts suitable for AI video models.
-
-Tasks:
-1. Output MUST be 100% in English! No Chinese characters.
-2. Expand into a complete visual prompt: scene setting, character appearance, concrete action, camera angle/movement, lighting, and mood.
-3. Detect whether the input is a multi-shot script.
-4. Single shot: output 60-120 words English prompt.
-5. Multi-shot: output overall English style description and report shot count.
-
-Output JSON:
-{
-  "rewrittenPrompt": "English prompt",
-  "detectedShotCount": <number, 1=single shot, >1=multi shot>,
-  "title": "optional title"
-}`;
 
 function fallbackRewrite(rawPrompt: string): RewriteResult {
   return {

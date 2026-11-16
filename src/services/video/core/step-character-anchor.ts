@@ -1,68 +1,42 @@
-// step-character-anchor.ts — 步 6:角色立绘生成
-//
-// 每个角色生成两张图:
-//   1. 单图立绘(768×1152 正面) → portraitImage
-//   2. 三视图(1536×1024 正/侧/背) → turnaroundImage(独立字段,不覆盖 portraitImage)
-//      用单图作 reference,保证三视图里的角色和单图是同一个人
-//
-// variant 立绘:每个 variant 额外生成一张单图(没有三视图)
-//
-// keyframe 步骤同时用 turnaroundImage(完整 model sheet + 裁中间 1/3 正面)和
-// portraitImage 做 reference,让 provider 多角度看到角色设计。
+// Character reference generation. Prompt content and optional provider
+// parameters are planned by the text model; this module owns asset binding.
 
 import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, ModelTier } from '@/types/video';
 import { saveAsset, readAsDataUri } from '../asset-store';
-import { detectInputLanguage } from './lang-detector';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { planImagePrompt, type ImagePromptPlan } from './prompt-enricher';
+import { needsTurnaroundGeneration } from './character-asset-binding';
 
 export interface CharacterAnchorResult {
-  /** 更新后的角色(立绘已填入 portraitImage / turnaroundImage / costumeVariants[].portraitImage) */
   characters: CharacterAnchor[];
-  /** 失败的角色 name 列表,UI 用于标黄 */
   failed: string[];
 }
 
-/**
- * 步 6:批量生成角色立绘(单图 + 三视图)。
- * limit:超出此数量的角色不生成(其外貌描述会拼到该镜头关键帧 prompt 里)。
- *
- * 落盘:每张图生成后立即调 saveAsset 写到 appDataDir,UI 拿到的就是
- * 跨会话稳定的 webview URL(http/data URI 形式都转成本地文件)。
- *
- * anchorMode(可选,向后兼容):'single' 只生成单图(老项目/快速测试用),
- * 不传或 'turnaround' 都会同时生成单图 + 三视图。
- */
 export async function runCharacterAnchor(
   characters: CharacterAnchor[],
   ctx: {
     style?: string;
     imageTier: ModelTier;
     limit: number;
+    imageEndpointId?: string;
+    imageModel?: string;
     novelProjectId: string;
-    /** 立绘模式:'single' 只生成单图;'turnaround'(默认) 生成单图+三视图。
-     *  注意:无论选什么,portraitImage 始终会生成,不会被覆盖。 */
     anchorMode?: 'single' | 'turnaround';
-    /** 用户编辑后的整体 prompt(覆盖内部 build 的拼接结果)。
-     *  只对 default 单图立绘生效;三视图和 variant 仍按 build 拼接。 */
     characterPrompts?: Record<string, string>;
-    /** 用户针对每个角色编辑后的独立三视图 prompt (键为 characterId 或 name) */
     turnaroundPrompts?: Record<string, string>;
-    /** 向后兼容的单句 promptOverride(只在其匹配指定角色时使用) */
     promptOverride?: string;
     shouldAbort?: () => boolean;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<CharacterAnchorResult> {
   const limited = characters.slice(0, Math.max(0, ctx.limit));
-  // 默认同时生成单图立绘与角色三视图 (Turnaround)，保证后续关键帧具有全角度连续性
   const wantTurnaround = ctx.anchorMode !== 'single';
   const total = countAnchorsNeeded(limited, wantTurnaround);
   if (total === 0) return { characters, failed: [] };
 
-  const result: CharacterAnchor[] = characters.map((c) => ({
-    ...c,
-    costumeVariants: c.costumeVariants?.map((v) => ({ ...v })),
+  const result: CharacterAnchor[] = characters.map((character) => ({
+    ...character,
+    costumeVariants: character.costumeVariants?.map((variant) => ({ ...variant })),
   }));
   const failed: string[] = [];
   let done = 0;
@@ -70,74 +44,95 @@ export async function runCharacterAnchor(
   let lastErr: unknown = null;
 
   for (let i = 0; i < limited.length; i++) {
-    if (ctx.shouldAbort?.()) {
-      break;
-    }
-    const c = limited[i];
+    if (ctx.shouldAbort?.()) break;
+    const character = limited[i];
+    const customPortraitPrompt = ctx.characterPrompts?.[character.id] || ctx.characterPrompts?.[character.name];
+    const portraitPlan: ImagePromptPlan = customPortraitPrompt?.trim()
+      ? { prompt: customPortraitPrompt.trim() }
+      : await planImagePrompt({
+          purpose: 'character_portrait',
+          character,
+          style: ctx.style,
+          requestedAspectRatio: '2:3',
+          endpointId: ctx.imageEndpointId,
+          model: ctx.imageModel,
+        });
 
-    // 按角色 ID 或角色名匹配独立专属提示词，彻底防止多角色提示词踩踏与混淆
-    const customPrompt = ctx.characterPrompts?.[c.id] || ctx.characterPrompts?.[c.name];
-    const portraitPrompt = customPrompt && customPrompt.trim()
-      ? customPrompt
-      : buildPortraitPrompt(c, limited, ctx.style);
     let portraitOk = !!result[i].portraitImage;
     let currentPortraitRaw = '';
     if (!portraitOk) {
       try {
-        const isChinese = detectInputLanguage(portraitPrompt) === 'zh';
-        const img = await providerRouter.generateImage({
+        const image = await providerRouter.generateImage({
           taskType: 'character',
-          prompt: portraitPrompt,
-          negativePrompt: buildPortraitNegativePrompt(c, isChinese),
+          prompt: portraitPlan.prompt,
+          negativePrompt: portraitPlan.negativePrompt,
+          parameters: portraitPlan.parameters,
+          aspectRatio: '2:3',
           width: 768,
           height: 1152,
           style: ctx.style,
-          seed: c.seed,
+          seed: character.seed,
+          endpointId: ctx.imageEndpointId,
+          model: ctx.imageModel,
         });
-        currentPortraitRaw = img.imageData;
+        currentPortraitRaw = image.imageData;
         result[i].portraitImage = await saveAsset(
           ctx.novelProjectId,
           'portrait',
-          img.imageData,
-          `char_${sanitizeFileName(c.name)}`,
+          image.imageData,
+          `char_${sanitizeFileName(character.name)}`,
         );
-        okCount++;
+        // A newly generated portrait invalidates any older derived sheet.
+        result[i].turnaroundImage = undefined;
+        result[i].turnaroundSourcePortrait = undefined;
         portraitOk = true;
+        okCount++;
       } catch (err) {
-        console.warn(`character_anchor: portrait failed for ${c.name}`, err);
+        console.warn(`character_anchor: portrait failed for ${character.name}`, err);
         lastErr = err;
-        failed.push(c.name);
+        failed.push(character.name);
       }
       done++;
       onProgress?.(done, total);
     }
 
-    // --- 阶段 1b:variant 单图立绘 ---
-    if (c.costumeVariants?.length) {
-      for (let j = 0; j < c.costumeVariants.length; j++) {
-        const v = c.costumeVariants[j];
-        if (v.id === 'default') continue; // default 已生成
+    if (character.costumeVariants?.length) {
+      for (let j = 0; j < character.costumeVariants.length; j++) {
+        const variant = character.costumeVariants[j];
+        if (variant.id === 'default') continue;
         if (result[i].costumeVariants?.[j].portraitImage) continue;
         try {
-          const variantPrompt = buildPortraitPrompt(c, limited, ctx.style, v.description);
-          const isChinese = detectInputLanguage(variantPrompt) === 'zh';
-          const img = await providerRouter.generateImage({
+          const variantPlan = await planImagePrompt({
+            purpose: 'character_portrait',
+            character,
+            costumeOverride: variant.description,
+            style: ctx.style,
+            requestedAspectRatio: '2:3',
+            endpointId: ctx.imageEndpointId,
+            model: ctx.imageModel,
+          });
+          const image = await providerRouter.generateImage({
             taskType: 'character',
-            prompt: variantPrompt,
-            negativePrompt: buildPortraitNegativePrompt(c, isChinese),
+            prompt: variantPlan.prompt,
+            negativePrompt: variantPlan.negativePrompt,
+            parameters: variantPlan.parameters,
+            aspectRatio: '2:3',
             width: 768,
             height: 1152,
             style: ctx.style,
+            seed: character.seed,
+            endpointId: ctx.imageEndpointId,
+            model: ctx.imageModel,
           });
           result[i].costumeVariants![j].portraitImage = await saveAsset(
             ctx.novelProjectId,
             'portrait',
-            img.imageData,
-            `char_${sanitizeFileName(c.name)}_${sanitizeFileName(v.id)}`,
+            image.imageData,
+            `char_${sanitizeFileName(character.name)}_${sanitizeFileName(variant.id)}`,
           );
           okCount++;
         } catch (err) {
-          console.warn(`character_anchor: failed variant ${c.name}/${v.id}`, err);
+          console.warn(`character_anchor: variant failed for ${character.name}/${variant.id}`, err);
           lastErr = err;
         }
         done++;
@@ -145,57 +140,65 @@ export async function runCharacterAnchor(
       }
     }
 
-    // --- 阶段 2:三视图(默认生成,且 default 立绘成功) ---
-    // 三视图作为附加产物,**不覆盖** portraitImage。
-    // 用 default 立绘做 reference,保证三视图里的角色和单图是同一个人。
     const portraitUrl = result[i].portraitImage;
-    if (wantTurnaround && !result[i].turnaroundImage && portraitOk && (portraitUrl || currentPortraitRaw)) {
+    const turnaroundIsStale = !!result[i].turnaroundSourcePortrait
+      && result[i].turnaroundSourcePortrait !== portraitUrl;
+    if (wantTurnaround
+      && (!result[i].turnaroundImage || turnaroundIsStale)
+      && portraitOk
+      && (portraitUrl || currentPortraitRaw)) {
       try {
-        let turnaroundRef = currentPortraitRaw;
-        if (!turnaroundRef && portraitUrl) {
-          turnaroundRef = await readAsDataUri(portraitUrl);
-        }
-        const customTurnaround = ctx.turnaroundPrompts?.[c.id] || ctx.turnaroundPrompts?.[c.name];
-        const turnaroundPrompt = customTurnaround && customTurnaround.trim()
-          ? customTurnaround
-          : buildTurnaroundPrompt(c, ctx.style, customPrompt);
-        const isChinese = detectInputLanguage(turnaroundPrompt) === 'zh';
-
-        const img = await providerRouter.generateImage({
+        const reference = currentPortraitRaw || await readAsDataUri(portraitUrl!);
+        const customTurnaroundPrompt = ctx.turnaroundPrompts?.[character.id]
+          || ctx.turnaroundPrompts?.[character.name];
+        const turnaroundPlan: ImagePromptPlan = customTurnaroundPrompt?.trim()
+          ? { prompt: customTurnaroundPrompt.trim() }
+          : await planImagePrompt({
+              purpose: 'character_turnaround',
+              character,
+              style: ctx.style,
+              requestedAspectRatio: '3:2',
+              referenceCount: reference ? 1 : 0,
+              endpointId: ctx.imageEndpointId,
+              model: ctx.imageModel,
+            });
+        const image = await providerRouter.generateImage({
           taskType: 'character',
-          prompt: turnaroundPrompt,
-          negativePrompt: buildTurnaroundNegativePrompt(c, isChinese),
+          prompt: turnaroundPlan.prompt,
+          negativePrompt: turnaroundPlan.negativePrompt,
+          parameters: turnaroundPlan.parameters,
+          aspectRatio: '3:2',
           width: 1536,
           height: 1024,
           style: ctx.style,
-          referenceImages: turnaroundRef ? [turnaroundRef] : undefined,
-          seed: c.seed,
+          referenceImages: reference ? [reference] : undefined,
+          seed: character.seed,
+          endpointId: ctx.imageEndpointId,
+          model: ctx.imageModel,
         });
         result[i].turnaroundImage = await saveAsset(
           ctx.novelProjectId,
           'portrait',
-          img.imageData,
-          `char_${sanitizeFileName(c.name)}_turnaround`,
+          image.imageData,
+          `char_${sanitizeFileName(character.name)}_turnaround`,
         );
+        result[i].turnaroundSourcePortrait = portraitUrl;
         okCount++;
       } catch (err) {
-        // 三视图失败记录日志，不阻断主流程
-        console.warn(`character_anchor: turnaround failed for ${c.name} (non-blocking)`, err);
+        console.warn(`character_anchor: turnaround failed for ${character.name}`, err);
         lastErr = err;
       }
       done++;
       onProgress?.(done, total);
     } else if (wantTurnaround && !portraitOk) {
-      // 单图都失败了,跳过三视图但仍计 done(避免进度卡住)
       done++;
       onProgress?.(done, total);
     }
   }
 
-  // 如果一张图都没成功,把整个 stage 当作失败,让上层标记为 error。
   if (okCount === 0 && total > 0 && !result.some((character) => !!character.portraitImage)) {
     const reason = lastErr instanceof Error ? lastErr.message : String(lastErr ?? 'unknown error');
-    throw new Error(`所有 ${total} 次立绘调用都失败(${failed.length} 个角色)。最近一次错误:${reason}`);
+    throw new Error(`All character reference generations failed: ${reason}`);
   }
 
   return { characters: result, failed };
@@ -203,260 +206,100 @@ export async function runCharacterAnchor(
 
 export async function generateSingleCharacterPortrait(
   character: CharacterAnchor,
-  allCharacters: CharacterAnchor[],
-  ctx: { style?: string; imageTier?: ModelTier; novelProjectId: string },
+  _allCharacters: CharacterAnchor[],
+  ctx: {
+    style?: string;
+    imageTier?: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
+    novelProjectId: string;
+  },
 ): Promise<string> {
-  const portraitPrompt = buildPortraitPrompt(character, allCharacters, ctx.style);
-  const isChinese = detectInputLanguage(portraitPrompt) === 'zh';
-  const img = await providerRouter.generateImage({
+  const plan = await planImagePrompt({
+    purpose: 'character_portrait',
+    character,
+    style: ctx.style,
+    requestedAspectRatio: '2:3',
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
+  });
+  const image = await providerRouter.generateImage({
     taskType: 'character',
-    prompt: portraitPrompt,
-    negativePrompt: buildPortraitNegativePrompt(character, isChinese),
+    prompt: plan.prompt,
+    negativePrompt: plan.negativePrompt,
+    parameters: plan.parameters,
+    aspectRatio: '2:3',
     width: 768,
     height: 1152,
     style: ctx.style,
     seed: character.seed,
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
   });
-  const savedPath = await saveAsset(
+  return saveAsset(
     ctx.novelProjectId,
     'portrait',
-    img.imageData,
+    image.imageData,
     `char_${sanitizeFileName(character.name)}_${Date.now()}`,
   );
-  return savedPath;
 }
 
 export async function generateSingleCharacterTurnaround(
   character: CharacterAnchor,
-  ctx: { style?: string; imageTier?: ModelTier; novelProjectId: string },
+  ctx: {
+    style?: string;
+    imageTier?: ModelTier;
+    imageEndpointId?: string;
+    imageModel?: string;
+    novelProjectId: string;
+  },
 ): Promise<string> {
-  let turnaroundRef = '';
-  if (character.portraitImage) {
-    turnaroundRef = await readAsDataUri(character.portraitImage);
-  }
-  const turnaroundPrompt = buildTurnaroundPrompt(character, ctx.style);
-  const isChinese = detectInputLanguage(turnaroundPrompt) === 'zh';
-  const img = await providerRouter.generateImage({
+  const reference = character.portraitImage
+    ? await readAsDataUri(character.portraitImage)
+    : undefined;
+  const plan = await planImagePrompt({
+    purpose: 'character_turnaround',
+    character,
+    style: ctx.style,
+    requestedAspectRatio: '3:2',
+    referenceCount: reference ? 1 : 0,
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
+  });
+  const image = await providerRouter.generateImage({
     taskType: 'character',
-    prompt: turnaroundPrompt,
-    negativePrompt: buildTurnaroundNegativePrompt(character, isChinese),
+    prompt: plan.prompt,
+    negativePrompt: plan.negativePrompt,
+    parameters: plan.parameters,
+    aspectRatio: '3:2',
     width: 1536,
     height: 1024,
     style: ctx.style,
-    referenceImages: turnaroundRef ? [turnaroundRef] : undefined,
+    referenceImages: reference ? [reference] : undefined,
     seed: character.seed,
+    endpointId: ctx.imageEndpointId,
+    model: ctx.imageModel,
   });
-  const savedPath = await saveAsset(
+  return saveAsset(
     ctx.novelProjectId,
     'portrait',
-    img.imageData,
+    image.imageData,
     `char_${sanitizeFileName(character.name)}_turnaround_${Date.now()}`,
   );
-  return savedPath;
 }
 
-/** 计算需要生成的图片数:default + variants + (可选)turnaround */
 function countAnchorsNeeded(chars: CharacterAnchor[], includeTurnaround: boolean): number {
-  let n = 0;
-  for (const c of chars) {
-    if (!c.portraitImage) n += 1; // default 单图
-    if (c.costumeVariants?.length) {
-      n += c.costumeVariants.filter((v) => v.id !== 'default' && !v.portraitImage).length;
-    }
-    if (includeTurnaround && !c.turnaroundImage) n += 1; // 三视图(每个角色额外一张)
+  let count = 0;
+  for (const character of chars) {
+    if (!character.portraitImage) count++;
+    count += character.costumeVariants?.filter(
+      (variant) => variant.id !== 'default' && !variant.portraitImage,
+    ).length ?? 0;
+    if (includeTurnaround && needsTurnaroundGeneration(character)) count++;
   }
-  return n;
+  return count;
 }
 
-import { getStyleEnhancers } from './step-video-gen';
-
-export function getCharacterAestheticTag(fullText: string): string {
-  const text = fullText.toLowerCase();
-  const isChinese = /[\u4e00-\u9fa5]/.test(fullText);
-
-  // 1. 显式欧美 / 外国特征
-  if (/western|caucasian|american|european|blond|blonde|blue eyes|欧美|白人|金发|碧眼/i.test(text)) {
-    return isChinese ? '精致立体五官，工作室灯光，超高画质' : 'detailed refined facial features, studio lighting, hyperrealistic';
-  }
-
-  // 2. 动物 / 宠物 / 奇幻生物 (猫/狗/胖橘猫/神兽/妖/机器人等) -> 避免强加人类面部与性别词导致毁图！
-  if (/cat|dog|animal|pet|dragon|monster|robot|fox|wolf|bear|tiger|lion|bird|monkey|猫|狗|胖橘|橘猫|肥猫|动物|神兽|妖|怪|兽|机器人|坐骑|宠物|狐狸|狼|熊|虎|狮|鸟|猴|悟空/i.test(text)) {
-    return isChinese
-      ? '大师级生物角色设计，精细毛发物理质感，逼真生动神态，高品质概念立绘'
-      : 'masterpiece creature design, detailed fur and physical texture, expressive eyes, high quality character concept art';
-  }
-
-  // 3. 现代 / JK / 制服 / 校服 / 西装
-  if (/jk|制服|校服|西装|现代|卫衣|风衣|都市|裙|衬衫/i.test(text)) {
-    if (/male|man|boy|guy|男|少年|青年|大叔|帅哥/i.test(text)) {
-      return isChinese
-        ? '阳光帅气东方男子，清爽发型，现代时尚穿搭，高画质写真'
-        : 'handsome modern East Asian male, stylish outfit, studio portrait photography';
-    }
-    return isChinese
-      ? '青春甜美东方少女，清秀可人面容，自然光泽长发，现代时尚写真'
-      : 'gorgeous youthful East Asian girl, beautiful delicate features, natural silky hair, modern fashion portrait photography';
-  }
-
-  // 4. 男性角色 -> 东方男性美学
-  if (/male|man|boy|monk|guy|gentleman|king|father|brother|prince|master|男|汉子|和尚|小和尚|老和尚|少年|青年|大叔|老者|皇帝|王爷|少爷|师傅|师父|公|爷|哥|侠客|书生/i.test(text)) {
-    return isChinese
-      ? '东方男子英俊面容，五官端正，儒雅威武气场，东方男性美学'
-      : 'handsome East Asian Chinese male features, refined facial structure, dignified posture, elegant oriental male aesthetic';
-  }
-
-  // 5. 古风 / 女性角色
-  return isChinese
-    ? '精致面容，温婉优雅气场，瓷白肌肤，东方佳人美学'
-    : 'delicate East Asian facial features, fair porcelain skin, silky hair, elegant oriental aesthetic';
-}
-
-/**
- * 构造角色立绘专属负向提示词：坚决杜绝三条腿、多肢体、肢体畸变、多余腿脚
- */
-export function buildPortraitNegativePrompt(c: CharacterAnchor, isChinese: boolean): string {
-  const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-    /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
-
-  if (isAnimal) {
-    return isChinese
-      ? '多余肢体，多条腿，畸形肢体，五条腿，六条腿，断肢，融化肢体，低质量，模糊，水印，文字，签名'
-      : 'extra limbs, extra legs, deformed limbs, duplicate legs, bad anatomy, mutation, mutated, low quality, watermark, text, signature';
-  }
-
-  return isChinese
-    ? '三条腿，第三条腿，多余的腿，多腿，畸形腿，畸形肢体，多肢体，多手臂，多手，多脚，肢体重复，骨骼畸形，断肢，浮空肢体，畸变人体，多头，双人，多个人物，分身，水印，文字，签名，低质量'
-    : 'three legs, 3 legs, extra legs, third leg, extra limbs, multiple legs, deformed legs, bad legs, malformed limbs, poorly drawn legs, cloned limbs, duplicate body parts, floating limbs, disconnected limbs, bad anatomy, mutation, mutated, extra feet, extra arms, extra hands, multiple people, 2people, watermark, text, signature, low quality';
-}
-
-/**
- * 构造角色三视图专属负向提示词：坚决杜绝肢体畸变、三条腿、多臂
- */
-export function buildTurnaroundNegativePrompt(c: CharacterAnchor, isChinese: boolean): string {
-  return isChinese
-    ? '三条腿，第三条腿，多余的腿，畸形腿，多肢体，多臂，多足，四条腿，骨骼畸变，肢体重复，断肢，低质量，文字，标签，水印，签名'
-    : 'three legs, 3 legs, extra legs, third leg, extra limbs, deformed legs, duplicate limbs, floating limbs, bad anatomy, extra feet, mutated legs, low quality, text, watermark, signature';
-}
-
-function buildPortraitPrompt(
-  c: CharacterAnchor,
-  _allChars: CharacterAnchor[],
-  style?: string,
-  costumeOverride?: string,
-): string {
-  const fullText = `${c.name} ${c.appearance} ${style || ''} ${costumeOverride || ''}`;
-  const isChinese = detectInputLanguage(fullText) === 'zh';
-  const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-  const isAnimal = /(猫|狗|小狗|小猫|橘猫|金毛|柯基|宠物|鸟|兔|狐狸|cat|dog|kitten|puppy|pet|fox|rabbit)/i.test(c.name) ||
-    /(四足|纯动物|橘白相间|猫咪|毛茸茸的猫|cat fur|tabby)/i.test(c.appearance || '');
-
-  if (isChinese) {
-    const artTypeTag = isCartoonOrAnime
-      ? '2D动漫单人角色立绘'
-      : (style ? `${style}风格` : '高清写实角色立绘');
-
-    const anatomyTag = isAnimal
-      ? '标准自然体态，结构规范，无多余肢体'
-      : '标准人体结构，标准端正站姿，匀称双腿，双脚平稳着地，无多余肢体，严格仅有两条腿';
-
-    const parts = [
-      `${c.name}：${c.appearance}${costumeOverride ? `，身穿【${costumeOverride}】` : ''}`,
-      '单人全身立绘，单人居中，从头到脚完整可见',
-      anatomyTag,
-      '纯色干净简洁背景',
-      artTypeTag,
-    ].filter(Boolean);
-    return parts.join('，');
-  }
-
-  const artTypeTag = isCartoonOrAnime
-    ? '2D anime character portrait'
-    : (style ? `${style} style` : 'realistic character portrait');
-
-  const anatomyTag = isAnimal
-    ? 'natural quadruped anatomy, well-structured body, no extra limbs'
-    : 'anatomically correct human structure, natural standing pose, well-proportioned two legs, standing firmly on two feet, exactly two legs, no extra limbs';
-
-  const parts = [
-    `${c.name}: ${c.appearance}${costumeOverride ? `, wearing ${costumeOverride}` : ''}`,
-    'single centered full-body character portrait, fully visible from head to toe',
-    anatomyTag,
-    'plain solid clean background',
-    artTypeTag,
-  ].filter(Boolean);
-  return parts.join(', ');
-}
-
-function truncate(s: string | undefined, max: number): string {
-  if (!s) return '';
-  return s.length > max ? `${s.slice(0, max)}...` : s;
-}
-
-/**
- * 三视图(turnaround / model sheet)prompt 模板。
- * 让 provider 在同一张图里画出 正面/侧面/背面 三个角度。
- * 针对每个角色独立调用，将 {name} 替换为该角色名字，{appearance} 替换为该角色的专属外貌描写。
- */
-function buildTurnaroundPrompt(
-  c: CharacterAnchor,
-  style?: string,
-  customAppearance?: string,
-): string {
-  const appearance = customAppearance && customAppearance.trim() ? customAppearance : c.appearance;
-  const fullText = `${c.name} ${appearance} ${style || ''}`;
-  const isChinese = detectInputLanguage(fullText) === 'zh';
-  const styleEnhancer = getStyleEnhancers(fullText, style);
-
-  const customTemplate = isChinese
-    ? useSettingsStore.getState().settings.creative.promptTemplates?.turnaroundZh
-    : useSettingsStore.getState().settings.creative.promptTemplates?.turnaroundEn;
-
-  if (customTemplate && customTemplate.trim()) {
-    return customTemplate
-      .replace(/{name}/gi, c.name)
-      .replace(/{appearance}/gi, appearance)
-      .replace(/{style}/gi, style || '');
-  }
-
-  const isCartoonOrAnime = /anime|2d|comic|manga|二次元|动漫|动画|手绘|卡通|插画/i.test(fullText);
-
-  if (isChinese) {
-    const artTypeTag = isCartoonOrAnime
-      ? '高清2D动漫角色三视图模型板'
-      : '写实角色三视图摄影图，3全身摄影视角';
-
-    const parts = [
-      `三视图角色模型板（正面、侧面、背面并排站立）：${c.name}，100%保持与参考图0的角色外观一致`,
-      `角色外貌与服饰细节：${appearance}`,
-      '并排站立，3个独立视角，从头到脚全身完整可见',
-      '纯色简洁浅色背景，工作室光照',
-      artTypeTag,
-      styleEnhancer,
-      '100%保持正面、侧面、背面面部与服饰一致',
-      '超高画质，丰富细节',
-      '无文字，无数字，无标签，无水印，无标志，无多余肢体',
-    ].filter(Boolean);
-    return parts.join('，');
-  }
-
-  const artTypeTag = isCartoonOrAnime
-    ? 'high quality 2D anime character turnaround sheet'
-    : 'photorealistic character turnaround photo sheet, 3 full body photography views';
-
-  const parts = [
-    `3-panel split view character turnaround sheet, 3 full body views standing side-by-side: front view on the left, side profile view in the middle, back view on the right of ${c.name}, 100% exact identical full-body character design match with reference image 0`,
-    `character appearance, outfit, and visual features: ${appearance}`,
-    'standing side-by-side, 3 separate angles, full body visible from head to toe',
-    'simple plain solid light background, studio lighting',
-    artTypeTag,
-    styleEnhancer,
-    '100% identical face and consistent outfit across all 3 views',
-    'high quality, highly detailed',
-    'no text, no numbers, no labels, no watermark, no logo, no extra limbs',
-  ].filter(Boolean);
-  return parts.join(', ');
-}
-
-function sanitizeFileName(s: string): string {
-  return s.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+function sanitizeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 }

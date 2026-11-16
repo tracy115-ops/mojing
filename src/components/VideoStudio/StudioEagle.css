@@ -1,0 +1,6 @@
+.studio-eagle { min-width: 0; }
+.studio-eagle > .video-studio-toolbar > .ant-input { max-width: 330px; }
+.studio-eagle-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
+.studio-eagle-body > aside { padding: 14px; background: var(--bg-container); border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); }
+.studio-eagle-body > section { min-width: 0; }.studio-eagle-pagination { margin-top: 18px; }
+@media (max-width: 850px) { .studio-eagle-body { grid-template-columns: minmax(0, 1fr); } }

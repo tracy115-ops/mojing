@@ -6,7 +6,9 @@ use tauri::Emitter;
 mod ffmpeg;
 mod logging;
 mod asset;
-pub use ffmpeg::{ffmpeg_probe, ffmpeg_download_clip, ffmpeg_compose_clips, ffmpeg_merge_audio, ffmpeg_write_data_uri, ffmpeg_export};
+mod world_render;
+use world_render::{world_render_begin, world_render_frame, world_render_finish, world_render_cancel, WorldRenderJobs};
+pub use ffmpeg::{ffmpeg_probe, ffmpeg_download_clip, ffmpeg_compose_clips, ffmpeg_merge_audio, ffmpeg_write_data_uri, ffmpeg_extract_last_frame, ffmpeg_extract_frame, ffmpeg_export};
 pub use logging::{log_write, log_path, log_open_dir};
 pub use asset::{asset_stats_project, asset_clean_project, asset_clean_all, asset_read_as_data_uri, asset_stat_path};
 
@@ -17,6 +19,7 @@ async fn write_export_file(path: String, content: String) -> Result<(), String> 
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(WorldRenderJobs::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -30,7 +33,13 @@ pub fn run() {
             ffmpeg_compose_clips,
             ffmpeg_merge_audio,
             ffmpeg_write_data_uri,
+            ffmpeg_extract_last_frame,
+            ffmpeg_extract_frame,
             ffmpeg_export,
+            world_render_begin,
+            world_render_frame,
+            world_render_finish,
+            world_render_cancel,
             log_write,
             log_path,
             log_open_dir,
