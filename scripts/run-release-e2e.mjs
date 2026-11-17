@@ -15,7 +15,7 @@ const executable = resolve(process.argv[2] || 'src-tauri/target/release/mojing.e
 await access(executable);
 const version = JSON.parse(await readFile('package.json', 'utf8')).version;
 const root = await mkdtemp(join(tmpdir(), 'mojing-release-e2e-'));
-const output = resolve('artifacts', `release-e2e-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+const output = process.env.MOJING_E2E_ARTIFACT_DIR || resolve('artifacts', `release-e2e-${new Date().toISOString().replace(/[:.]/g, '-')}`);
 await mkdir(output, { recursive: true });
 const run = promisify(execFile), requests = [], serverErrors = [], steps = [], layoutChecks = [];
 const paragraphs = [
@@ -39,7 +39,9 @@ for (let i = 0; i < 2; i++) {
   await run('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=1280x704:r=24', '-t', '5', '-vf', i === 0 ? 'lutrgb=r=val*.25+180:g=val*.2:b=val*.2' : 'lutrgb=r=val*.2:g=val*.2:b=val*.25+180', '-an', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p', '-threads', '2', path], { windowsHide: true });
   const color = await averageFrame(path, 1);
   assert.ok(i === 0 ? color[0] > color[2] + 30 : color[2] > color[0] + 30, `fixture ${i} has a distinct color`);
-  videoFixtures.push(await readFile(path));
+  // A valid MP4 free box keeps the fixture above WebView2's fetch URL limit.
+  const padding = Buffer.alloc(2 * 1024 * 1024); padding.writeUInt32BE(padding.length); padding.write('free', 4);
+  videoFixtures.push(Buffer.concat([await readFile(path), padding]));
 }
 const audioPath = join(root, 'voice.mp3');
 await run('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=44100:duration=1', '-c:a', 'libmp3lame', audioPath], { windowsHide: true });
@@ -70,14 +72,17 @@ const server = createServer(async (request, response) => {
       return;
     } else if (url.pathname.endsWith('/audio/speech')) {
       response.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(audio); return;
-    } else if (url.pathname.endsWith('/images/generations')) data = { data: [{ b64_json: png.toString('base64') }] };
+    } else if (url.pathname.endsWith('/images/generations')) {
+      assert.ok(body.seed === undefined || Number.isInteger(body.seed) && body.seed >= -1 && body.seed <= 999, 'Agnes Image accepts only seeds from -1 to 999');
+      data = { data: [{ b64_json: png.toString('base64') }] };
+    }
     else if (request.method === 'POST' && url.pathname.endsWith('/v1/videos')) {
       const id = `video_release_${++videoCounter}`;
-      tasks.set(id, { index: /Goodbye|lowers/i.test(body.prompt) ? 1 : 0, seconds: body.seconds });
+      tasks.set(id, { index: /Goodbye|lowers/i.test(body.prompt) ? 1 : 0, seconds: body.seconds, inconsistentMetadata: videoCounter === 5 });
       data = { video_id: id };
     } else if (url.pathname === '/agnesapi') {
       const task = tasks.get(url.searchParams.get('video_id')); assert.ok(task, 'known video task');
-      data = { status: 'completed', progress: 100, seconds: task.seconds, width: 1280, height: 704, url: `http://${request.headers.host}/media/shot-${task.index}.mp4` };
+      data = { status: 'completed', progress: 100, seconds: task.inconsistentMetadata ? 2 : task.seconds, width: task.inconsistentMetadata ? 640 : 1280, height: task.inconsistentMetadata ? 360 : 704, url: `http://${request.headers.host}/media/shot-${task.index}.mp4` };
     } else if (url.pathname.endsWith('/chat/completions')) {
       const system = body.messages.find(m => m.role === 'system')?.content || '';
       const user = body.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content.filter(c => c.type === 'text').map(c => c.text).join('\n')).join('\n');
@@ -168,6 +173,29 @@ try {
   assert.ok((await project()).sceneSpec.shots.every(s => s.versionHistory.some(v => v.type === 'image' && v.reviewStatus === 'approved')));
   await desktop.screenshot(join(output, '02-keyframes.png'));
 
+  mark('edit and regenerate an approved keyframe, then reload and resume from idle');
+  await desktop.evaluate(`document.querySelectorAll('.shot-production-shot-item')[0].click()`);
+  const imageCountBeforeEdit = (await project()).sceneSpec.shots[0].versionHistory.filter(v => v.type === 'image').length;
+  await desktop.fill('.shot-production-prompt-grid label:first-child textarea', 'Ada stands beside the same blue wall, with her right hand lowered.');
+  await desktop.evaluate('document.activeElement.blur()');
+  await desktop.textButton('生成关键帧', '.shot-production-generate-actions');
+  await desktop.waitFor(`${projectExpression()}.sceneSpec.shots[0].versionHistory.filter(v=>v.type==='image').length>${imageCountBeforeEdit}`, 'regenerated keyframe', 30000);
+  await desktop.click('[data-tab=review]');
+  await desktop.click('.shot-production-version.is-selected .shot-production-version-actions button:has([aria-label=check])');
+  assert.equal(videoCounter, 0, 'manual editing still requires an explicit video production action');
+
+  // Rehydration clears a suspended pipeline checkpoint after an app reload.
+  // This is the real trigger observed during the live quality run.
+  await desktop.call('Page.reload');
+  await desktop.waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'reload navigation');
+  await desktop.click('button[aria-label="视频工坊"]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'reload studio');
+  await desktop.click('[data-testid=studio-nav-projects]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=video-overview-next-action-button]")', 'reloaded project');
+  // Hydration updates the runtime store before the next persistence write.
+  // Observe the console used by the user, rather than its old disk snapshot.
+  assert.equal(await desktop.evaluate('document.querySelector(".video-production-console")?.classList.contains("is-idle")'), true, 'reloaded project is idle before the user resumes production');
+
   mark('resume voice assignment, TTS and video candidates through UI');
   await desktop.click('button[aria-label="生产链路"]');
   await desktop.click('[data-testid=video-overview-next-action-button]');
@@ -257,7 +285,9 @@ try {
   };
   await checkTimelineLayout();
   await desktop.evaluate('document.activeElement?.blur()');
-  await desktop.waitFor('!document.querySelector(".ant-message-notice")', 'transient composition messages clear', 10000);
+  // Capture the actual layout, including any success notice whose dismissal
+  // is paused by the native pointer. Its timer is not an export prerequisite.
+  await desktop.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 300, y: 100 });
   await desktop.screenshot(join(output, '05-timeline-edited.png'));
   await desktop.click('.ws-titlebar-window-controls .ant-btn');
   await desktop.waitFor('document.documentElement.dataset.theme==="light"', 'light theme');
@@ -284,7 +314,7 @@ try {
   await desktop.waitFor('!!document.querySelector(".ant-modal .ant-radio-group")', 'export settings');
   await desktop.click('.ant-modal .ant-modal-footer .ant-btn-primary');
   const exportedPath = join(output, 'exported.mp4');
-  await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('scripts/lib/save-desktop-dialog.ps1'), '-AppProcessId', String(desktop.child.pid), '-OutputPath', exportedPath], { windowsHide: true, timeout: 30000 });
+  await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('scripts/lib/save-desktop-dialog.ps1'), '-AppProcessId', String(desktop.child.pid), '-OutputPath', exportedPath], { windowsHide: true, timeout: 60000 });
   await desktop.waitFor('!document.querySelector(".ant-modal .ant-radio-group")', 'export completed', 45000);
   assert.ok((await stat(exportedPath)).size > 1024);
   const exportedInfo = await probe(exportedPath);
@@ -318,6 +348,9 @@ try {
   assert.equal(graphRequest.mode, 'keyframe');
   assert.ok(graphRequest.first_frame.startsWith('data:image/'), 'upstream generated image reaches actual video HTTP payload');
   assert.ok(studioAssets.every(a => a.storage === 'disk'), 'canvas outputs saved through native IPC');
+  const canvasVideo = studioAssets.find(a => a.kind === 'video');
+  assert.deepEqual([canvasVideo.width, canvasVideo.height, canvasVideo.durationSeconds], [1280, 704, 5], 'library metadata comes from the actual saved file');
+  assert.equal(canvasVideo.responseSnapshot.width, 640, 'keep the original provider metadata for comparison');
   await desktop.screenshot(join(output, '06-canvas.png'));
 
   mark('send generated canvas video back to a project shot');
@@ -356,6 +389,21 @@ try {
   await desktop.evaluate(studioReader);
   assert.deepEqual((await desktop.evaluate('e2eReadStudio()')).state.canvases, canvasState.canvases, 'canvas dependency outputs survive actual restart');
   await desktop.screenshot(join(output, '08-restarted.png'));
+
+  mark('inspect and adopt a saved video larger than 2 MB through native IPC');
+  await desktop.click('[data-testid=studio-nav-assets]');
+  await desktop.textButton('发送到分镜', `[data-asset-id="${canvasVideo.id}"]`);
+  await desktop.choose('.studio-project-transfer [aria-label="选择项目"]', 'Release E2E - Ada');
+  await desktop.choose('.studio-project-transfer [aria-label="选择镜头"]', `#1 ${paragraphs[0].slice(0, 50)}`);
+  await desktop.choose('.studio-project-transfer [aria-label="使用方式"]', '检查后进入正式审片');
+  await desktop.click('.studio-project-transfer .ant-modal-footer .ant-btn-primary');
+  await desktop.waitFor('!document.querySelector(".studio-project-transfer")', 'large real video inspection', 45000);
+  const imported = (await project()).clips.find(c => c.shotId === state.sceneSpec.shots[0].id).importedVideo;
+  assert.ok((await stat(diskPath(canvasVideo.url))).size > 2 * 1024 * 1024);
+  assert.deepEqual([imported.width, imported.height, imported.durationSeconds], [1280, 704, 5]);
+  assert.equal(imported.sha256, sha(await readFile(diskPath(canvasVideo.url))), 'import fingerprints the complete large file');
+  assert.equal((await project()).finalVideoUrl, undefined, 'adoption invalidates the old final');
+  await desktop.screenshot(join(output, '09-large-video-import.png'));
   assert.deepEqual(desktop.errors, []);
   assert.deepEqual(serverErrors, []);
   report = { result: 'passed', version, executable, executableSHA256: sha(await readFile(executable)), boundary: 'Remote model and visual-review responses are simulated by a local HTTP service. UI, provider adapters, Tauri HTTP/IPC, disk, FFmpeg, playback, native Save dialog and process restart are real.', projectId, steps, originalInfo, editedInfo, exportedInfo, originalColors, editedColors, previewColor, audioRms, layoutChecks, canvas: { jobs: canvasState.jobs.length, diskAssets: studioAssets.length, referenceTransport: graphRequest.mode, shotTransfer: true }, requestCounts: Object.fromEntries([...new Set(requests.map(r => r.path))].map(path => [path, requests.filter(r => r.path === path).length])), videoPayloads: submitted.map(({ body }) => ({ ...body, first_frame: `sha256:${sha(body.first_frame)}` })), output };

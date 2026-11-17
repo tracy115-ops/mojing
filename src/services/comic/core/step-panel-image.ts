@@ -165,7 +165,7 @@ async function generatePanel(
     `comic_panel_${panel.index + 1}`,
   );
 
-  return { ...panel, imageUrl };
+  return { ...panel, imageUrl, originalImageUrl: imageUrl };
 }
 
 // --- Prompt 构造 ---

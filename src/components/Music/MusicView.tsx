@@ -7,15 +7,16 @@ import {
   DownloadOutlined,
   PlusOutlined,
   ThunderboltOutlined,
-  ScissorOutlined,
   DeleteOutlined,
-  CheckCircleOutlined,
   EditOutlined,
 } from '@ant-design/icons';
 import { useMusicStore, type MusicTrack } from '@/stores/musicStore';
 import { generateSunoMusicSOP } from '@/services/providers/suno-music-adapter';
 import { useProviderStore } from '@/stores/providerStore';
 import { useVideoStore } from '@/stores/videoStore';
+import { useTranslation } from '@/i18n';
+import MusicEndpointSettings from './MusicEndpointSettings';
+import './MusicView.css';
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -30,6 +31,7 @@ const MUSIC_STYLES = [
 ];
 
 const MusicView: React.FC = () => {
+  const { t } = useTranslation();
   const { tracks, currentTrackId, isPlaying, addTrack, removeTrack, setCurrentTrack, setIsPlaying } = useMusicStore();
   const endpoints = useProviderStore((s) => s.endpoints);
   const projects = useVideoStore((s) => s.projects);
@@ -47,6 +49,7 @@ const MusicView: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const currentTrack = tracks.find((t) => t.id === currentTrackId) || tracks[0];
+  const durationLabel = (seconds: number) => seconds > 0 ? `${seconds}s` : t('music.unknownDuration');
 
   // 获得第一个可用的漫剧项目
   const firstNovelProjectId = Object.keys(projects)[0];
@@ -63,11 +66,11 @@ const MusicView: React.FC = () => {
     message.success(`已成功将《${track.title}》设置为当前漫剧项目的专属 BGM！`);
   };
 
-  // AI 一键作词
+  // A local example template, not an AI generation request.
   const handleAutoLyrics = () => {
     const defaultText = `[Intro - GuZheng Solo]\n\n[Verse 1]\n明月照高楼\n风过长河水自流\n剑影破清秋\n少年仗义踏九州\n\n[Chorus - High Energy]\n漫漫前路无所惧\n热血漫破万里云\n挥手斩断凡俗锁\n天地同歌傲红尘\n\n[Outro]\n余音绕梁...`;
     setLyrics(defaultText);
-    message.success('已自动生成标准 Suno 元标记 [Verse] / [Chorus] 结构化歌词草稿！');
+    message.info(t('music.lyricsTemplateFilled'));
   };
 
   const handleTogglePlay = (track: MusicTrack) => {
@@ -76,14 +79,12 @@ const MusicView: React.FC = () => {
         audioRef.current?.pause();
         setIsPlaying(false);
       } else {
-        audioRef.current?.play();
-        setIsPlaying(true);
+        void audioRef.current?.play().catch(() => setIsPlaying(false));
       }
     } else {
       setCurrentTrack(track.id);
-      setIsPlaying(true);
       setTimeout(() => {
-        audioRef.current?.play().catch(() => {});
+        void audioRef.current?.play().catch(() => setIsPlaying(false));
       }, 50);
     }
   };
@@ -94,27 +95,23 @@ const MusicView: React.FC = () => {
       return;
     }
 
-    if (mode === 'custom' && !lyrics.trim()) {
+    if (mode === 'custom' && !lyrics.trim() && !isInstrumental) {
       message.warning('请输入歌词内容');
       return;
     }
 
+    const musicEndpoint = endpoints.find(endpoint => endpoint.enabled && endpoint.provider === 'suno-music' && endpoint.baseUrl.trim());
+    if (!musicEndpoint) { message.warning(t('music.endpointRequired')); return; }
     setGenerating(true);
-    message.loading({ content: '正在调用 Suno AI 顶级音乐大模型生成中...', key: 'music_gen', duration: 0 });
+    message.loading({ content: t('music.generating'), key: 'music_gen', duration: 0 });
     try {
-      // 获取用户设置里的音乐端点配置
-      const musicEndpoint = endpoints?.find(
-        (e) => e.provider === 'suno-music' || e.provider === 'siliconflow-music'
-      );
-      const override = musicEndpoint
-        ? { baseUrl: musicEndpoint.baseUrl, apiKey: musicEndpoint.apiKey }
-        : undefined;
+      const override = { baseUrl: musicEndpoint.baseUrl, apiKey: musicEndpoint.apiKey };
 
       // 拿端点配置或生成
       const res = await generateSunoMusicSOP(
         {
-          prompt: mode === 'prompt' ? prompt : lyrics,
-          lyrics: lyrics,
+          prompt: mode === 'prompt' ? prompt : lyrics || selectedStyle,
+          lyrics: mode === 'custom' && !isInstrumental ? lyrics : undefined,
           title: title.trim() || (mode === 'prompt' ? prompt.slice(0, 16) : 'Suno AI 原创单曲'),
           styleOption: selectedStyle,
           vocalType: isInstrumental ? 'instrumental' : 'female',
@@ -137,33 +134,31 @@ const MusicView: React.FC = () => {
       };
 
       addTrack(newTrack);
-      message.success({ content: '✨ Suno 音乐 SOP 流程创作完成！已放入播放队列', key: 'music_gen' });
+      message.success({ content: t('music.generated'), key: 'music_gen' });
     } catch (err) {
-      message.error({ content: '生成失败，请检查设置中的端点配置', key: 'music_gen' });
+      message.error({ content: `${t('music.generateFailed')}: ${err instanceof Error ? err.message : String(err)}`, key: 'music_gen', duration: 8 });
     } finally {
       setGenerating(false);
     }
   };
 
   return (
-    <div style={{ height: 'calc(100vh - 80px)', display: 'flex', flexDirection: 'column', padding: '16px 24px', boxSizing: 'border-box', overflow: 'hidden' }}>
+    <div className="music-workspace" data-testid="music-workspace">
       {/* 顶部标题 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexShrink: 0 }}>
+      <div className="music-workspace-header">
         <div>
           <Title level={3} style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            🎵 Suno AI 音乐创作工坊 <Tag color="purple">Suno v3.5 / v4 引擎</Tag>
+            {t('music.title')}
           </Title>
           <Text type="secondary" style={{ fontSize: 13 }}>
-            基于全球顶尖 Suno AI 大模型 · 1 分钟生成原创人声与立体声伴奏歌曲 · 纯净免费不限次
+            {t('music.serviceHint')}
           </Text>
         </div>
 
-        <Tag icon={<CheckCircleOutlined />} color="success" style={{ padding: '6px 12px', fontSize: 13, borderRadius: 20 }}>
-          纯净全功能免费无限次生成
-        </Tag>
+        <MusicEndpointSettings />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '440px minmax(0, 1fr)', gap: 20, flex: 1, minHeight: 0 }}>
+      <div className="music-workspace-columns">
         {/* 左侧：创作控制台 (可独立滚动) */}
         <Card
           title="🎛️ 音乐创作控制台"
@@ -195,6 +190,7 @@ const MusicView: React.FC = () => {
             <div>
               <Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>歌曲名称</Text>
               <Input
+                data-testid="music-title"
                 placeholder="给你的歌曲起个名字(如: 霓虹狂想曲)"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -205,6 +201,7 @@ const MusicView: React.FC = () => {
               <div>
                 <Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>灵感描述 (Prompt)</Text>
                 <TextArea
+                  data-testid="music-prompt"
                   rows={4}
                   placeholder="描写你想要的歌曲氛围、主题或画面感(如: 一首带有国潮电音风格的狂想曲，讲述少年在江湖中仗剑天涯的故事)"
                   value={prompt}
@@ -216,10 +213,11 @@ const MusicView: React.FC = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <Text style={{ fontSize: 12, fontWeight: 600 }}>自定义歌词 (Lyrics)</Text>
                   <Button type="link" size="small" icon={<EditOutlined />} onClick={handleAutoLyrics}>
-                    ✨ AI 一键生成/填词
+                    {t('music.lyricsTemplate')}
                   </Button>
                 </div>
                 <TextArea
+                  data-testid="music-lyrics"
                   rows={6}
                   placeholder="[Verse 1]\n歌词段落...\n[Chorus]\n副歌高潮..."
                   value={lyrics}
@@ -266,17 +264,16 @@ const MusicView: React.FC = () => {
               size="large"
               icon={<ThunderboltOutlined />}
               loading={generating}
+              data-testid="music-generate"
               onClick={handleGenerate}
               style={{
                 height: 46,
                 fontSize: 16,
                 fontWeight: 'bold',
                 borderRadius: 8,
-                background: 'linear-gradient(135deg, #6e29f6 0%, #8b5cf6 100%)',
-                border: 'none',
               }}
             >
-              一键生成 AI 歌曲 (消耗 1 次额度)
+              {t('music.generate')}
             </Button>
           </Space>
         </Card>
@@ -289,8 +286,8 @@ const MusicView: React.FC = () => {
               size="small"
               style={{
                 borderRadius: 12,
-                background: 'linear-gradient(135deg, rgba(110,41,246,0.08) 0%, rgba(139,92,246,0.02) 100%)',
-                borderColor: '#c084fc',
+                background: 'var(--bg-container)',
+                borderColor: 'var(--border-base)',
                 flexShrink: 0,
               }}
             >
@@ -302,11 +299,11 @@ const MusicView: React.FC = () => {
                     minWidth: 64,
                     flexShrink: 0,
                     borderRadius: 12,
-                    background: 'linear-gradient(135deg, #6e29f6 0%, #a855f7 100%)',
+                    background: 'var(--bg-active)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#fff',
+                    color: 'var(--accent-primary)',
                     fontSize: 28,
                     cursor: 'pointer',
                   }}
@@ -338,11 +335,8 @@ const MusicView: React.FC = () => {
                 </div>
 
                 <Space style={{ flexShrink: 0 }}>
-                  <Tooltip title="一键导出 MP3">
+                  <Tooltip title={t('music.download')}>
                     <Button icon={<DownloadOutlined />} shape="circle" href={currentTrack.audioUrl} target="_blank" />
-                  </Tooltip>
-                  <Tooltip title="一键音轨分离 (提取纯人声与伴奏)">
-                    <Button icon={<ScissorOutlined />} shape="circle" onClick={() => message.info('提取成功！已在下方生成纯伴奏轨道')} />
                   </Tooltip>
                 </Space>
               </div>
@@ -352,6 +346,9 @@ const MusicView: React.FC = () => {
                 ref={audioRef}
                 src={currentTrack.audioUrl}
                 onEnded={() => setIsPlaying(false)}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onError={() => { setIsPlaying(false); message.error(t('music.playFailed')); }}
                 style={{ width: '100%', marginTop: 12 }}
                 controls
               />
@@ -367,7 +364,7 @@ const MusicView: React.FC = () => {
           >
             {tracks.length === 0 ? (
               <div style={{ textAlign: 'center', padding: 40 }}>
-                <CustomerServiceOutlined style={{ fontSize: 48, color: '#ccc' }} />
+                <CustomerServiceOutlined style={{ fontSize: 48, color: 'var(--text-tertiary)' }} />
                 <Paragraph type="secondary" style={{ marginTop: 12 }}>
                   暂无生成的音乐作品，在左侧输入灵感即可开始创作！
                 </Paragraph>
@@ -377,14 +374,15 @@ const MusicView: React.FC = () => {
                 {tracks.map((t) => (
                   <div
                     key={t.id}
+                    data-testid="music-track"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       padding: '12px 16px',
                       borderRadius: 8,
-                      background: currentTrackId === t.id ? 'rgba(110,41,246,0.06)' : 'var(--bg-secondary, rgba(0,0,0,0.02))',
-                      border: currentTrackId === t.id ? '1px solid #b17dff' : '1px solid rgba(0,0,0,0.06)',
+                      background: currentTrackId === t.id ? 'var(--bg-active)' : 'var(--bg-container)',
+                      border: '1px solid var(--border-base)',
                       gap: 12,
                     }}
                   >
@@ -403,9 +401,9 @@ const MusicView: React.FC = () => {
                         <Text
                           type="secondary"
                           style={{ fontSize: 12, display: 'block' }}
-                          ellipsis={{ tooltip: `${t.style} · ${t.durationSeconds}s` }}
+                          ellipsis={{ tooltip: `${t.style} · ${durationLabel(t.durationSeconds)}` }}
                         >
-                          {t.style} · {t.durationSeconds}s
+                          {t.style} · {durationLabel(t.durationSeconds)}
                         </Text>
                       </div>
                     </div>

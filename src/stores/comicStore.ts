@@ -397,32 +397,32 @@ export const useComicStore = create<ComicStoreState>()(
               portraitImage: undefined,
               turnaroundImage: undefined,
             }));
-            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined, originalImageUrl: undefined }));
             newSpec.pages = undefined;
           } else if (fromStage === 'panel_script') {
             // 清 panels(下游 panel_image/page_compose/dialogue_burn 全失效)
             newSpec.panels = [];
             newSpec.pages = undefined;
           } else if (fromStage === 'panel_image') {
-            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined, originalImageUrl: undefined }));
             newSpec.pages = undefined;
           } else if (fromStage === 'page_compose') {
             // 清 pages(dialogue_burn 也失效)
             newSpec.pages = undefined;
           } else if (fromStage === 'dialogue_burn') {
-            // dialogue_burn 把气泡烧进 panel.imageUrl(覆盖原值,无法恢复),
-            // 同时 page_compose 是下游也会失效。
-            // 因此:清 pages(强制 page_compose 重跑),
-            //      并把 panel_image 状态退回 pending(强制重出干净底图)
+            // Restore clean originals. Older projects without originals need
+            // image generation before dialogue can run again.
             newSpec.pages = undefined;
-            newStages.panel_image = {
-              stage: 'panel_image',
-              status: 'pending',
-              progress: 0,
-              input: newStages.panel_image?.input,
-              inputSummary: newStages.panel_image?.inputSummary,
-            };
-            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: undefined }));
+            newSpec.panels = proj.spec.panels.map((p) => ({ ...p, imageUrl: p.originalImageUrl }));
+            if (newSpec.panels.some((p) => !p.imageUrl)) {
+              newStages.panel_image = {
+                stage: 'panel_image',
+                status: 'pending',
+                progress: 0,
+                input: newStages.panel_image?.input,
+                inputSummary: newStages.panel_image?.inputSummary,
+              };
+            }
           }
           return {
             projects: {

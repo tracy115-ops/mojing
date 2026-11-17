@@ -1098,6 +1098,19 @@
   white-space: nowrap;
 }
 
+.video-command-center-preflight-issues {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.video-command-center-review-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
 .video-command-center-panel > .ant-btn-link {
   padding: 6px 14px 12px;
 }

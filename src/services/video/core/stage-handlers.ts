@@ -1365,6 +1365,7 @@ export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageR
 
     const sbCtx: StoryboardContext = {
       novelTitle: workingSpec.meta.title || '漫剧分镜',
+      sourceContext: (useProjectStore.getState().projects.find((project) => project.id === pid)?.metadata as any)?.scriptText,
       genre: workingSpec.meta.genre || 'general',
       style: workingSpec.meta.style || '',
       aspectRatio: workingSpec.meta.aspectRatio || '16:9',
@@ -1406,6 +1407,7 @@ export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageR
         location: s.location,
         mood: s.mood,
         cameraMovement: s.cameraMovement,
+        transition: s.transition,
         durationSeconds: (typeof s.durationSeconds === 'number' && s.durationSeconds > 0 ? s.durationSeconds : 4) as any,
       })),
     };

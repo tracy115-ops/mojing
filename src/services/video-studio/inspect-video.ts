@@ -1,6 +1,12 @@
 /** Decode real output frames before allowing a supplied video into shot review. */
 export async function inspectStudioVideo(dataUri: string): Promise<{ width: number; height: number; durationSeconds: number; sha256: string; frames: string[] }> {
-  const blob = await (await fetch(dataUri)).blob();
+  // WebView2 rejects fetch() URLs above about 2 MB, including inline videos.
+  const header = /^data:([^;,]+);base64,/.exec(dataUri);
+  if (!header) throw new Error('Video inspection requires a base64 data URI');
+  const decoded = atob(dataUri.slice(header[0].length));
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+  const blob = new Blob([bytes], { type: header[1] });
   const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
   const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   const url = URL.createObjectURL(blob), video = document.createElement('video');

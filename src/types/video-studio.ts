@@ -145,6 +145,8 @@ export interface WorldObject {
   keyframes: WorldKeyframe[];
   visible: boolean;
   assetId?: string;
+  /** Packaged CC0 scene prop. Exclusive with an imported model assetId. */
+  builtinModel?: string;
   motion?: 'idle' | 'walk' | 'run' | 'wave';
   pose?: ActorPose;
   /** Index into the GLB's embedded animation clips; undefined keeps its rest pose. */

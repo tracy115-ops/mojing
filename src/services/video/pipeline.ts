@@ -153,7 +153,11 @@ export class VideoPipeline {
   async run(): Promise<VideoProjectState | null> {
     const store = useVideoStore.getState();
     const { novelProjectId, chapters, spec, options } = this.input;
-    store.initProject(novelProjectId, chapters.map((c) => c.id), spec, this.input.novelTitle);
+    const existing = store.initProject(novelProjectId, chapters.map((c) => c.id), spec, this.input.novelTitle);
+    store.setError(novelProjectId, undefined);
+    const inputDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(this.input)));
+    const inputFingerprint = Array.from(new Uint8Array(inputDigest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    const canReusePlanning = existing.stages.script_slicing?.inputFingerprint === inputFingerprint;
 
     // 默认开关(若用户没传 options,从 spec 的 enable* 字段构造)
     const pipelineOptions: PipelineOptions =
@@ -176,16 +180,33 @@ export class VideoPipeline {
       const message = describePreflightFailure(preflight);
       store.setError(novelProjectId, message);
       this.cb.onError?.(message);
-      return store.getProject(novelProjectId) ?? null;
+      return null;
     }
 
     try {
       const videoGenSelection = this.createVideoGenOptions(spec, 'novel', 'multishot', novelProjectId);
       // --- 步 1:章节切片 ---
-      const rawShots = await this.runScriptSlicing();
+      const rawShots = canReusePlanning && existing.stages.script_slicing?.status === 'completed' && existing.shots.length > 0
+        ? existing.shots.map((shot) => ({
+            id: shot.id,
+            index: shot.index,
+            sourceChapterId: shot.sourceChapterId ?? chapters[0]?.id ?? `${novelProjectId}_script`,
+            sourceChapterNumber: (chapters.find((chapter) => chapter.id === shot.sourceChapterId)?.order ?? 0) + 1,
+            rawText: shot.sourceText,
+            characters: shot.visibleCharacters ?? shot.characters,
+            offscreenCharacters: shot.offscreenCharacters,
+            characterBinding: shot.characterBinding,
+            location: shot.location,
+            mood: shot.mood,
+            hasDialogue: !!shot.dialogue?.length,
+            hasAction: false,
+          }))
+        : await this.runScriptSlicing(inputFingerprint);
 
       // --- 步 2+5:LLM 改写 + 分镜 ---
-      const storyboardShots = await this.runStoryboardPrompt(rawShots, videoGenSelection);
+      const storyboardShots = canReusePlanning && existing.stages.storyboard_prompt?.status === 'completed' && existing.shots.length > 0
+        ? existing.shots
+        : await this.runStoryboardPrompt(rawShots, videoGenSelection);
 
       // --- 步 3:提取角色/场景/道具 ---
       const sceneSpec = await this.runExtraction(rawShots, storyboardShots);
@@ -213,7 +234,11 @@ export class VideoPipeline {
       return store.getProject(novelProjectId) ?? null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      useVideoStore.getState().setError(novelProjectId, msg);
+      const failedStage = store.getProject(novelProjectId)?.currentStage;
+      if (failedStage && ['script_slicing', 'storyboard_prompt', 'extraction'].includes(failedStage)) {
+        store.setStageStatus(novelProjectId, failedStage, 'error', { error: msg });
+      }
+      store.setError(novelProjectId, msg);
       this.cb.onError?.(msg);
       return null;
     }
@@ -300,6 +325,10 @@ export class VideoPipeline {
         return store.getProject(novelProjectId) ?? null;
       }
 
+      // Missing plans resume the completed planning steps and stop at the
+      // same approval checkpoint as a first run.
+      if (!isDirect && !hasSceneSpec) return this.run();
+
       const videoGen = this.createVideoGenOptions(
         spec,
         isDirect ? 'direct' : 'novel',
@@ -326,24 +355,9 @@ export class VideoPipeline {
         });
       }
 
-      // 前 3 步逻辑(Novel 通道):已完成则直接复用,否则跑一遍。
-      let sceneSpec: SceneSpec | null = null;
-
-      if (existing.sceneSpec && existing.sceneSpec.shots && existing.sceneSpec.shots.length > 0) {
-        // 如果 sceneSpec 已经存在且包含镜头列表,直接复用,坚决不重跑前两步
-        sceneSpec = existing.sceneSpec;
-      } else if (existing.stages.extraction?.status === 'completed' && !!existing.sceneSpec) {
-        sceneSpec = existing.sceneSpec!;
-      } else {
-        // 确实无完整分镜产物时才从头跑
-        const rawShots = await this.runScriptSlicing();
-        const storyboardShots = await this.runStoryboardPrompt(rawShots, videoGen);
-        sceneSpec = await this.runExtraction(rawShots, storyboardShots);
-      }
-
       return await runPipeline({
         novelProjectId,
-        spec: sceneSpec,
+        spec: existing.sceneSpec!,
         options: pipelineOptions,
         callbacks: this.cb,
         videoGen,
@@ -410,13 +424,15 @@ export class VideoPipeline {
 
   // --- 步 1 ---
 
-  private async runScriptSlicing(): Promise<RawShot[]> {
+  private async runScriptSlicing(inputFingerprint: string | undefined): Promise<RawShot[]> {
     const { chapters, spec } = this.input;
     const store = useVideoStore.getState();
     const stage: VideoStage = 'script_slicing';
 
     store.advanceToStage(this.input.novelProjectId, stage);
-    store.setStageStatus(this.input.novelProjectId, stage, 'running');
+    store.setStageStatus(this.input.novelProjectId, stage, 'running', {
+      progress: 0, error: undefined, startedAt: new Date().toISOString(), completedAt: undefined,
+    });
     this.cb.onStageChange?.(stage);
 
     const totalWords = chapters.reduce((s, c) => s + c.content.length, 0);
@@ -443,7 +459,7 @@ export class VideoPipeline {
       );
 
       store.setShots(this.input.novelProjectId, rawShots.map(toPlaceholderShot));
-      store.setStageStatus(this.input.novelProjectId, stage, 'completed', { progress: 1 });
+      store.setStageStatus(this.input.novelProjectId, stage, 'completed', { progress: 1, inputFingerprint });
       return rawShots;
     } finally {
       popStageContext();
@@ -461,7 +477,9 @@ export class VideoPipeline {
     const stage: VideoStage = 'storyboard_prompt';
 
     store.advanceToStage(novelProjectId, stage);
-    store.setStageStatus(novelProjectId, stage, 'running');
+    store.setStageStatus(novelProjectId, stage, 'running', {
+      progress: 0, error: undefined, startedAt: new Date().toISOString(), completedAt: undefined,
+    });
     this.cb.onStageChange?.(stage);
 
     store.setStageInputSummary(novelProjectId, stage, {
@@ -477,6 +495,9 @@ export class VideoPipeline {
       aspectRatio: spec.aspectRatio,
       defaultShotDuration: spec.shotDurationSeconds,
       continuityContext: this.input.seriesContinuityContext,
+      sourceContext: genre === 'script' || genre === 'custom_script'
+        ? this.input.chapters.map((chapter) => chapter.content).join('\n\n')
+        : undefined,
       allowFallback: false,
       sourceLanguage: detectInputLanguage(rawShots.map((shot) => shot.rawText).join('\n\n')),
       imageCapabilities: providerRouter.getImageCapabilities(
@@ -517,11 +538,15 @@ export class VideoPipeline {
     const stage: VideoStage = 'extraction';
 
     store.advanceToStage(novelProjectId, stage);
-    store.setStageStatus(novelProjectId, stage, 'running');
+    store.setStageStatus(novelProjectId, stage, 'running', {
+      progress: 0, error: undefined, startedAt: new Date().toISOString(), completedAt: undefined,
+    });
     this.cb.onStageChange?.(stage);
 
-    // 把所有 RawShot 拼成大文本供 LLM 提取
-    const fullText = rawShots.map((r) => r.rawText).join('\n\n');
+    // Slicing may omit a script's shared wardrobe, setting and constraints.
+    // Extract from the original chapters and use the shots only for bindings.
+    const fullText = this.input.chapters.map((chapter) => chapter.content).join('\n\n').trim()
+      || rawShots.map((r) => r.rawText).join('\n\n');
 
     store.setStageInputSummary(novelProjectId, stage, {
       headline: `${rawShots.length} 个镜头原文,共 ${fullText.length.toLocaleString()} 字`,
@@ -553,6 +578,7 @@ export class VideoPipeline {
       location: s.location,
       mood: s.mood,
       cameraMovement: s.cameraMovement,
+      transition: s.transition,
       durationSeconds: (typeof s.durationSeconds === 'number' && s.durationSeconds > 0 ? s.durationSeconds : 4) as any,
     }));
 
@@ -674,6 +700,8 @@ function toPlaceholderShot(raw: RawShot): StoryboardShot {
     videoPrompt: '',
     durationSeconds: 5,
     characters: raw.characters,
+    offscreenCharacters: raw.offscreenCharacters,
+    characterBinding: raw.characterBinding,
     location: raw.location,
     mood: raw.mood,
     narration: raw.rawText.slice(0, 80),

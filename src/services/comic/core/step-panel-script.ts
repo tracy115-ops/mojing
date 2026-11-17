@@ -77,15 +77,17 @@ export async function runPanelScript(
       void logger.warn('[comic/panel-script] LLM 返回空 panels,使用 fallback', 'comic');
       return fallbackResult(input, existingCharacters, ctx);
     }
-    const panels = parsed.panels.slice(0, ctx.panelCount * 2).map((p, i) =>
-      normalizePanel(p, i, existingCharacters),
-    );
     const extractedCharacters =
       existingCharacters.length === 0 && Array.isArray(parsed.characters)
         ? parsed.characters
             .filter((c) => c?.name && c?.appearance)
             .map((c, idx) => normalizeExtractedCharacter(c, idx))
         : undefined;
+    // Fresh theme projects get their cast in this same response. Resolve the
+    // panel references against that cast before filtering unknown IDs.
+    const panels = parsed.panels.slice(0, ctx.panelCount * 2).map((p, i) =>
+      normalizePanel(p, i, extractedCharacters ?? existingCharacters),
+    );
     return { panels, extractedCharacters, degraded: false };
   } catch (err) {
     void logger.warn(

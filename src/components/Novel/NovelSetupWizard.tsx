@@ -88,7 +88,10 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
     const template = getTemplate(templateId);
     if (!template) throw new Error(`Template ${templateId} not found`);
 
-    const systemPrompt = template.buildSystem(vars);
+    const arrayKey = templateId === 'character-generation' ? 'characters' : templateId === 'location-generation' ? 'locations' : undefined;
+    const systemPrompt = template.buildSystem(vars) + (arrayKey
+      ? `\n请把上述数组放入 JSON 对象的 "${arrayKey}" 字段；返回对象，不要直接返回顶层数组。`
+      : '');
     const userPrompt = template.buildUser(vars);
 
     abortRef.current = new AbortController();
@@ -102,7 +105,9 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         systemPrompt,
         userPrompt,
         temperature: 0.85,
-        maxTokens: 4096,
+        maxTokens: 8192,
+        responseFormat: 'json',
+        thinking: false,
       })) {
         if (abortRef.current?.signal.aborted) break;
         fullContent += chunk.delta;
@@ -198,10 +203,13 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       const result = await generateWithStream('character-generation', {
         title: basicValues.title,
         genre: basicValues.genre,
+        description: basicValues.description,
         worldbuilding: wbStr,
       });
       const parsed = parseJSON(result);
-      setCharacters(Array.isArray(parsed) ? parsed : []);
+      const items = Array.isArray(parsed) ? parsed : parsed.characters;
+      if (!Array.isArray(items) || !items.length) throw new Error(t('wizard.emptyCharacters'));
+      setCharacters(items);
       setGenStatus('done');
     } catch (err) {
       setGenStatus('error');
@@ -222,11 +230,14 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       const result = await generateWithStream('location-generation', {
         title: basicValues.title,
         genre: basicValues.genre,
+        description: basicValues.description,
         worldbuilding: wbStr,
         characters: charStr,
       });
       const parsed = parseJSON(result);
-      setLocations(Array.isArray(parsed) ? parsed : []);
+      const items = Array.isArray(parsed) ? parsed : parsed.locations;
+      if (!Array.isArray(items) || !items.length) throw new Error(t('wizard.emptyLocations'));
+      setLocations(items);
       setGenStatus('done');
     } catch (err) {
       setGenStatus('error');
@@ -248,6 +259,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       const result = await generateWithStream('plot-outline', {
         title: basicValues.title,
         genre: basicValues.genre,
+        description: basicValues.description,
         targetWordCount: String(basicValues.targetWordCount),
         worldbuilding: wbStr,
         characters: charStr,
@@ -271,7 +283,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         setGenStatus('idle');
         setStreamText('');
         setCurrent(1);
-      });
+      }).catch(() => undefined);
     } else {
       setGenStatus('idle');
       setStreamText('');

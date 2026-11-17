@@ -4,17 +4,19 @@ import type {
   LLMStreamChunk,
   ApiEndpoint,
 } from '@/types/providers';
-import { BaseLLMProvider } from './base';
-import { fetch as httpFetch } from './fetch-proxy';
+import { BaseLLMProvider } from './base.ts';
+import { fetch as httpFetch } from './fetch-proxy.ts';
 
 // --- OpenAI-Compatible Adapter ---
 // Works with: OpenAI, DeepSeek, Qwen, GLM, Doubao (via compatible endpoint)
 
 export class OpenAICompatibleProvider extends BaseLLMProvider {
   readonly providerId = 'openai-compatible';
+  readonly name: string;
 
-  constructor(endpoint: ApiEndpoint, public readonly name: string) {
+  constructor(endpoint: ApiEndpoint, name: string) {
     super(endpoint);
+    this.name = name;
   }
 
   private getChatUrl(): string {
@@ -27,9 +29,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return `${base}/chat/completions`;
   }
 
-  async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
-    const startTime = Date.now();
-
+  private getChatBody(request: LLMGenerateRequest): Record<string, unknown> {
     let systemPrompt = request.systemPrompt;
 
     const body: Record<string, unknown> = {
@@ -44,6 +44,14 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       // prompt 中必须包含 "json" / "JSON" 单词,否则 DeepSeek 会报 HTTP 400 invalid_request_error。
       if (!/json/i.test(systemPrompt) && !/json/i.test(request.userPrompt)) {
         systemPrompt = (systemPrompt ? `${systemPrompt}\n\n` : '') + 'Please respond in valid json format.';
+      }
+    }
+
+    // V4 shares max_tokens between reasoning and text. Structured output and
+    // explicitly bounded writing tasks reserve their budget for the result.
+    if (this.endpoint.provider === 'deepseek' && /^deepseek-v4-/.test(String(request.model))) {
+      if (request.thinking !== undefined || request.responseFormat === 'json') {
+        body.thinking = { type: request.thinking === true ? 'enabled' : 'disabled' };
       }
     }
 
@@ -67,6 +75,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (request.stopSequences?.length) {
       body.stop = request.stopSequences;
     }
+    return body;
+  }
+
+  async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
+    const startTime = Date.now();
+    const body = this.getChatBody(request);
 
     let response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
@@ -84,7 +98,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         (text.includes('image_url') || text.includes('expected `text`') || text.includes('unknown variant'))
       ) {
         body.messages = [
-          { role: 'system', content: systemPrompt },
+          (body.messages as Array<unknown>)[0],
           { role: 'user', content: request.userPrompt },
         ];
         response = await httpFetch(this.getChatUrl(), {
@@ -103,9 +117,16 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     const data = await response.json();
     const choice = data.choices?.[0];
+    if (choice?.finish_reason === 'length') {
+      throw new Error(`LLM output was truncated at max_tokens=${body.max_tokens}; increase the output budget or reduce the planning batch size.`);
+    }
+    const content = choice?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('LLM returned no text output. Check the model and its output token budget.');
+    }
 
     return {
-      content: choice?.message?.content ?? '',
+      content,
       model: data.model ?? request.model ?? 'gpt-4o',
       provider: this.endpoint.provider as LLMGenerateResponse['provider'],
       usage: {
@@ -118,16 +139,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   async *stream(request: LLMGenerateRequest): AsyncIterable<LLMStreamChunk> {
-    const body: Record<string, unknown> = {
-      model: request.model || 'gpt-4o',
-      messages: [
-        { role: 'system', content: request.systemPrompt },
-        { role: 'user', content: request.userPrompt },
-      ],
-      max_tokens: request.maxTokens ?? 4096,
-      temperature: request.temperature ?? 0.7,
-      stream: true,
-    };
+    const body: Record<string, unknown> = { ...this.getChatBody(request), stream: true };
 
     const response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
@@ -145,37 +157,55 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     const decoder = new TextDecoder();
     let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const payload = trimmed.slice(6);
-        if (payload === '[DONE]') {
-          yield { delta: '', done: true };
-          return;
-        }
-
-        try {
-          const parsed = JSON.parse(payload);
-          const delta = parsed.choices?.[0]?.delta?.content ?? '';
-          if (delta) {
-            yield { delta, done: false };
-          }
-        } catch {
-          // Skip malformed chunks
-        }
+    let hasText = false;
+    let finished = false;
+    const parseLine = (line: string): LLMStreamChunk | undefined => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) return;
+      const payload = trimmed.slice(5).trim();
+      if (payload === '[DONE]') {
+        if (!hasText) throw new Error('LLM returned no text output. Check the model and its output token budget.');
+        finished = true;
+        return { delta: '', done: true };
       }
-    }
+      const parsed = JSON.parse(payload);
+      if (parsed.error) throw new Error(`LLM stream error: ${parsed.error.message || 'provider error'}`);
+      const choice = parsed.choices?.[0];
+      if (choice?.finish_reason === 'length') {
+        throw new Error(`LLM output was truncated at max_tokens=${body.max_tokens}; increase the output budget or reduce the planning batch size.`);
+      }
+      if (choice?.finish_reason === 'content_filter') throw new Error('LLM output was stopped by the provider content filter.');
+      if (choice?.finish_reason) finished = true;
+      const delta = choice?.delta?.content;
+      if (typeof delta === 'string' && delta) {
+        if (delta.trim()) hasText = true;
+        return { delta, done: false };
+      }
+    };
 
-    yield { delta: '', done: true };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        if (done && buffer) { lines.push(buffer); buffer = ''; }
+        for (const line of lines) {
+          const chunk = parseLine(line);
+          if (chunk) {
+            yield chunk;
+            if (chunk.done) return;
+          }
+        }
+        if (done) break;
+      }
+      if (!finished) throw new Error('LLM stream ended before completion. Retry the request.');
+      if (!hasText) throw new Error('LLM returned no text output. Check the model and its output token budget.');
+      yield { delta: '', done: true };
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
   }
 }
 

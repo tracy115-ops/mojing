@@ -81,7 +81,7 @@ export function buildCharacterDnaTokens(
   const identity = [
     `subject name: ${name}`,
     options.referenceBound
-      ? 'the assigned reference image is authoritative for face, hair, body, clothing, colors, and accessories; preserve it exactly'
+      ? 'the assigned reference image is authoritative for face, hair, body, clothing, colors, and accessory design; preserve this identity and wardrobe. Pose, expression, handheld prop placement and open/closed state follow the shot first-frame state, not the reference pose'
       : appearance ? `canonical appearance and wardrobe: ${appearance}` : '',
     form,
     !options.referenceBound && tags ? `consistency tags: ${tags}` : '',

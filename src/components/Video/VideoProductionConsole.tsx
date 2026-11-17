@@ -4,6 +4,7 @@ import {
   Button,
   Empty,
   Progress,
+  Select,
   Space,
   Tag,
   Tooltip,
@@ -36,6 +37,8 @@ import {
 import type { VideoProjectState, VideoStage, VideoStageState } from '@/types/video';
 import { resolveLocalPath, toWebviewUrl } from '@/services/video/asset-store';
 import { resolveVideoQualityPolicy } from '@/services/video/core/quality-policy';
+import { allShotsHaveApprovedKeyframes } from '@/services/video/core/shot-production-contract';
+import { formatPipelinePreflightIssue } from './PipelinePreflightAlert';
 import './VideoProductionConsole.css';
 
 const { Text, Title } = Typography;
@@ -64,6 +67,7 @@ interface Props {
   onOpenPromptSettings: () => void;
   onOpenLogs: () => void;
   onOpenTrace: () => void;
+  onVisualReviewChange: (automatic: boolean) => void;
   onOpenShot?: (shotId: string) => void;
   continuingReview: boolean;
   t: Translate;
@@ -193,6 +197,7 @@ const VideoProductionConsole: React.FC<Props> = ({
   onOpenPromptSettings,
   onOpenLogs,
   onOpenTrace,
+  onVisualReviewChange,
   onOpenShot,
   continuingReview,
   t,
@@ -220,7 +225,7 @@ const VideoProductionConsole: React.FC<Props> = ({
           return 'character_anchor' as VideoStage;
         case 'review_shots':
           if (readiness.counts.keyframes < readiness.counts.shots) return 'keyframe_image' as VideoStage;
-          if (readiness.counts.approved === readiness.counts.shots && readiness.counts.videoCandidates < readiness.counts.shots) {
+          if (allShotsHaveApprovedKeyframes(readiness.shots) && readiness.counts.videoCandidates < readiness.counts.shots) {
             return 'video_generation' as VideoStage;
           }
           return undefined;
@@ -325,7 +330,7 @@ const VideoProductionConsole: React.FC<Props> = ({
             </div>
           </section>
 
-          {preflight.blocking.length > 0 && <Alert type="warning" showIcon icon={<WarningOutlined />} message={t('video.overview.configurationRequired', { count: preflight.blocking.length })} description={t('video.overview.configurationHint')} action={<Button size="small" icon={<SettingOutlined />} onClick={onOpenSettings}>{t('video.overview.openSettings')}</Button>} />}
+          {preflight.blocking.length > 0 && <Alert type="warning" showIcon icon={<WarningOutlined />} message={t('video.overview.configurationRequired', { count: preflight.blocking.length })} description={<ul className="video-command-center-preflight-issues">{preflight.blocking.map((issue, index) => <li key={`${issue.code}-${index}`}>{formatPipelinePreflightIssue(issue, t)}</li>)}</ul>} action={<Button size="small" icon={<SettingOutlined />} onClick={onOpenSettings}>{t('video.overview.openSettings')}</Button>} />}
           {readiness.continuityRisks.length > 0 && <Alert type="info" showIcon icon={<InfoCircleOutlined />} message={t('video.production.continuityRisk', { count: readiness.continuityRisks.length })} description={t('video.production.continuityRiskDescription')} action={<Button size="small" onClick={() => onPhaseChange('studio')}>{t('video.overview.openShots')}</Button>} />}
           {readiness.blockers.some((blocker) => blocker.code === 'unresolved_character_binding') && <Alert type="warning" showIcon icon={<WarningOutlined />} message={t('video.overview.shotBindingsRequired')} description={t('video.overview.shotBindingsRequiredDescription')} action={<Button size="small" onClick={() => onPhaseChange('studio')}>{t('video.overview.openShots')}</Button>} />}
 
@@ -397,6 +402,11 @@ const VideoProductionConsole: React.FC<Props> = ({
             <aside className="video-command-center-sidebar">
               <section className="video-command-center-panel">
                 <div className="video-command-center-panel-head"><Title level={5}>{t('video.overview.qualityTitle')}</Title><Tag color={project.options?.enableVisualQualityGate === false ? 'default' : 'green'}>{project.options?.enableVisualQualityGate === false ? t('video.overview.qualityVisualOff') : t('video.overview.qualityVisualOn')}</Tag></div>
+                <div className="video-command-center-review-mode">
+                  <label htmlFor="video-visual-review-mode">{t('video.overview.reviewMode')}</label>
+                  <Select id="video-visual-review-mode" aria-label={t('video.overview.reviewMode')} data-testid="video-visual-review-mode" value={qualityPolicy.visualReviewRequired ? 'automatic' : 'manual'} disabled={overall === 'running' || continuingReview} onChange={(value) => onVisualReviewChange(value === 'automatic')} options={[{ value: 'automatic', label: t('video.overview.reviewAutomatic') }, { value: 'manual', label: t('video.overview.reviewManual') }]} />
+                  <Text type="secondary">{t(qualityPolicy.visualReviewRequired ? 'video.overview.reviewAutomaticHint' : 'video.overview.reviewManualHint')}</Text>
+                </div>
                 <div className="video-command-center-policy" data-testid="video-quality-policy">
                   <div><span>{t('video.overview.qualityProfile')}</span><strong>{t(`video.overview.qualityProfile.${qualityPolicy.profile}`)}</strong></div>
                   <div><span>{t('video.overview.qualityCandidates')}</span><strong>{t('video.overview.qualityCandidatesDetail', { keyframes: qualityPolicy.keyframeCandidatesPerShot, videos: qualityPolicy.videoCandidatesPerShot })}</strong></div>

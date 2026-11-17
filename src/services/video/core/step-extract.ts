@@ -74,6 +74,7 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
     'You are a schema-constrained entity extraction model.',
     'Extract only entities, attributes, locations, props, and shot bindings explicitly supported by the supplied source.',
     'Preserve the source language and wording. Do not invent appearance, age, gender, clothing, identity, setting details, or visual style.',
+    'Character appearance contains stable physical identity and default clothing. Put movable props in props, and their temporary placement or open/closed states in the shot plan. Return costumeVariants=[] unless the source explicitly calls for different outfits; a single default outfit is not a variant.',
     'Classify entities as human, non_human, object, or unknown. A speaker or mentioned target is not automatically visible in a shot.',
     'Return JSON with characters, scenes, props, characterIdMap, and sceneIdMap. Use unknown or an empty field when the source does not provide a fact.',
   ].join('\n');
@@ -84,7 +85,7 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
     userPrompt: buildUserPrompt(input),
     responseFormat: 'json',
     temperature: 0.3,
-    maxTokens: 4096,
+    maxTokens: 8192,
   };
 
   try {
@@ -194,6 +195,13 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
 function buildUserPrompt(input: ExtractInput): string {
   return JSON.stringify({
     sourceText: input.text,
+    outputSchema: {
+      characters: [{ name: 'source entity name', aliases: [], appearance: 'source-supported physical appearance, hair, clothing, colors and accessories as one string', entityType: 'human | non_human | object | unknown', gender: 'female | male | unknown', ageGroup: 'child | teen | young | middle | elder | unknown', costumeVariants: [{ id: 'variant id', description: 'source costume as one string' }], firstAppearShotIndex: 0 }],
+      scenes: [{ name: 'location label matching shot.location', description: 'source-supported environment, layout, lighting and shared constraints as one string', firstAppearShotIndex: 0 }],
+      props: [{ name: 'prop name', description: 'source-supported appearance as one string' }],
+      characterIdMap: { optional_placeholder: 'source entity name' },
+      sceneIdMap: { optional_placeholder: 'location label' },
+    },
     existingCharacters: input.existingCharacters?.map((character) => ({
       id: character.id,
       name: character.name,

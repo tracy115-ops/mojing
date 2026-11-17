@@ -22,6 +22,7 @@ export default defineConfig(async () => ({
       'react',
       'react-dom/client',
       'zustand',
+      'mediabunny',
     ],
   },
   clearScreen: false,

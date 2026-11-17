@@ -269,7 +269,7 @@ try {
   console.log('Inspected imported video decodes real frames, creates a missing clip, requires human approval and invalidates on shot changes.');
   console.log('Canvas audio/video edges, portable sources, candidate transfer preservation and reference invalidation passed.');
 
-  await click('[data-testid=studio-nav-world]'); await textButton('新世界', '.world-engine-toolbar');
+  await click('[data-testid=studio-nav-world]'); await choose('场景模板', '双人对话'); await textButton('新世界', '.world-engine-toolbar');
   await waitFor('Boolean(document.querySelector("[data-testid=world-viewport] canvas"))', 'WebGL viewport');
   assert.equal(await evaluate('Boolean(document.querySelector(".world-engine-stage .ant-alert-error"))'), false);
   await evaluate(`document.querySelectorAll('[data-testid=world-object-item]')[0].click()`);
@@ -318,12 +318,15 @@ try {
   const frameSize = await evaluate(`(async()=>{const a=studioTest.getState().assets.find(a=>a.worldId && a.kind==='image');const img=new Image();img.src=a.url;await img.decode();return [img.width,img.height];})()`);
   assert.deepEqual(frameSize, [1280,720]);
   await screenshot('mojing-studio-world-dark-20261116.png');
-  await evaluate(`window.studioRecorder=MediaRecorder;window.MediaRecorder=class {constructor(){throw new Error('Fixture recorder setup failure')}static isTypeSupported(){return true}};`);
+  await evaluate(`window.studioEncoder=VideoEncoder;window.VideoEncoder=class extends window.studioEncoder{configure(){throw new Error('Fixture encoder setup failure')}};`);
   await textButton('导出预演视频', '.world-engine-output-actions');
   await waitFor('!document.querySelector(".world-engine-output-actions .ant-btn-loading")', 'recording failure cleanup');
-  await evaluate('window.MediaRecorder=window.studioRecorder');
+  assert.equal(await evaluate('studioTest.getState().assets.filter(a=>a.worldId&&a.kind==="video").length'), 0, 'failed encoding produces no video asset');
+  await evaluate('window.VideoEncoder=window.studioEncoder');
+  const previsStartedAt = Date.now();
   await textButton('导出预演视频', '.world-engine-output-actions');
-  await waitFor('studioTest.getState().assets.some(a=>a.worldId && a.kind==="video")', 'previs video export', 18000);
+  await waitFor('studioTest.getState().assets.some(a=>a.worldId && a.kind==="video")', 'previs video export', 90000);
+  console.log('World previs encoding completed in ' + ((Date.now() - previsStartedAt) / 1000).toFixed(2) + 's.');
   const clipSize = await evaluate(`(async()=>{const a=studioTest.getState().assets.find(a=>a.worldId&&a.kind==='video');const v=document.createElement('video');v.src=a.url;await new Promise((ok,fail)=>{v.onloadedmetadata=ok;v.onerror=fail;});return [v.videoWidth,v.videoHeight];})()`);
   assert.deepEqual(clipSize, [1280,720]);
   await evaluate(`(async()=>{const {useSettingsStore}=await import('/src/stores/settingsStore.ts');useSettingsStore.getState().setTheme('light');})()`); await delay(200);

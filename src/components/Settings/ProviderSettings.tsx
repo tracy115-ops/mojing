@@ -427,7 +427,7 @@ const ProviderSettings: React.FC = () => {
         : [];
 
       let generationCapabilities: ApiEndpoint['generationCapabilities'];
-      if (addCategory === 'image' || addCategory === 'video') {
+      if (addCategory === 'llm' || addCategory === 'image' || addCategory === 'video') {
         try {
           generationCapabilities = parseEndpointGenerationCapabilities(values.generationCapabilitiesJson);
         } catch (error) {

@@ -31,7 +31,8 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
   >([]);
 
   const handleOk = async () => {
-    const values = await form.validateFields();
+    const values = await form.validateFields().catch(() => null);
+    if (!values) return;
     const isNovel = values.sourceMode === 'novel';
     const project = createProject({
       title: values.title,
@@ -159,9 +160,9 @@ const CreateComicModal: React.FC<CreateComicModalProps> = ({ open, onOk, onCance
               options={[
                 { value: 'yonkoma', label: '📱 4格经典四格条漫' },
                 { value: 'grid-9', label: '🖼️ 9格典藏版网格画册' },
-                { value: 'manga-splash', label: '💥 热血日漫跨页破框' },
+                { value: 'manga-splash', label: '💥 主格分镜排版' },
                 { value: 'webtoon', label: '📜 手机端全景长图条漫' },
-                { value: 'grid-2', label: '🖼️ 双格双列对比' },
+                { value: 'grid-2', label: '🖼️ 上下双格对比' },
               ]}
             />
           </Form.Item>

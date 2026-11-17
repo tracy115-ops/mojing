@@ -7,7 +7,7 @@ import { BaseImageProvider } from './base';
 import { fetch as httpFetch } from './fetch-proxy';
 import { applyUnconsumedGenerationParameters } from './parameter-transport';
 import { readAsDataUri, isRemoteUrl } from '@/services/video/asset-store';
-import { buildSDWebUIRequest, getAgnesImageOutput, getAgnesImageWireParameterSnapshot } from './image-wire-contract.ts';
+import { buildSDWebUIRequest, getAgnesImageOutput, getAgnesImageWireParameterSnapshot, normalizeAgnesImageSeed } from './image-wire-contract.ts';
 
 function pickIdeogramAspectRatio(width?: number, height?: number, explicit?: string): string {
   const supported = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '4:5', '5:4', '2:1', '1:2', '3:1', '1:3'] as const;
@@ -524,7 +524,7 @@ export class AgnesImageProvider extends BaseImageProvider {
     // 负向与解剖结构约束由各上游在 prompt 中以自然语言明确约束。
 
     if (request.seed !== undefined && request.seed !== null) {
-      body.seed = request.seed;
+      body.seed = normalizeAgnesImageSeed(request.seed);
     }
     applyUnconsumedGenerationParameters(
       body,

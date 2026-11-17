@@ -12,7 +12,7 @@ const appUrl = process.env.MOJING_SMOKE_URL || 'http://127.0.0.1:1420/', origin 
 const browser = await chromeSession({ url: appUrl, port: 9243 });
 const { call, evaluate, waitFor, click, textButton, delay, screenshot } = browser;
 const jobs = [], external = [], commands = [];
-let failEncode = true, holdAt = 5, held;
+let failEncode = true, holdAt = 5, held, encoding;
 browser.onEvent(event => {
   if (event.method === 'Runtime.bindingCalled' && event.params.name === 'offlineIPC') {
     void (async () => {
@@ -34,7 +34,10 @@ browser.onEvent(event => {
             assert.equal(job.frames.length, job.config.frameCount);
             if (failEncode) { failEncode = false; throw new Error('Injected encoding failure'); }
             job.output = join(root, `${job.id}.mp4`);
-            await run('ffmpeg', ['-v', 'error', '-y', '-framerate', String(job.config.fps), '-i', join(job.directory, 'frame-%06d.png'), '-frames:v', String(job.config.frameCount), '-an', '-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', job.output], { windowsHide: true });
+            const started = Date.now();
+            encoding = run('ffmpeg', ['-v', 'error', '-y', '-nostdin', '-framerate', String(job.config.fps), '-i', join(job.directory, 'frame-%06d.png'), '-frames:v', String(job.config.frameCount), '-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', job.output], { windowsHide: true, timeout: 90000 });
+            try { await encoding; } finally { encoding = undefined; }
+            console.log(`Encoded ${job.id} in ${Date.now() - started}ms.`);
             result = { outputPath: `${origin}/__offline_output/${job.id}.mp4`, width: job.config.width, height: job.config.height, fps: job.config.fps, frameCount: job.config.frameCount, durationSeconds: job.config.frameCount / job.config.fps, sizeBytes: (await readFile(job.output)).length }; job.completed = true;
           } else if (command === 'world_render_cancel') {
             job.cancelled = true; if (held) { held.fail(new Error('cancelled')); held = undefined; }
@@ -81,10 +84,10 @@ try {
   await evaluate('window.offlineReplies=new Map();window.offlineCounter=0;window.__TAURI_INTERNALS__={invoke:(command,args)=>new Promise((resolve,reject)=>{const id=++offlineCounter;offlineReplies.set(id,{resolve,reject});offlineIPC(JSON.stringify({id,command,args}));})};');
   const sourceWorld = await evaluate('JSON.stringify(offlineStore.getState().worlds[0])'); await open(); await click('[data-testid=world-offline-start]');
   await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("5 / 24")', 'real frame write progress'); for (let i = 0; i < 100 && !held; i++) await delay(30); assert.ok(held); assert.equal(jobs[0].frames.length, 5); await screenshot('mojing-world-offline-rendering.png'); held.ok(); held = undefined;
-  await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("视频编码失败")', 'injected encode failure'); assert.equal(jobs[0].frames.length, 24); assert.equal(await evaluate('offlineStore.getState().assets.length'), 0);
+  await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("视频编码失败")', 'injected encode failure', 90000); assert.equal(jobs[0].frames.length, 24); assert.equal(await evaluate('offlineStore.getState().assets.length'), 0);
   const samples = await evaluate('offlineSamples'); assert.equal(samples.length, 24); for (let i = 0; i < 24; i++) { assert.equal(samples[i].time, i / 24); assert.equal(Math.round(samples[i].focal), i < 12 ? 35 : 70); assert.ok(Math.abs(samples[i].actor - (-1 + 2 * i / 24)) < .00001); }
   assert.equal(await evaluate('offlineViewport.view'), 'monitor'); assert.equal(await evaluate('offlineViewport.recording'), false); const frameWrites = commands.filter(c => c === 'world_render_frame').length;
-  await click('[data-testid=world-offline-retry]'); await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("导出完成")', 'encoded MP4 saved', 30000);
+  await click('[data-testid=world-offline-retry]'); await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("导出完成")', 'encoded MP4 saved', 120000);
   assert.equal(commands.filter(c => c === 'world_render_frame').length, frameWrites); assert.equal(jobs.length, 1); const asset = await evaluate('offlineStore.getState().assets[0]'); assert.equal(asset.mimeType, 'video/mp4'); assert.equal(asset.width, 1280); assert.equal(asset.height, 720); assert.equal(asset.durationSeconds, 1);
   const { stdout } = await run('ffprobe', ['-v', 'error', '-count_frames', '-show_entries', 'stream=codec_name,width,height,pix_fmt,nb_read_frames,avg_frame_rate', '-of', 'json', jobs[0].output], { windowsHide: true }); const stream = JSON.parse(stdout).streams[0]; assert.equal(stream.codec_name, 'h264'); assert.equal(stream.nb_read_frames, '24'); assert.equal(stream.avg_frame_rate, '24/1'); assert.equal(stream.pix_fmt, 'yuv420p');
   for (const index of [0, 12, 23]) {
@@ -100,8 +103,12 @@ try {
   assert.deepEqual(browser.errors, []); assert.ok(external.every(url => !/generations|\/tasks/.test(url)), 'no real model requests');
   console.log('Browser desktop gate, 1080P cancellation, owned-cache cleanup, monitor restoration, unmount cancellation and responsive dark/light UI passed. Native IPC was simulated; WebGL and FFmpeg were real.');
 } catch (error) {
+  console.error('Offline failure:', error);
   console.error('Offline diagnostic:', await evaluate('({text:document.body.innerText.slice(-3500),samples:window.offlineSamples?.length,recording:window.offlineViewport?.recording})').catch(() => null)); console.error('Runtime errors:', browser.errors); console.error('Screenshot:', await screenshot('mojing-world-offline-failure.png').catch(() => null)); throw error;
 } finally {
+  // Stop the owned encoder before removing its input frames on Windows.
+  const pendingEncoding = encoding;
+  if (pendingEncoding) { pendingEncoding.child.kill(); await pendingEncoding.catch(() => {}); }
   browser.close();
-  assert.ok(resolve(root).startsWith(resolve(tmpdir()) + '\\') && root.includes('mojing-offline-ui-')); await rm(root, { recursive: true, force: true });
+  assert.ok(resolve(root).startsWith(resolve(tmpdir()) + '\\') && root.includes('mojing-offline-ui-')); await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

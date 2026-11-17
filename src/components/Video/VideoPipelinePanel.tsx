@@ -499,12 +499,13 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
       // pipeline so chapter slicing, storyboard planning, and entity binding
       // are actually produced by their dedicated stages. runFromStage is for
       // an already materialized production plan.
-      const planningOnly = stage === 'script_slicing';
+      const planningOnly = latestBeforeRun?.sceneSpec?.meta.channel !== 'direct'
+        && ['script_slicing', 'storyboard_prompt', 'extraction'].includes(stage);
       const planningPipeline = planningOnly ? VideoPipeline.forResume(pipelineId, {
         onError: (error) => message.error({ content: error, key: noticeKey }),
       }) : null;
       const ok = planningOnly
-        ? !!(await (project.sceneSpec ? planningPipeline?.replan() : planningPipeline?.run()))
+        ? !!(await (stage === 'script_slicing' && latestBeforeRun?.sceneSpec ? planningPipeline?.replan() : planningPipeline?.run()))
         : await runFromStage(pipelineId, stage);
       if (ok) {
         message.success({
@@ -559,6 +560,11 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
         onOpenPromptSettings={() => setPromptSettingsOpen(true)}
         onOpenLogs={() => setLogsDrawerOpen(true)}
         onOpenTrace={() => setTraceOpen(true)}
+        onVisualReviewChange={(automatic) => {
+          if (overall === 'running' || continuingReview) return;
+          const latest = useVideoStore.getState().getProject(pipelineId);
+          if (latest) useVideoStore.getState().setPipelineOptions(pipelineId, { ...DEFAULT_PIPELINE_OPTIONS, ...latest.options, enableVisualQualityGate: automatic, blockOnVisualReviewUnavailable: automatic });
+        }}
         onOpenShot={(shotId) => {
           setFocusedShotId(shotId);
           setActivePhase('studio');

@@ -22,6 +22,8 @@ export interface StoryboardContext {
   aspectRatio: '16:9' | '9:16' | '1:1';
   defaultShotDuration: 3 | 5 | 10 | 18;
   continuityContext?: string;
+  /** Full script context retains global constraints outside individual shots. */
+  sourceContext?: string;
   allowFallback?: boolean;
   /** Language of the supplied source text, used as a planner contract. */
   sourceLanguage?: 'zh' | 'en';
@@ -76,7 +78,7 @@ async function processBatch(
     userPrompt: buildUserPrompt(batch, ctx, previousHandoff),
     responseFormat: 'json',
     temperature: 0.6,
-    maxTokens: 4096,
+    maxTokens: 8192,
   };
 
   try {
@@ -178,6 +180,7 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
     'imagePrompt should describe framing, pose, action, camera, lighting, and environment. Do not restate or alter a bound entity\'s identity, form, clothing, colors, or accessories; those facts come from extracted entity records and their references.',
     'Do not invent entity ids, asset URLs, or reference-image positions. Downstream stages bind real assets after extraction.',
     'imagePrompt is the still/keyframe prompt. videoPrompt is the motion prompt. Keep them aligned without copying one into the other.',
+    'Keep script headings, camera directions, timing and production requirements out of dialogue and narration. Use dialogue=[] when no character speaks, and narration="" when the shot has no voice-over.',
     'Declare transition as "continue" only when the same physical moment continues with the same visible subject set and scene. Use "cut" for a new edit segment, location, time, or subject set. Never infer a temporal handoff from matching names alone.',
     'For transition=continue, preserve location, visible subjects, wardrobe, and emotional state, and set startState from the previous shot endState. For transition=cut, define an independent startState when useful.',
     'imageParameters and videoParameters are planner decisions. Use only keys from the matching capability contract, and omit optional keys that do not help this shot.',
@@ -231,6 +234,9 @@ function buildSystemPrompt(ctx: StoryboardContext): string {
 }
 
 function buildUserPrompt(batch: RawShot[], ctx: StoryboardContext, previousHandoff?: StoryboardHandoff): string {
+  const sourceContext = ctx.sourceContext?.trim()
+    ? `[Full Script Context]\n${ctx.sourceContext.trim()}\nApply its shared setting and production constraints to the segments below. Return shots only for those segments.\n\n`
+    : '';
   const continuity = ctx.continuityContext?.trim()
     ? `[Continuity Context]\n${ctx.continuityContext.trim()}\n\n`
     : '';
@@ -254,7 +260,7 @@ function buildUserPrompt(batch: RawShot[], ctx: StoryboardContext, previousHando
     `location=${raw.location || '-'}`,
     `mood=${raw.mood || '-'}`,
   ].join('\n')).join('\n\n');
-  return `${continuity}${handoff}${items}`;
+  return `${sourceContext}${continuity}${handoff}${items}`;
 }
 
 function normalizeShot(
@@ -264,7 +270,9 @@ function normalizeShot(
   fallbackIndex = 0,
 ): StoryboardShot {
   const dialogue = normalizeDialogue(item.dialogue) ?? extractDialogue(raw.rawText);
-  const narration = stringValue(item.narration) || dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80) || `Shot ${fallbackIndex + 1}`;
+  const narration = typeof item.narration === 'string'
+    ? item.narration.trim()
+    : dialogue?.[0]?.text?.trim() || raw.rawText.slice(0, 80) || `Shot ${fallbackIndex + 1}`;
   const shotIndex = numberValue(item.index) ?? raw.index ?? fallbackIndex;
   const videoPrompt = stringValue(item.videoPrompt) || stringValue(item.sourceText) || raw.rawText || fallbackVideoPrompt(raw, shotIndex);
   const imagePrompt = stringValue(item.imagePrompt) || stringValue(item.sourceText) || undefined;
@@ -381,7 +389,7 @@ function normalizeDialogue(value: unknown): { speaker: string; text: string; emo
     const emotion = stringValue(record.emotion);
     return [{ speaker, text, ...(emotion ? { emotion } : {}) }];
   });
-  return result.length > 0 ? result : undefined;
+  return result;
 }
 
 function firstStringArray(...values: unknown[]): string[] | undefined {
@@ -400,6 +408,7 @@ export function extractDialogue(text: string): { speaker: string; text: string }
   for (const match of text.matchAll(linePattern)) {
     const speaker = match[1].trim();
     const dialogueText = match[2].trim();
+    if (/^(?:(?:镜头|分镜|场景|画面|运镜|旁白|解说|字幕|音效|音乐)(?:\s*\d|[（(【\s]|$)|(?:shot|scene|camera|narration|voice[ -]?over|sfx|bgm)\b)/iu.test(speaker)) continue;
     if (speaker && dialogueText) output.push({ speaker, text: dialogueText });
   }
   return output.length > 0 ? output : undefined;

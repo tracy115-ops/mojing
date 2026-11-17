@@ -1,5 +1,9 @@
 # 发布版桌面端到端验证
 
+0.3.2 另补充小说／漫画基础操作、音乐真实 Tauri HTTP、播放与进程重开的发布版验证；统一入口和逐模块边界见 [27-feature-acceptance.md](./27-feature-acceptance.md)。本页下方的 0.3.1 结果保留为对应版本的历史记录。
+
+0.3.2 最终验收包含完整首轮 44 组通过和两组测试同步修正后的定向复跑，三个发布版桌面用例均核对最终程序 SHA256。真实小说、漫画与未配置音乐服务的结果见 [30-novel-comic-live-acceptance.md](./30-novel-comic-live-acceptance.md)。
+
 ## 测试入口
 
 ```powershell

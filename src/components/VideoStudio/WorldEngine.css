@@ -1,6 +1,7 @@
 .world-engine-workspace { display: flex; flex: 1; min-width: 0; min-height: 560px; flex-direction: column; padding: 0 18px 18px; }
 .world-engine-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .world-engine-toolbar > .ant-select { min-width: 135px; max-width: 230px; }
+.world-engine-set-hint { margin: 0 0 12px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 .world-engine-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; min-height: 400px; }
 .world-engine-body { display: grid; grid-template-columns: 185px minmax(300px, 1fr) 255px; flex: 1; min-height: 420px; border: 1px solid var(--border-secondary); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-container); }
 .world-engine-scene-list, .world-engine-inspector { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px; overflow-y: auto; max-height: 650px; }

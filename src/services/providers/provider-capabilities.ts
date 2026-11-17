@@ -269,7 +269,7 @@ const IMAGE_PROFILES: Partial<Record<ImageProviderId, ImageProfile>> = {
       spec('size', 'enum', 'Native image resolution tier; production assets default to 2K.', { enumValues: ['1K', '2K', '3K', '4K'] }),
       spec('aspectRatio', 'enum', 'Agnes output aspect ratio.', { enumValues: ['16:9', '9:16', '1:1', '2:3', '3:2', '3:4', '4:3', '21:9'] }),
       spec('negativePrompt', 'string', 'Content or visual traits to avoid; translated into the provider prompt because Agnes has no native negative-prompt field.'),
-      imageCommon[4],
+      spec('seed', 'integer', 'Agnes random seed; -1 requests a random sample.', { min: -1, max: 999 }),
     ],
     references: multipleImageReferences(4),
   },

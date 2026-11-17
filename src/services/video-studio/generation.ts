@@ -132,7 +132,11 @@ async function executeJob(job: StudioJob): Promise<StudioAsset> {
     subjectReferences: input.controlMode === 'reference' ? references : undefined, seed: input.seed,
     ...media, generateAudio: input.generateAudio,
   });
-  return { ...asset, ...await retainOutput(result.videoData, 'video'), width: result.width, height: result.height, durationSeconds: result.durationSeconds, model: result.model, provider: result.provider, requestSnapshot: result.requestSnapshot, responseSnapshot: result.responseSnapshot };
+  const retained = await retainOutput(result.videoData, 'video');
+  // Provider metadata can describe the requested preset rather than the actual file.
+  // Probe the saved output without turning a metadata failure into a paid retry.
+  const measured = retained.url && retained.storage !== 'remote' ? await probeStudioMedia(retained.url, 'video') : {};
+  return { ...asset, ...retained, width: result.width, height: result.height, durationSeconds: result.durationSeconds, ...measured, model: result.model, provider: result.provider, requestSnapshot: result.requestSnapshot, responseSnapshot: result.responseSnapshot };
 }
 
 let processing = false;

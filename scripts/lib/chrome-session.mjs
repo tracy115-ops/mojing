@@ -51,7 +51,7 @@ export async function chromeSession({ url = 'http://127.0.0.1:1420/', port = 923
     const found = await evaluate(`(() => { const el = [...document.querySelectorAll(${JSON.stringify(parent + ' button')})].find(el => el.textContent.replace(/\\s/g, '') === ${JSON.stringify(text.replace(/\s/g, ''))}); if (!el || el.disabled) return false; el.click(); return true; })()`);
     if (!found) throw new Error(`Button unavailable: ${text}`);
   };
-  const screenshot = async (name) => { const path = join(tmpdir(), name); const result = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(path, Buffer.from(result.data, 'base64')); return path; };
+  const screenshot = async (name) => { const path = join(process.env.MOJING_E2E_ARTIFACT_DIR || tmpdir(), name); const result = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(path, Buffer.from(result.data, 'base64')); return path; };
   await call('Runtime.enable'); await call('Page.enable');
   return { url, call, evaluate, waitFor, click, textButton, screenshot, delay, errors, onEvent: (listener) => listeners.add(listener), close: () => { socket.close(); child.kill(); } };
 }

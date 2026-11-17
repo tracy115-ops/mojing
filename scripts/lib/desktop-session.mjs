@@ -7,7 +7,7 @@ export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Runs the actual release executable with an isolated WebView2 profile.
 // Only input configuration may be seeded by callers; native IPC stays intact.
-export async function desktopSession({ executable, profile, allowedOrigins = [] }) {
+export async function desktopSession({ executable, profile, allowedOrigins = [], softwareRendering = true }) {
   const reservation = createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
@@ -15,17 +15,30 @@ export async function desktopSession({ executable, profile, allowedOrigins = [] 
   const child = spawn(executable, [], { windowsHide: true, stdio: 'ignore', env: {
     ...process.env,
     WEBVIEW2_USER_DATA_FOLDER: profile,
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1 --use-angle=swiftshader --enable-unsafe-swiftshader`,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1${softwareRendering ? ' --use-angle=swiftshader --enable-unsafe-swiftshader' : ''}`,
   } });
-  let target;
+  let target, startupError, lastTargets = [];
+  child.once('error', error => { startupError = error; });
   try {
-    for (let i = 0; i < 150 && !target; i++) {
+    const deadline = Date.now() + 60000;
+    while (!target && Date.now() < deadline) {
+      if (startupError) throw startupError;
       if (child.exitCode !== null) throw new Error(`Desktop exited with ${child.exitCode}`);
-      try { target = (await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()).find(t => t.type === 'page' && /tauri\.localhost/.test(t.url)); } catch { /* Starting WebView2. */ }
+      try {
+        const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) })).json();
+        lastTargets = targets.map(({ type, url }) => ({ type, url }));
+        target = targets.find(t => t.type === 'page' && /tauri\.localhost/.test(t.url));
+      } catch { /* Starting WebView2. */ }
       if (!target) await delay(200);
     }
-    assert.ok(target, 'release WebView2 exposes an isolated target');
-  } catch (error) { child.kill(); throw error; }
+    assert.ok(target, 'release WebView2 exposes an isolated target; observed ' + JSON.stringify(lastTargets));
+  } catch (error) {
+    if (child.pid && child.exitCode === null) {
+      const ended = new Promise(resolve => child.once('close', resolve));
+      child.kill(); await ended;
+    }
+    throw error;
+  }
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   const origin = new URL(target.url).origin, pending = new Map(), errors = [], blocked = [], consoleMessages = [];
@@ -46,7 +59,9 @@ export async function desktopSession({ executable, profile, allowedOrigins = [] 
       const { requestId, request } = message.params, url = new URL(request.url);
       const local = [origin, ...allowedOrigins, 'http://asset.localhost', 'https://asset.localhost', 'http://ipc.localhost'].includes(url.origin) || ['ipc:', 'asset:', 'data:', 'blob:'].includes(url.protocol);
       if (!local) blocked.push(url.href);
-      void call(local ? 'Fetch.continueRequest' : 'Fetch.failRequest', local ? { requestId } : { requestId, errorReason: 'BlockedByClient' }).catch(e => errors.push(String(e)));
+      void call(local ? 'Fetch.continueRequest' : 'Fetch.failRequest', local ? { requestId } : { requestId, errorReason: 'BlockedByClient' }).catch(e => {
+        if (!String(e).includes('"code":-32602,"message":"Invalid InterceptionId."')) errors.push(String(e));
+      });
     }
   });
   const evaluate = async expression => {
@@ -63,14 +78,22 @@ export async function desktopSession({ executable, profile, allowedOrigins = [] 
   const textButton = (label, parent = 'body') => evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(parent + ' button')})].find(e=>e.textContent.replace(/\\s/g,'')===${JSON.stringify(label.replace(/\s/g, ''))});if(!e||e.disabled)throw new Error('Button unavailable: '+${JSON.stringify(label)});e.click();})()`);
   const fill = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Input unavailable');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   const nativeClick = async selector => {
-    const point = await evaluate(`(()=>{let e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Click target unavailable');e=e.closest('.ant-select-selector')||e;e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    const target = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.closest('.ant-select-selector')||e;})()`;
+    await evaluate(`(()=>{const e=${target};if(!e)throw new Error('Click target unavailable');e.scrollIntoView({block:'nearest',behavior:'instant'});})()`);
+    // A preceding dropdown can still cover the next control while its close
+    // animation runs. Wait for the real mouse hit target before sending input.
+    await waitFor(`(()=>{const e=${target};if(!e)return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.width>0&&r.height>0&&!!hit&&e.contains(hit);})()`, 'unobstructed click target ' + selector);
+    const point = await evaluate(`(()=>{const r=(${target}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
   const choose = async (selector, label) => {
     await nativeClick(selector);
-    await waitFor('!!document.querySelector(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")', 'select dropdown');
-    await evaluate(`(()=>{const e=[...document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)}||e.textContent===${JSON.stringify(label)});if(!e)throw new Error('Option unavailable: '+${JSON.stringify(label)});e.click();})()`);
+    const input = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.matches('input')?e:e?.querySelector('input');})()`;
+    const option = `(()=>{const input=${input},popup=document.getElementById(input?.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');if(!popup||popup.classList.contains('ant-select-dropdown-hidden'))return;return[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)}||e.textContent===${JSON.stringify(label)});})()`;
+    await waitFor(`Boolean(${option})`, 'select option ' + label);
+    await evaluate(`(${option}).click()`);
+    await waitFor(`(${input})?.getAttribute('aria-expanded')!=='true'`, 'selected dropdown closes');
   };
   const screenshot = async path => { const result = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(path, Buffer.from(result.data, 'base64')); };
   await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });

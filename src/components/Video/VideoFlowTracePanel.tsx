@@ -559,7 +559,7 @@ const ShotLineage: React.FC<{ project: VideoProjectState; shot: ShotSpec | undef
 
 export const VideoFlowTracePanel: React.FC<Props> = ({ open, onClose, project, embedded = false, onOpenStage }) => {
   const { t } = useTranslation();
-  const shots = effectiveShots(project);
+  const shots = useMemo(() => effectiveShots(project), [project]);
   const initialStage = VIDEO_PIPELINE_STAGES.find((stage) => project.stages[stage]?.status === 'error')
     || VIDEO_PIPELINE_STAGES.find((stage) => project.stages[stage]?.status === 'running' || project.stages[stage]?.status === 'awaiting_review')
     || VIDEO_PIPELINE_STAGES.find((stage) => {

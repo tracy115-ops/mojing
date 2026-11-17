@@ -918,10 +918,11 @@ const NovelView: React.FC = () => {
                 <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
                   {activeChapter ? (
                     <ChapterEditor
+                      key={`${activeProjectId}/${activeChapter.id}`}
                       chapter={activeChapter}
                       onUpdate={handleUpdateChapter}
                       allChapters={chapters}
-                      novelTitle={activeProject.title}
+                      novel={activeProject}
                     />
                   ) : (
                     <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

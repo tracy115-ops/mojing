@@ -30,6 +30,13 @@ const AGNES_IMAGE_DIMENSIONS = {
 } as const;
 const AGNES_IMAGE_RATIOS = Object.keys(AGNES_IMAGE_DIMENSIONS) as Array<keyof typeof AGNES_IMAGE_DIMENSIONS>;
 
+/** Map application/candidate seeds into Agnes' smaller deterministic domain. */
+export function normalizeAgnesImageSeed(seed: number | undefined): number | undefined {
+  if (seed === undefined) return undefined;
+  if (!Number.isInteger(seed) || seed < -1) throw new Error('Agnes Image seed must be an integer greater than or equal to -1');
+  return seed === -1 ? -1 : seed % 1000;
+}
+
 /** Map normalized image inputs to the fields Agnes actually accepts. */
 export function pickAgnesImageRatio(width: number, height: number, explicit?: string): keyof typeof AGNES_IMAGE_DIMENSIONS {
   if (explicit && Object.prototype.hasOwnProperty.call(AGNES_IMAGE_DIMENSIONS, explicit)) return explicit as keyof typeof AGNES_IMAGE_DIMENSIONS;
@@ -77,7 +84,7 @@ export function getAgnesImageWireParameterSnapshot(
       ...(hasReferences ? { image: { count: referenceImageCount } } : {}),
     },
     ...(hasReferences ? {} : { return_base64: true }),
-    ...(request.seed !== undefined ? { seed: request.seed } : {}),
+    ...(request.seed !== undefined ? { seed: normalizeAgnesImageSeed(request.seed) } : {}),
     referenceImageCount,
   };
   applyUnconsumedGenerationParameters(

@@ -15,9 +15,9 @@
 
 import { logger } from '@/services/log';
 import { saveAsset, readAsDataUri } from '@/services/video/asset-store';
-import type { ComicPanelSpec, ComicPageSpec } from '@/types/comic';
+import type { ComicPanelSpec, ComicPageSpec, ComicSceneSpec } from '@/types/comic';
 
-type PanelLayout = 'single' | 'grid-2' | 'grid-4' | 'manga-row';
+type PanelLayout = ComicSceneSpec['meta']['panelLayout'];
 
 export interface PageComposeContext {
   novelProjectId: string;
@@ -57,7 +57,10 @@ export async function runPageCompose(
   }
 
   // 多镜模式:按布局切页
-  const perPage = ctx.layout === 'grid-2' ? 2 : ctx.layout === 'grid-4' ? 4 : 3;
+  const perPage = ctx.layout === 'webtoon' ? withImage.length : {
+    'grid-2': 2, 'grid-4': 4, 'manga-row': 3, yonkoma: 4, 'grid-9': 9, 'manga-splash': 3,
+  }[ctx.layout];
+  if (!perPage) throw new Error(`Unsupported comic layout: ${ctx.layout}`);
   const chunks: ComicPanelSpec[][] = [];
   for (let i = 0; i < withImage.length; i += perPage) {
     chunks.push(withImage.slice(i, i + perPage));
@@ -101,7 +104,7 @@ async function composePage(
 ): Promise<ComicPageSpec> {
   const padding = ctx.padding ?? 16;
   const canvas = document.createElement('canvas');
-  const { w, h } = computeCanvasSize(ctx.layout);
+  const { w, h } = computeCanvasSize(ctx.layout, chunk.length);
   canvas.width = w;
   canvas.height = h;
   const g = canvas.getContext('2d');
@@ -145,8 +148,14 @@ async function composePage(
 
 // --- 布局计算 ---
 
-function computeCanvasSize(layout: PanelLayout): { w: number; h: number } {
+function computeCanvasSize(layout: PanelLayout, count: number): { w: number; h: number } {
   switch (layout) {
+    case 'yonkoma':
+    case 'webtoon':
+      return { w: PAGE_W, h: Math.round(PAGE_W * 16 / 9) * count };
+    case 'grid-9':
+    case 'manga-splash':
+      return { w: PAGE_W, h: Math.round(PAGE_W * 1.4) };
     case 'grid-2':
       return { w: PAGE_W, h: Math.round(PAGE_W * 1.4) }; // 5:7 竖向
     case 'grid-4':
@@ -167,6 +176,26 @@ function computeSlots(
   canvasH: number,
   padding: number,
 ): Slot[] {
+  if (layout === 'yonkoma' || layout === 'webtoon') {
+    const cellH = (canvasH - padding * (count + 1)) / count;
+    return Array.from({ length: count }, (_, i) => ({
+      x: padding, y: padding + i * (cellH + padding), w: canvasW - padding * 2, h: cellH,
+    }));
+  }
+  if (layout === 'grid-9') {
+    const cellW = (canvasW - padding * 4) / 3, cellH = (canvasH - padding * 4) / 3;
+    return Array.from({ length: count }, (_, i) => ({
+      x: padding + i % 3 * (cellW + padding), y: padding + Math.floor(i / 3) * (cellH + padding), w: cellW, h: cellH,
+    }));
+  }
+  if (layout === 'manga-splash') {
+    const fullW = canvasW - padding * 2, usableH = canvasH - padding * 3;
+    return [
+      { x: padding, y: padding, w: fullW, h: usableH * .6 },
+      { x: padding, y: padding * 2 + usableH * .6, w: (fullW - padding) / 2, h: usableH * .4 },
+      { x: padding * 2 + (fullW - padding) / 2, y: padding * 2 + usableH * .6, w: (fullW - padding) / 2, h: usableH * .4 },
+    ];
+  }
   if (layout === 'grid-2') {
     // 上下二分
     const cellH = (canvasH - padding * 3) / 2;

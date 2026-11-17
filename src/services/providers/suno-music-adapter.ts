@@ -1,10 +1,6 @@
-// suno-music-adapter.ts — 深度逆向并实装 ai6666.com / Suno AI 顶级音乐生成 SOP 流程
-// 揭秘与实装三大核心黑科技：
-//   1. 歌词结构化元标记 (Metatags: [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro])
-//   2. 5维风格属性矩阵 (Genre + Instruments + Vocal Style + Mood + BPM)
-//   3. Suno v3.5 / v4 异步轮询与音频高保真提纯
+// Adapter for the configured Suno-compatible proxy contract.
 
-import { fetch as httpFetch } from './fetch-proxy';
+import { fetch as httpFetch } from './fetch-proxy.ts';
 
 export interface SunoGenerateRequest {
   prompt: string;
@@ -51,9 +47,9 @@ export function buildSunoStylePrompt(
 }
 
 /** 核心黑科技 2: 歌词结构化元标记工程器 (Metatag Structurer) */
-export function buildStructuredLyrics(rawText: string, title: string = 'Untitled'): string {
+export function buildStructuredLyrics(rawText: string): string {
   if (!rawText || rawText.trim().length === 0) {
-    return `[Intro - Soft Piano Building]\n(Atmospheric synth fades in)\n\n[Verse 1]\n夜色漫过霓虹的街角\n思绪在流光中奔跑\n每一个音符都在寻找\n曾经并肩的骄傲\n\n[Pre-Chorus - Building Momentum]\n鼓点渐响，唤醒梦境的召唤\n光芒破空而出\n\n[Chorus - Explosive High Energy]\n在无边的夜空下放声高唱\n旋律跨越时间的浩瀚\n所有的梦想在这一刻绽放\n无惧风浪，心向远方\n\n[Bridge - Emotional Solo Guitar]\n(Solo Electric Guitar riff)\n风过无痕，唯声音永恒\n\n[Outro - Slow Fade]\n心向远方...\n(Fade out with piano)`;
+    return '';
   }
 
   // 如果已经包含元标记,原样精修输出
@@ -74,12 +70,38 @@ export function buildStructuredLyrics(rawText: string, title: string = 'Untitled
   return `[Intro - Piano Melodic]\n\n[Verse 1]\n${verse1}\n\n[Chorus - Peak Energy]\n${chorus}\n\n[Outro - Echo Fade]`;
 }
 
-/** 核心黑科技 3: 完整 Suno 音乐生成 SOP 链路(含 Task 轮询与设置端点读取) */
+function outputOf(value: unknown): Record<string, unknown> {
+  if (Array.isArray(value)) return outputOf(value[0]);
+  if (!value || typeof value !== 'object') return {};
+  const data = value as Record<string, unknown>;
+  return data.data ? { ...data, ...outputOf(data.data) } : data;
+}
+
+function audioUrlOf(data: Record<string, unknown>): string | undefined {
+  const value = data.audio_url || data.audioUrl || data.url;
+  if (!value) return undefined;
+  if (typeof value !== 'string') throw new Error('Music API returned an invalid audio URL');
+  const url = new URL(value);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Music API returned an invalid audio URL');
+  return url.href;
+}
+
+function assertTaskHealthy(data: Record<string, unknown>): void {
+  const status = String(data.status || data.state || '').toLowerCase();
+  if (['failed', 'error', 'cancelled', 'canceled', 'rejected'].includes(status) || data.error) {
+    throw new Error('Music generation task failed');
+  }
+}
+
+/** Submit once; failures must remain failures rather than creating sample tracks. */
 export async function generateSunoMusicSOP(
   req: SunoGenerateRequest,
   endpointOverride?: { baseUrl?: string; apiKey?: string }
 ): Promise<SunoGenerateResponse> {
-  const baseUrl = (endpointOverride?.baseUrl || req.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const baseUrl = (endpointOverride?.baseUrl || req.baseUrl || '').trim().replace(/\/+$/, '');
+  if (!baseUrl) throw new Error('Configure a music endpoint before generating');
+  const endpoint = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) throw new Error('Invalid music endpoint URL');
   const apiKey = endpointOverride?.apiKey || req.apiKey || '';
 
   // 1. 自动重构 5 维风格 Prompt
@@ -90,12 +112,13 @@ export async function generateSunoMusicSOP(
   );
 
   // 2. 自动格式化元标记歌词
-  const structuredLyrics = buildStructuredLyrics(req.lyrics || req.prompt, req.title);
+  const structuredLyrics = buildStructuredLyrics(req.lyrics || '');
+  if (!req.prompt.trim() && !structuredLyrics) throw new Error('A music prompt or lyrics is required');
 
   const body = {
-    prompt: structuredLyrics,
+    prompt: structuredLyrics || req.prompt,
     tags: stylePrompt,
-    title: req.title || 'Suno AI 顶级原创单曲',
+    title: req.title || 'Untitled',
     make_instrumental: req.vocalType === 'instrumental',
     model: req.model || 'suno-v3.5',
     wait_audio: true,
@@ -108,76 +131,47 @@ export async function generateSunoMusicSOP(
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const generateUrl = baseUrl.includes('/v1')
+  const generateUrl = /\/v1$/.test(baseUrl)
     ? `${baseUrl}/audio/music`
     : `${baseUrl}/api/generate`;
 
-  try {
-    const res = await httpFetch(generateUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      
-      // 如果 API 接口直接同步返回了 audio_url
-      let audioUrl = data.audio_url || data.audioUrl || data[0]?.audio_url || data.url;
-      const taskId = data.task_id || data.id || data[0]?.id;
-
-      // 如果返回了 taskId 但还没出音频,进行 3 秒间隔轮询 (最多轮询 15 次 ≈ 45秒)
-      if (!audioUrl && taskId) {
-        audioUrl = await pollSunoAudioStatus(baseUrl, taskId, headers);
-      }
-
-      if (audioUrl) {
-        return {
-          id: taskId || `suno_${Date.now()}`,
-          title: data.title || req.title || 'Suno AI 音乐',
-          audioUrl,
-          durationSeconds: data.duration || 140,
-          tags: stylePrompt.split(',').map((t) => t.trim()),
-          lyrics: structuredLyrics,
-          stylePrompt,
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('Suno API 接口调用异常,自动进行 SOP 高精全流程模拟预览', err);
-  }
-
-  // 兜底高保真音频渲染
+  const res = await httpFetch(generateUrl, {
+    method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok) throw new Error(`Music API HTTP ${res.status}`);
+  let data = outputOf(await res.json());
+  assertTaskHealthy(data);
+  const taskId = data.task_id || data.id;
+  if (!audioUrlOf(data) && taskId) data = await pollSunoAudioStatus(baseUrl, String(taskId), headers);
+  const audioUrl = audioUrlOf(data);
+  if (!audioUrl) throw new Error('Music API returned no audio URL or usable task');
+  const duration = Number(data.duration || data.durationSeconds);
   return {
-    id: `suno_sop_${Date.now()}`,
-    title: req.title || 'Suno AI 顶级原创单曲',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73361.mp3?filename=cyberpunk-2099-10701.mp3',
-    durationSeconds: 142,
+    id: String(taskId || data.id || crypto.randomUUID()),
+    title: String(data.title || req.title || 'Untitled'),
+    audioUrl,
+    durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : 0,
     tags: stylePrompt.split(',').map((t) => t.trim()),
-    lyrics: structuredLyrics,
+    lyrics: typeof data.lyrics === 'string' ? data.lyrics : structuredLyrics,
     stylePrompt,
   };
 }
 
 /** 轮询 Suno 音频生成状态 */
-async function pollSunoAudioStatus(baseUrl: string, taskId: string, headers: Record<string, string>): Promise<string | null> {
+async function pollSunoAudioStatus(baseUrl: string, taskId: string, headers: Record<string, string>): Promise<Record<string, unknown>> {
   const statusUrl = `${baseUrl}/api/generate/status?task_id=${encodeURIComponent(taskId)}`;
   
   for (let attempt = 0; attempt < 15; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
-    try {
-      const res = await httpFetch(statusUrl, { method: 'GET', headers });
-      if (res.ok) {
-        const data = await res.json();
-        const status = (data.status || data.state || '').toLowerCase();
-        const url = data.audio_url || data.audioUrl || data.url;
-        if ((status === 'success' || status === 'completed' || status === 'complete') && url) {
-          return url;
-        }
-      }
-    } catch {
-      // 忽略单次轮询失败
+    const res = await httpFetch(statusUrl, { method: 'GET', headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`Music status HTTP ${res.status} (task ${taskId})`);
+    const data = outputOf(await res.json());
+    assertTaskHealthy(data);
+    const status = String(data.status || data.state || '').toLowerCase();
+    if (['success', 'completed', 'complete'].includes(status)) {
+      if (!audioUrlOf(data)) throw new Error(`Music task ${taskId} completed without audio`);
+      return data;
     }
   }
-  return null;
+  throw new Error(`Music task ${taskId} is still pending; check the provider before resubmitting`);
 }

@@ -12,7 +12,7 @@ import {
   validateVideoReferences,
 } from '../src/services/providers/provider-capabilities.ts';
 import { applyUnconsumedGenerationParameters } from '../src/services/providers/parameter-transport.ts';
-import { getAgnesImageOutput, getAgnesImageWireParameterSnapshot, pickAgnesImageRatio } from '../src/services/providers/image-wire-contract.ts';
+import { getAgnesImageOutput, getAgnesImageWireParameterSnapshot, normalizeAgnesImageSeed, pickAgnesImageRatio } from '../src/services/providers/image-wire-contract.ts';
 import { hasCurrentTurnaround, needsTurnaroundGeneration } from '../src/services/video/core/character-asset-binding.ts';
 
 const dalle = getImageGenerationCapabilities('dalle', 'dall-e-3');
@@ -33,6 +33,12 @@ assert.equal(getLLMGenerationCapabilities('custom', 'proxy-vision', 'ep-llm', {
   maxImageInputs: 4,
 }).maxImageInputs, 4);
 const agnes = getImageGenerationCapabilities('agnes-image', 'agnes-image-2.1-flash');
+assert.deepEqual([normalizeAgnesImageSeed(-1), normalizeAgnesImageSeed(0), normalizeAgnesImageSeed(999), normalizeAgnesImageSeed(1110732956), normalizeAgnesImageSeed(1127510575)], [-1, 0, 999, 956, 575]);
+assert.throws(() => normalizeAgnesImageSeed(-2), /integer/);
+assert.throws(() => normalizeAgnesImageSeed(1.5), /integer/);
+assert.equal(getAgnesImageWireParameterSnapshot({ taskType: 'storyboard', prompt: 'frame', seed: 1110732956 }).seed, 956);
+assert.equal(filterGenerationParameters({ seed: 1000 }, agnes).rejectedKeys[0], 'seed');
+assert.equal(filterGenerationParameters({ seed: -1 }, agnes).values.seed, -1);
 const agnesVideo = getVideoGenerationCapabilities('agnes-video', 'agnes-video-2.5-flash');
 const agnesStandardVideo = getVideoGenerationCapabilities('agnes-video', 'agnes-video-2.5');
 const agnesProVideo = getVideoGenerationCapabilities('agnes-video', 'agnes-video-2.5-pro');

@@ -9,7 +9,8 @@ import {
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
-import type { NovelChapter } from '@/types';
+import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import type { NovelChapter, NovelMetadata, CreativeProject } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 
 const { Text } = Typography;
@@ -28,26 +29,44 @@ interface ChapterEditorProps {
   chapter: NovelChapter;
   onUpdate: (updates: Partial<NovelChapter>) => void;
   allChapters: NovelChapter[];
-  novelTitle: string;
+  novel: CreativeProject;
 }
 
-const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allChapters, novelTitle }) => {
+const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allChapters, novel }) => {
   const { t } = useTranslation();
+  const novelTitle = novel.title;
+  const metadata = novel.metadata as NovelMetadata;
   const [generating, setGenerating] = useState<string | null>(null);
   const [streamContent, setStreamContent] = useState('');
+  const [outlineDraft, setOutlineDraft] = useState(chapter.outline);
+  const [contentDraft, setContentDraft] = useState(chapter.content);
   const [fontSize, setFontSize] = useState(loadFontSize);
   const [tensionScore, setTensionScore] = useState<number | null>(null);
   const [showOutlineRef, setShowOutlineRef] = useState(true);
   const [editingRef, setEditingRef] = useState(false);
   const [refText, setRefText] = useState(chapter.outline ?? '');
-  const [novelGenre, setNovelGenre] = useState<string>('xuanhuan');
+  const [novelGenre, setNovelGenre] = useState<string>(() => ({
+    fantasy: 'xuanhuan', scifi: 'scifi', romance: 'urban_romance', mystery: 'suspense', literary: 'literary', wuxia: 'wuxia',
+  }[metadata.genre] ?? metadata.genre ?? 'literary'));
   const [novelPOV, setNovelPOV] = useState<string>('third_person');
   const [novelPacing, setNovelPacing] = useState<string>('standard');
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSave = useRef<{ updates: Partial<NovelChapter>; save: typeof onUpdate } | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
 
   const hasEndpoint = endpoints.length > 0;
+
+  const getNovelContext = () => {
+    const bible = new NarrativeRepository(novel.id).loadBible();
+    return `小说名称：《${novelTitle}》\n类型：${metadata.genre}\n风格：${metadata.style}\n语言：${metadata.language}
+简介与创作约束：${novel.description}
+文风公约：${bible.styleNotes.map(n => `${n.key}: ${n.value}`).join('\n')}
+世界设定：${bible.worldSettings.map(w => `${w.name}: ${w.description}`).join('\n')}
+人物设定：${bible.characters.map(c => `${c.name}: ${c.description}; ${c.appearance}; ${c.personality}`).join('\n')}
+地点：${bible.locations.map(l => `${l.name}: ${l.description}`).join('\n')}
+剧情总纲：${bible.timelineNotes.filter(n => n.id === 'plot-outline').map(n => n.event).join('\n')}`;
+  };
 
   const handleZoom = useCallback((delta: number) => {
     setFontSize((prev) => {
@@ -57,17 +76,30 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     });
   }, []);
 
-  // Auto-save with debounce
-  const debouncedSave = useCallback((field: 'outline' | 'content', value: string) => {
+  // Keep typing immediate; batch persistence and flush the original chapter on exit.
+  const flushSave = useCallback(() => {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = setTimeout(() => {
-      onUpdate({ [field]: value });
-    }, 1500);
-  }, [onUpdate]);
+    autoSaveTimer.current = null;
+    const pending = pendingSave.current;
+    pendingSave.current = null;
+    if (pending) pending.save(pending.updates);
+  }, []);
+  const debouncedSave = useCallback((field: 'outline' | 'content', value: string) => {
+    if (field === 'outline') setOutlineDraft(value);
+    else { setContentDraft(value); setStreamContent(''); }
+    pendingSave.current = { save: onUpdate, updates: { ...pendingSave.current?.updates, [field]: value } };
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(flushSave, 1500);
+  }, [onUpdate, flushSave]);
+
+  useEffect(() => { setOutlineDraft(chapter.outline); }, [chapter.outline]);
+  useEffect(() => { setContentDraft(chapter.content); }, [chapter.content]);
 
   useEffect(() => {
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
-  }, []);
+    window.addEventListener('pagehide', flushSave);
+    window.addEventListener('beforeunload', flushSave);
+    return () => { window.removeEventListener('pagehide', flushSave); window.removeEventListener('beforeunload', flushSave); flushSave(); };
+  }, [flushSave]);
 
   // Sync outline ref text when chapter changes
   useEffect(() => {
@@ -93,10 +125,11 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         taskType: 'planning',
         systemPrompt: `你是一个专业的小说大纲规划师。根据已有章节信息，为当前章节生成详细大纲。
 大纲应包含：场景设定、主要事件、人物行动、情绪走向、关键对话要点。
-小说名称：${novelTitle}`,
+必须遵守以下项目简介、人物和世界规则，不得擅自改换题材或主角：\n${getNovelContext()}`,
         userPrompt: `${prevChapters ? `前几章摘要：\n${prevChapters}\n\n` : ''}请为第${chapter.order + 1}章 "${chapter.title}" 生成详细大纲。`,
         temperature: 0.8,
-        maxTokens: 1024,
+        maxTokens: 4096,
+        thinking: false,
       };
 
       const response = await providerRouter.generate(request);
@@ -136,10 +169,12 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         urban_romance: '都市细腻风格：强调人物眼神拉扯、微表情、心理活动与柔光氛围感，台词带有潜台词。',
         suspense: '悬疑冷酷风格：强调冷色调环境描摹、细节伏笔、心理压迫感与出人意料的反转。',
         cyberpunk: '赛博朋克风格：强调霓虹霓影、机械质感、高科技低生活氛围与冷峻叙事。',
+        scifi: '科幻风格：技术与社会设定自洽，通过具体行动呈现技术带来的冲突，遵守已有世界规则。',
+        literary: '文学叙事风格：通过具体细节、人物行动与有潜台词的对话推进故事，尊重现实与人物动机。',
         wuxia: '古风武侠风格：强调诗意环境描摹、侠义风骨、招式意境与古风用词韵味。',
       };
 
-      const styleGuide = genrePrompts[novelGenre] ?? genrePrompts.xuanhuan;
+      const styleGuide = genrePrompts[novelGenre] ?? genrePrompts.literary;
       const povGuide = novelPOV === 'first_person' ? '使用第一人称("我")沉浸式叙述。' : '使用第三人称全知视角叙述。';
       const pacingGuide =
         novelPacing === 'climax' ? '高潮爆发节奏：动作紧凑，单句篇幅简练，制造极强剧情张力与爽点。' :
@@ -159,14 +194,15 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
 4. 语言要富有画面感与镜头感，拒绝假大空的修饰词。
 5. 目标字数：2500 - 4500 字。
 
-小说名称：《${novelTitle}》`;
+必须遵守以下项目简介、人物和世界规则：\n${getNovelContext()}`;
 
       const request: LLMGenerateRequest = {
         taskType: 'generation',
         systemPrompt,
         userPrompt: `${prevSummary ? `上一章结尾接续：\n${prevSummary}\n\n` : ''}本章大纲：\n${chapter.outline}\n\n请开始创作第${chapter.order + 1}章 "${chapter.title}" 的精彩正文：`,
         temperature: 0.88,
-        maxTokens: 6000,
+        maxTokens: 8192,
+        thinking: false,
       };
 
       let fullContent = '';
@@ -247,6 +283,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         userPrompt: user,
         temperature: mode === 'rewrite' ? 0.8 : 0.3,
         maxTokens: mode === 'expand' ? 6000 : mode === 'summarize' ? 500 : 4096,
+        thinking: false,
       };
 
       const response = await providerRouter.generate(request);
@@ -309,7 +346,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     message.info(`${t('tension.score')}: ${score}/10`);
   };
 
-  const wordCount = streamContent || chapter.content || '';
+  const wordCount = streamContent || contentDraft || '';
   const wc = wordCount.length;
 
   const textareaStyle: React.CSSProperties = {
@@ -383,8 +420,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
             children: (
               <div style={{ padding: '0 12px', height: '100%' }}>
                 <Input.TextArea
-                  value={chapter.outline}
+                  value={outlineDraft}
                   onChange={(e) => debouncedSave('outline', e.target.value)}
+                  onBlur={flushSave}
                   placeholder={t("novel.outlinePlaceholder")}
                   style={{ height: 'calc(100% - 40px)', resize: 'vertical', ...textareaStyle }}
                   disabled={generating === 'outline'}
@@ -453,8 +491,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   </div>
                 )}
                 <Input.TextArea
-                  value={streamContent || chapter.content}
+                  value={streamContent || contentDraft}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
+                  onBlur={flushSave}
                   placeholder={t("novel.contentPlaceholder")}
                   style={{ flex: 1, resize: 'vertical', minHeight: 300, ...textareaStyle }}
                 />
@@ -486,6 +525,8 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                             { value: 'urban_romance', label: '🌸 都市细腻' },
                             { value: 'suspense', label: '🔍 悬疑反转' },
                             { value: 'cyberpunk', label: '⚡ 赛博朋克' },
+                            { value: 'scifi', label: t('novel.genre.scifi') },
+                            { value: 'literary', label: t('novel.genre.literary') },
                             { value: 'wuxia', label: '🏮 古风武侠' },
                           ]}
                         />
@@ -546,9 +587,10 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                         icon={<SaveOutlined />}
                         size="small"
                         onClick={() => {
+                          flushSave();
                           onUpdate({
-                            content: streamContent || chapter.content,
-                            wordCount: (streamContent || chapter.content).length,
+                            content: streamContent || contentDraft,
+                            wordCount: (streamContent || contentDraft).length,
                           });
                           message.success(t('message.saved'));
                         }}

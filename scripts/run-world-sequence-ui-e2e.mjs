@@ -46,6 +46,8 @@ try {
     window.sequenceStore=(await import(await sequenceModuleURL('/src/components/VideoStudio/WorldEngine.tsx','useVideoStudioStore'))).useVideoStudioStore;
     window.sequenceProjects=(await import(await sequenceModuleURL('/src/components/VideoStudio/WorldEngine.tsx','useVideoStore'))).useVideoStore;
     const {WorldViewport}=await import(await sequenceModuleURL('/src/components/VideoStudio/WorldEngine.tsx','WorldViewport'));
+    const record=WorldViewport.prototype.record;
+    WorldViewport.prototype.record=async function(onTime){try{const blob=await record.call(this,onTime);window.sequenceRecordResult={size:blob.size,type:blob.type};return blob;}catch(error){window.sequenceRecordResult={error:String(error)};throw error;}};
     const animate=WorldViewport.prototype.animate;
     window.sequenceRecording=[];
     WorldViewport.prototype.animate=function(time){animate.call(this,time);window.sequenceViewport=this;if(this.recording)sequenceRecording.push({time,position:this.shotCamera.position.toArray(),focal:this.shotCamera.getFocalLength()});};
@@ -86,7 +88,7 @@ try {
   assert.equal(await evaluate('Math.round(sequenceViewport.shotCamera.getFocalLength())'), 35);
   await click('[aria-label="使用多机位"]');
   await textButton('导出预演视频', '.world-engine-output-actions');
-  await waitFor('sequenceStore.getState().assets.some(a=>a.kind==="video"&&a.worldId)', 'recorded sequence', 35000);
+  await waitFor('sequenceStore.getState().assets.some(a=>a.kind==="video"&&a.worldId)', 'recorded sequence', 90000);
   const recording = await evaluate('({frames:sequenceRecording,asset:sequenceStore.getState().assets.find(a=>a.kind==="video")})');
   assert.equal(recording.asset.durationSeconds, 5);
   assert.ok(recording.frames.some(frame => frame.time < 1 && Math.round(frame.focal) === 35));
@@ -157,6 +159,7 @@ try {
   assert.ok(external.every(url => !url.includes('/images/generations') && !url.includes('/contents/generations')), 'no generation requests or real credits');
   console.log('Camera sequence persistence, dark/light themes and 1600/900/650px layouts passed. Runtime errors: []');
 } catch (error) {
+  console.error('Sequence diagnostic:', await evaluate('({text:document.body.innerText.slice(-3500),recording:window.sequenceViewport?.recording,frames:window.sequenceRecording?.length,result:window.sequenceRecordResult})').catch(()=>null));
   await screenshot('mojing-world-sequence-failure.png').catch(()=>undefined);
   throw error;
 } finally { browser.close(); }

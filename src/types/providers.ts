@@ -440,6 +440,8 @@ export interface LLMGenerateRequest {
   maxTokens?: number;
   temperature?: number;
   responseFormat?: 'text' | 'json';
+  /** Optional thinking mode for models that support it (currently DeepSeek V4). */
+  thinking?: boolean;
   stopSequences?: string[];
   /** Optional visual inputs for models that support image understanding. */
   imageInputs?: string[];

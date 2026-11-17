@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, Output, WebMOutputFormat } from 'mediabunny';
 import type { StudioAsset, Vec3, WorldDocument, WorldObject, WorldTransform } from '@/types/video-studio';
 import { worldTransformAt } from './document';
 import { worldCameraPoseAt, worldPlaybackDuration } from './world-sequence';
@@ -9,6 +10,7 @@ import { ACTOR_JOINTS, actorPoseAt } from './world-animation';
 import { worldAnimationTimeAt } from './world-model-animation';
 import { worldMonitorCameraAt, worldMonitorLayout } from './world-monitor';
 import type { WorldFramePlan } from './world-offline-plan';
+import { isWorldPropId } from './world-sets';
 import { toWebviewUrl, resolveLocalPath } from '@/services/video/asset-store';
 
 export type WorldRenderMode = 'solid' | 'clay' | 'depth';
@@ -126,6 +128,8 @@ export class WorldViewport {
     this.scene.add(this.pathLine);
     this.scene.add(new THREE.HemisphereLight(0xdceaff, 0x686553, 2));
     this.keyLight.position.set(6, 12, 5); this.keyLight.castShadow = true; this.keyLight.shadow.mapSize.set(1024, 1024); this.keyLight.shadow.camera.left = -20; this.keyLight.shadow.camera.right = 20; this.keyLight.shadow.camera.top = 20; this.keyLight.shadow.camera.bottom = -20; this.scene.add(this.keyLight);
+    this.keyLight.shadow.camera.near = .5; this.keyLight.shadow.camera.far = 70;
+    this.keyLight.shadow.bias = -.0003; this.keyLight.shadow.normalBias = .03;
     this.transform = new TransformControls(this.orbitCamera, this.renderer.domElement);
     this.transform.setSize(0.8); this.scene.add(this.transform.getHelper());
     this.transform.addEventListener('dragging-changed', (event) => { this.controls.enabled = !event.value && this.view === 'orbit'; });
@@ -192,19 +196,23 @@ export class WorldViewport {
     this.renderer.setSize(this.width, this.height); this.orbitCamera.aspect = this.width / this.height; this.orbitCamera.updateProjectionMatrix(); this.render();
   }
   sync(document: WorldDocument, assets: StudioAsset[], selected: string | undefined, mode: WorldRenderMode, view: WorldViewMode, transformMode: 'translate' | 'rotate' | 'scale', monitorSources: string[] = []) {
+    if (!this.document && document.objects.some(object => object.builtinModel)) {
+      this.orbitCamera.position.set(...document.camera.position); this.controls.target.set(...document.camera.target); this.controls.update();
+    }
     this.document = document; this.mode = mode; this.view = view; this.selected = selected;
     this.monitorSources = monitorSources;
     const ids = new Set(document.objects.map((object) => object.id));
     for (const [id, entry] of this.objects) if (!ids.has(id)) { if (this.transform.object === entry.root) this.transform.detach(); stopAnimation(entry); this.scene.remove(entry.root); disposeObject(entry.root); this.objects.delete(id); }
     for (const object of document.objects) {
-      const key = `${object.kind}:${object.color}:${object.assetId ?? ''}`;
+      const key = `${object.kind}:${object.color}:${object.assetId ?? ''}:${object.builtinModel ?? ''}`;
       const existing = this.objects.get(object.id);
       if (existing?.key === key) continue;
       if (existing) { this.transform.detach(); stopAnimation(existing); this.scene.remove(existing.root); disposeObject(existing.root); }
       const root = primitive(object), entry: WorldRenderObject = { key, root }; root.userData.entityId = object.id; this.objects.set(object.id, entry); this.scene.add(root);
       const asset = object.assetId && assets.find((item) => item.id === object.assetId);
-      if (object.kind === 'model' && (!asset || !asset.url)) entry.loadError = 'Missing 3D asset';
-      if (object.kind === 'model' && asset && asset.url) { entry.loading = true; new GLTFLoader().load(toWebviewUrl(resolveLocalPath(asset.url)), (gltf) => {
+      const modelUrl = isWorldPropId(object.builtinModel) ? `${import.meta.env.BASE_URL}world/town/${object.builtinModel}.glb` : asset && asset.url ? toWebviewUrl(resolveLocalPath(asset.url)) : undefined;
+      if (object.kind === 'model' && !modelUrl) entry.loadError = 'Missing 3D asset';
+      if (object.kind === 'model' && modelUrl) { entry.loading = true; new GLTFLoader().load(modelUrl, (gltf) => {
         if (this.disposed || this.objects.get(object.id)?.root !== root) { disposeObject(gltf.scene); return; }
         gltf.scene.traverse((child) => { if (child instanceof THREE.Mesh) { child.castShadow = true; child.receiveShadow = true; } }); root.add(gltf.scene);
         entry.clips = gltf.animations; entry.mixer = new THREE.AnimationMixer(gltf.scene);
@@ -297,6 +305,21 @@ export class WorldViewport {
   alignCamera(): Pick<WorldDocument['camera'], 'position' | 'target'> {
     return { position: this.orbitCamera.position.toArray() as WorldDocument['camera']['position'], target: this.controls.target.toArray() as WorldDocument['camera']['target'] };
   }
+  frameScene() {
+    const bounds = new THREE.Box3();
+    for (const entry of this.objects.values()) if (entry.root.visible) bounds.expandByObject(entry.root);
+    if (bounds.isEmpty()) return;
+    const center = bounds.getCenter(new THREE.Vector3()), direction = new THREE.Vector3(1, .85, 1.2).normalize();
+    const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize(), up = new THREE.Vector3().crossVectors(direction, right);
+    const tangent = Math.tan(THREE.MathUtils.degToRad(this.orbitCamera.fov) / 2);
+    let distance = 1;
+    for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
+      const point = new THREE.Vector3(x, y, z).sub(center), depth = point.dot(direction);
+      distance = Math.max(distance, depth + Math.abs(point.dot(right)) / (tangent * this.orbitCamera.aspect), depth + Math.abs(point.dot(up)) / tangent);
+    }
+    this.controls.target.copy(center); this.orbitCamera.position.copy(center).add(direction.multiplyScalar(distance * 1.1));
+    this.controls.update(); this.render();
+  }
   capture(time: number, mode = this.mode, cameraSourceId = 'program'): string {
     const oldView = this.view, oldMode = this.mode, ratio = this.renderer.getPixelRatio(), oldTime = this.time;
     const [w, h] = (this.document?.aspectRatio ?? '16:9').split(':').map(Number);
@@ -343,40 +366,66 @@ export class WorldViewport {
     }
   }
   async record(onTime: (time: number) => void): Promise<Blob> {
-    if (!this.document || typeof MediaRecorder === 'undefined') throw new Error('Video capture is unavailable');
+    if (!this.document || this.recording || typeof VideoEncoder === 'undefined') throw new Error('Video capture is unavailable');
     const doc = this.document, oldView = this.view, oldRatio = this.renderer.getPixelRatio();
     const duration = worldPlaybackDuration(doc);
     const [w, h] = doc.aspectRatio.split(':').map(Number);
     const previous = { width: this.width, height: this.height };
-    let stream: MediaStream | undefined, animation = 0;
+    let encoder: VideoEncoder | undefined, output: Output | undefined, cancelled = false, encodingError: Error | undefined;
     try {
       this.width = w >= h ? 1280 : Math.round(1280 * w / h); this.height = w >= h ? Math.round(1280 * h / w) : 1280;
       // Use the same camera framing and resolution as still capture, independent of the editor panel size.
       this.renderer.setPixelRatio(1); this.renderer.setSize(this.width, this.height, false);
       this.recording = true; this.view = 'shot'; this.controls.enabled = false;
-      stream = this.renderer.domElement.captureStream(doc.fps);
-      const type = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((value) => MediaRecorder.isTypeSupported(value));
-      const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
-      return await new Promise<Blob>((resolve, reject) => {
-        const chunks: Blob[] = []; let frame = 0, stopped = false;
-        const stop = () => { if (stopped) return; stopped = true; cancelAnimationFrame(animation); if (recorder.state !== 'inactive') recorder.stop(); };
-        this.recordStop = stop;
-        recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-        recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }));
-        recorder.onerror = () => { stop(); reject(new Error('Video capture failed')); };
-        this.animate(0); recorder.start(100); const started = performance.now();
-        const tick = () => {
-          try {
-            if (this.disposed) { stop(); return; }
-            const time = Math.min(duration, (performance.now() - started) / 1000); const nextFrame = Math.floor(time * doc.fps);
-            if (nextFrame !== frame || time === 0) { frame = nextFrame; this.animate(time); onTime(time); }
-            if (time >= duration) stop(); else animation = requestAnimationFrame(tick);
-          } catch (error) { stop(); reject(error); }
-        };
-        animation = requestAnimationFrame(tick);
+      this.recordStop = () => { cancelled = true; if (encoder && encoder.state !== 'closed') encoder.close(); };
+      const check = () => {
+        if (cancelled || this.disposed) throw new Error('Video capture cancelled');
+        if (encodingError) throw encodingError;
+      };
+      this.animate(0); onTime(0);
+      const config: VideoEncoderConfig = { codec: 'vp8', width: this.width, height: this.height, bitrate: 5_000_000, framerate: doc.fps, hardwareAcceleration: 'prefer-software' };
+      const support = await VideoEncoder.isConfigSupported(config);
+      check(); if (!support.supported) throw new Error('VP8 video encoding is unavailable');
+      const deadline = Date.now() + 60000;
+      while ([...this.objects.values()].some(entry => entry.loading)) {
+        check(); if (Date.now() > deadline) throw new Error('3D model loading timed out');
+        await new Promise(resolve => setTimeout(resolve, 40));
+      }
+      for (const object of doc.objects) if (object.kind === 'model') {
+        const entry = this.objects.get(object.id); if (!entry?.modelLoaded || entry.loadError) throw new Error(entry?.loadError || '3D model is not ready');
+      }
+      const target = new BufferTarget(), source = new EncodedVideoPacketSource('vp8');
+      output = new Output({ target, format: new WebMOutputFormat() });
+      output.addVideoTrack(source, { frameRate: doc.fps }); await output.start(); check();
+      let packetWrites = Promise.resolve();
+      encoder = new VideoEncoder({
+        output: (chunk, metadata) => {
+          const packet = EncodedPacket.fromEncodedChunk(chunk).clone({ duration: Math.min(1 / doc.fps, duration - chunk.timestamp / 1_000_000) });
+          packetWrites = packetWrites.then(() => source.add(packet, metadata)).catch((error: Error) => { encodingError = error; });
+        },
+        error: (error) => { encodingError = error; },
       });
+      encoder.configure(config);
+      // Scene timestamps, rather than encoder startup or render speed, define
+      // the movie. Slow software rendering must not drop a short take or add a
+      // frozen opening. Bound the encoding queue and keep the UI responsive.
+      for (let index = 0; index < Math.ceil(duration * doc.fps); index++) {
+        check(); const time = index / doc.fps; this.animate(time);
+        const timestamp = Math.round(time * 1_000_000);
+        const frame = new VideoFrame(this.renderer.domElement, { timestamp, duration: Math.round(Math.min(duration, (index + 1) / doc.fps) * 1_000_000) - timestamp });
+        try { encoder.encode(frame, { keyFrame: index % (doc.fps * 2) === 0 }); } finally { frame.close(); }
+        onTime(time);
+        if (encoder.encodeQueueSize >= 4) { await encoder.flush(); await packetWrites; check(); }
+        if (index % 4 === 0) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      }
+      await encoder.flush(); await packetWrites; check(); await output.finalize();
+      this.animate(duration); onTime(duration);
+      if (!target.buffer?.byteLength) throw new Error('Video capture produced no encoded frames');
+      return new Blob([target.buffer], { type: 'video/webm' });
     } finally {
-      cancelAnimationFrame(animation); stream?.getTracks().forEach((track) => track.stop()); this.recordStop = undefined; this.recording = false; this.view = oldView;
+      if (encoder && encoder.state !== 'closed') encoder.close();
+      if (output && output.state !== 'finalized' && output.state !== 'canceled') await output.cancel().catch(() => undefined);
+      this.recordStop = undefined; this.recording = false; this.view = oldView;
       this.width = previous.width; this.height = previous.height;
       if (!this.disposed) { this.renderer.setPixelRatio(oldRatio); this.resize(); this.controls.enabled = oldView === 'orbit'; }
     }

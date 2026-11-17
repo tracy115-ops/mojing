@@ -162,6 +162,8 @@ export interface VideoStageState {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  /** Inputs used to produce a reusable planning checkpoint. */
+  inputFingerprint?: string;
   /** 该步骤所有 provider 调用(LLM/image/video/tts)的逐条记录。
    *  由 router 自动上报、videoStore 归档。账本 = UI 三段式中第三段。 */
   invocations?: StageInvocation[];

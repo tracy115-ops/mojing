@@ -7,7 +7,7 @@ import { createServer } from 'node:net';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { createWorld, createWorldObject, addWorldPath } from '../src/services/video-studio/document.ts';
+import { worldFromTemplate, createWorldObject, addWorldPath } from '../src/services/video-studio/document.ts';
 
 // Use the release executable, real WebView2, real Tauri IPC and real FFmpeg.
 // A unique WebView2 profile keeps all fixture state separate from user projects.
@@ -15,7 +15,7 @@ const executable = resolve(process.argv[2] || 'src-tauri/target/release/mojing.e
 const version = JSON.parse(await readFile('package.json', 'utf8')).version;
 await access(executable);
 const root = await mkdtemp(join(tmpdir(), 'mojing-desktop-export-'));
-const artifactsDir = resolve('artifacts', `world-desktop-e2e-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+const artifactsDir = process.env.MOJING_E2E_ARTIFACT_DIR || resolve('artifacts', `world-desktop-e2e-${new Date().toISOString().replace(/[:.]/g, '-')}`);
 await mkdir(artifactsDir, { recursive: true });
 const server = createServer(); await new Promise(ok => server.listen(0, '127.0.0.1', ok));
 const port = server.address().port; await new Promise(ok => server.close(ok));
@@ -69,7 +69,10 @@ try {
       const { requestId, request } = message.params, url = new URL(request.url);
       const local = url.origin === origin || ['http://asset.localhost', 'https://asset.localhost', 'http://ipc.localhost'].includes(url.origin) || ['ipc:', 'asset:', 'data:', 'blob:'].includes(url.protocol);
       if (!local) blocked.push(url.href);
-      void call(local ? 'Fetch.continueRequest' : 'Fetch.failRequest', local ? { requestId } : { requestId, errorReason: 'BlockedByClient' }).catch(e => errors.push(String(e)));
+      void call(local ? 'Fetch.continueRequest' : 'Fetch.failRequest', local ? { requestId } : { requestId, errorReason: 'BlockedByClient' }).catch(e => {
+        // Navigation or a cancelled media load can invalidate a paused request.
+        if (!String(e).includes('"code":-32602,"message":"Invalid InterceptionId."')) errors.push(String(e));
+      });
     }
   });
   await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -80,12 +83,11 @@ try {
   await evaluate(helpers);
   const previous = await evaluate('desktopState()');
   assert.ok(!previous?.state?.worlds?.length && !previous?.state?.assets?.length, 'test profile contains no user media');
-  const world = createWorld('Desktop release fixture'); fixtureWorldId = world.id; world.duration = 1;
-  world.objects = [addWorldPath(createWorldObject('actor', 'Lead'), [-1, 0, 0], [1, 0, 0], 1, 'walk')];
-  world.camera = { position: [0, 2, 6], target: [0, 1, 0], focalLength: 35, keyframes: [] };
+  const world = worldFromTemplate('Desktop release town', 'town', 'Cast'); fixtureWorldId = world.id; world.duration = 1;
+  world.objects = [...world.objects.filter(o => o.kind !== 'actor'), addWorldPath(createWorldObject('actor', 'Lead'), [-2, .03, 4], [2, .03, 4], 1, 'walk')];
   world.cameraSequence = { enabled: true, shots: [
     { id: 'front', name: 'Front', duration: .5, camera: world.camera },
-    { id: 'side', name: 'Side', duration: .5, camera: { position: [-6, 2, 0], target: [0, 1, 0], focalLength: 70, keyframes: [] } },
+    { id: 'side', name: 'Side', duration: .5, camera: { position: [9, 4, 12], target: [0, 1, -1], focalLength: 35, keyframes: [] } },
   ] };
   await evaluate(`desktopState(${JSON.stringify({ state: { page: 'world', assets: [], assetFolders: [], trashedAssets: [], jobs: [], uploadTasks: [], canvases: [], worlds: [world], recipes: [], commerceProjects: [], activeWorldId: world.id }, version: 0 })})`);
   await call('Page.addScriptToEvaluateOnNewDocument', { source: helpers }); await call('Page.reload');
@@ -95,7 +97,7 @@ try {
   await click('[data-testid=world-offline-open]'); await waitFor('!!document.querySelector("[data-testid=world-offline-start]")', 'desktop export settings');
   assert.equal(await evaluate('document.querySelector("[data-testid=world-offline-start]").disabled'), false);
   await click('[data-testid=world-offline-start]');
-  await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("导出完成")', 'real desktop MP4 export', 60000);
+  await waitFor('document.querySelector("[data-testid=world-offline-status]")?.textContent.includes("导出完成")', 'real desktop MP4 export with bundled GLB textures', 120000);
   await waitFor('(async()=>{const s=await desktopState();return s?.state.assets.length===1;})()', 'durable asset save');
   const state = await evaluate('desktopState()'); ownedAssets = state.state.assets.filter(a => a.worldId === fixtureWorldId); assert.equal(ownedAssets.length, 1);
   const output = ownedAssets[0].url, jobId = ownedAssets[0].id.replace(/^offline-/, '');

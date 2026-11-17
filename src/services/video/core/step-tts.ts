@@ -37,9 +37,7 @@ export async function runTTS(
     const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
     const text = (
       dialogueStr ||
-      shot.narration ||
-      shot.sourceText ||
-      shot.videoPrompt
+      (typeof shot.narration === 'string' ? shot.narration : shot.sourceText || shot.videoPrompt)
     )?.trim();
 
     if (!text) {
@@ -145,9 +143,7 @@ export async function generateSingleTTS(
   const dialogueStr = shot.dialogue?.map((d) => (d.speaker ? `${d.speaker}：${d.text}` : d.text)).join(' ');
   const text = (
     dialogueStr ||
-    shot.narration ||
-    shot.sourceText ||
-    shot.videoPrompt
+    (typeof shot.narration === 'string' ? shot.narration : shot.sourceText || shot.videoPrompt)
   )?.trim();
 
   if (!text) {

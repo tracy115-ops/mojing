@@ -28,8 +28,8 @@ const PipelinePreflightAlert: React.FC<PipelinePreflightAlertProps> = ({
   onOpenShots,
 }) => {
   const { t } = useTranslation();
-  const blocking = [...additionalBlocking, ...result.blocking.map((issue) => formatIssue(issue, t))];
-  const warnings = [...additionalWarnings, ...result.warnings.map((issue) => formatIssue(issue, t))];
+  const blocking = [...additionalBlocking, ...result.blocking.map((issue) => formatPipelinePreflightIssue(issue, t))];
+  const warnings = [...additionalWarnings, ...result.warnings.map((issue) => formatPipelinePreflightIssue(issue, t))];
   const hasIssues = blocking.length > 0 || warnings.length > 0;
   const requiresShotReference = result.blocking.some((issue) => issue.code === 'multi-subject-reference-unsupported');
 
@@ -110,7 +110,7 @@ const IssueList: React.FC<{ items: string[] }> = ({ items }) => (
   </ul>
 );
 
-function formatIssue(
+export function formatPipelinePreflightIssue(
   issue: PipelinePreflightIssue,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): string {

@@ -40,6 +40,7 @@ const assertPose = async (time, expected) => {
 try {
   await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] }); await call('Page.navigate', { url: appUrl }); await boot();
   await evaluate(`(async()=>{const {createWorld}=await import('/src/services/video-studio/document.ts');const w=createWorld('Animation production fixture');w.duration=4;w.fps=12;w.camera.position=[2,2,8];w.camera.target=[2,1,0];animationStore.getState().saveWorld(w);})()`);
+  await evaluate(`(async()=>{const {WorldViewport}=await import(await animationImport('/src/components/VideoStudio/WorldEngine.tsx','WorldViewport'));const record=WorldViewport.prototype.record;WorldViewport.prototype.record=async function(onTime){try{const blob=await record.call(this,onTime);window.animationRecordResult={size:blob.size,type:blob.type};return blob;}catch(error){window.animationRecordResult={error:String(error)};throw error;}};})()`);
   await waitFor('Boolean(document.querySelector("[data-testid=world-viewport] canvas")) && !!window.animationViewport', 'WebGL viewport');
   await evaluate(`(()=>{
     const binary=new Float32Array([-.5,0,0,.5,0,0,0,1,0,0,4,0,0,0,4,0,0,0,0,0,0,3,0]);
@@ -98,6 +99,6 @@ try {
   assert.deepEqual(browser.errors, []); assert.ok(external.every(r => !/generations|\/tasks/.test(r.url)), 'no real generation requests');
   console.log('Portable animation settings, persisted media reload, dark/light themes and 1600/900/650px layouts passed. No real models were called.');
 } catch (error) {
-  console.error('Animation diagnostic:', await evaluate('({text:document.body.innerText.slice(-3500),world:window.animationStore?.getState().worlds[0]})').catch(() => null));
+  console.error('Animation diagnostic:', await evaluate('({text:document.body.innerText.slice(-3500),world:window.animationStore?.getState().worlds[0],frames:window.animationFrames?.length,recording:window.animationViewport?.recording,result:window.animationRecordResult})').catch(() => null));
   console.error('Runtime errors:', browser.errors); console.error('Screenshot:', await screenshot('mojing-world-animation-failure.png').catch(() => null)); throw error;
 } finally { browser.close(); }

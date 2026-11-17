@@ -1,6 +1,7 @@
 import type { ActorPose, StudioAsset, StudioCanvas, StudioNode, Vec3, WorldCamera, WorldDocument, WorldObject, WorldTransform } from '../../types/video-studio.ts';
 import { validateStudioImageEdit } from './image-edit-input.ts';
 import { withoutCloudUpload } from './upload-contract.ts';
+import { isWorldPropId, populateWorldSet, type WorldPropId, type WorldTemplate } from './world-sets.ts';
 
 export const studioId = () => crypto.randomUUID();
 export const studioNow = () => new Date().toISOString();
@@ -23,9 +24,10 @@ export function createWorldObject(kind: WorldObject['kind'], name: string): Worl
   return { id: studioId(), kind, name, color: kind === 'actor' ? '#c08a66' : '#78958d', transform: unitTransform(), keyframes: [], visible: true };
 }
 
-export function worldFromTemplate(name: string, template: 'empty' | 'studio' | 'street', actorName: string, labels = { backdrop: 'Backdrop', table: 'Table', building: 'Building' }): WorldDocument {
+export function worldFromTemplate(name: string, template: WorldTemplate, actorName: string, labels = { backdrop: 'Backdrop', table: 'Table', building: 'Building' }, propName: (id: WorldPropId) => string = id => id): WorldDocument {
   const world = createWorld(name);
   if (template === 'empty') return world;
+  if (template === 'town' || template === 'courtyard') return populateWorldSet(world, template, actorName, propName);
   const left = createWorldObject('actor', `${actorName} A`), right = createWorldObject('actor', `${actorName} B`);
   left.transform.position = [-1.5, 0, 0]; left.transform.rotation[1] = Math.PI / 2;
   right.transform.position = [1.5, 0, 0]; right.transform.rotation[1] = -Math.PI / 2; right.color = '#819db7';
@@ -59,6 +61,7 @@ export function parseWorldDocument(value: unknown): WorldDocument {
   for (const object of doc.objects) {
     if (!object || typeof object.id !== 'string' || ids.has(object.id) || !['actor', 'box', 'sphere', 'cylinder', 'tree', 'building', 'model'].includes(object.kind) || typeof object.name !== 'string' || typeof object.visible !== 'boolean' || object.motion && !['idle', 'walk', 'run', 'wave'].includes(object.motion) || !/^#[0-9a-f]{6}$/i.test(object.color) || !transform(object.transform) || !Array.isArray(object.keyframes) || object.keyframes.length > 1000 || object.keyframes.some((frame) => !frame || !Number.isFinite(frame.time) || frame.time < 0 || frame.time > doc.duration || !transform(frame.transform)) || new Set(object.keyframes.map((frame) => frame.time)).size !== object.keyframes.length) throw new Error('Invalid world object');
     ids.add(object.id);
+    if (object.builtinModel !== undefined && (object.kind !== 'model' || object.assetId !== undefined || !isWorldPropId(object.builtinModel))) throw new Error('Invalid built-in world prop');
     if (!pose(object.pose) || object.keyframes.some((frame) => !pose(frame.pose))) throw new Error('Invalid actor pose');
     if (object.animationClip !== undefined && (!Number.isInteger(object.animationClip) || object.animationClip < 0 || object.animationClip > 1000)) throw new Error('Invalid model animation clip');
     if (object.animationPlayback !== undefined) {

@@ -125,6 +125,8 @@ export interface ComicPanelSpec {
   shotType?: 'close-up' | 'medium' | 'wide' | 'establishing';
   /** 步 3 产物:图片 URL(webview 形式) */
   imageUrl?: string;
+  /** 未烧录对白的原图，重排气泡时复用，避免叠字和重复生成。 */
+  originalImageUrl?: string;
   /** 用户改过的 prompt(覆盖 description 拼 prompt) */
   promptOverride?: string;
   /** 用户改过的 seed */
@@ -154,7 +156,7 @@ export interface ComicSceneSpec {
     style?: string;
     aspectRatio: AspectRatio;
     /** 单镜布局:Phase 1 总是 'single' */
-    panelLayout: 'single' | 'grid-2' | 'grid-4' | 'manga-row';
+    panelLayout: 'single' | 'grid-2' | 'grid-4' | 'manga-row' | 'yonkoma' | 'grid-9' | 'manga-splash' | 'webtoon';
     sourceMode: ComicSourceMode;
     /** 'novel' | 'direct'(Phase 1 总是 direct) */
     channel: 'novel' | 'direct';
@@ -185,8 +187,8 @@ export type ComicTrackedStage = Exclude<ComicStage, 'idle' | 'complete' | 'error
  *  注:dialogue_burn 在 page_compose 之前 — 气泡烧到 panel.imageUrl,
  *  然后 page_compose 把含气泡的 panel 拼成 page。 */
 export const COMIC_PIPELINE_STAGES: ComicTrackedStage[] = [
-  'character_anchor',
   'panel_script',
+  'character_anchor',
   'panel_image',
   'dialogue_burn',
   'page_compose',

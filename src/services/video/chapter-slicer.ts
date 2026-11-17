@@ -58,7 +58,7 @@ export async function sliceChaptersWithLLM(
     userPrompt,
     responseFormat: 'json',
     temperature: 0.3,
-    maxTokens: 4096,
+    maxTokens: 8192,
   };
 
   try {

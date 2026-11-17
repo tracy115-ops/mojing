@@ -25,6 +25,7 @@ import type {
 import { BaseLLMProvider } from './base';
 import { OpenAICompatibleProvider, ClaudeProvider } from './llm-adapters';
 import { createImageProvider } from './image-adapters';
+import { normalizeAgnesImageSeed } from './image-wire-contract';
 import { validateNativeImageEdit } from './image-edit-contract';
 import { createVideoProvider } from './video-adapters';
 import { createTTSProvider } from './tts-adapters';
@@ -487,7 +488,9 @@ function normalizeImageRequest(
     `${provider}/${model}`,
   );
   validateImageReferences(referenceBundle.images, capabilities);
-  const filtered = filterGenerationParameters(collectImageParameterInputs(request), capabilities);
+  const inputs = collectImageParameterInputs(request);
+  if (provider === 'agnes-image' && typeof inputs.seed === 'number') inputs.seed = normalizeAgnesImageSeed(inputs.seed);
+  const filtered = filterGenerationParameters(inputs, capabilities);
   const values = filtered.values;
   const editStrength = valueAsNumber(values, 'editStrength');
   if (request.mask !== undefined && request.editStrength !== undefined && editStrength === undefined) throw new Error('This endpoint rejected the requested image edit strength');

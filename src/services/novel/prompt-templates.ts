@@ -667,7 +667,7 @@ const characterGeneration: PromptTemplate = {
   id: 'character-generation',
   name: '角色生成',
   version: 1,
-  variables: ['title', 'genre', 'worldbuilding'],
+  variables: ['title', 'genre', 'description', 'worldbuilding'],
   buildSystem(_vars) {
     return `你是一个专业的小说角色设计师。根据小说的世界观设定，生成丰富立体的人物角色。
 
@@ -702,6 +702,8 @@ const characterGeneration: PromptTemplate = {
 世界观设定：
 ${vars.worldbuilding}
 
+原始简介与核心约束：${vars.description || ''}
+原始简介中的主角、道具状态、事件和世界规则必须保留；若推演设定与简介冲突，应调整推演设定，不得改写简介。
 请基于以上世界观生成主要角色。`;
   },
 };
@@ -714,7 +716,7 @@ const locationGeneration: PromptTemplate = {
   id: 'location-generation',
   name: '地点生成',
   version: 1,
-  variables: ['title', 'genre', 'worldbuilding', 'characters'],
+  variables: ['title', 'genre', 'description', 'worldbuilding', 'characters'],
   buildSystem(_vars) {
     return `你是一个专业的小说场景设计师。根据小说的世界观和角色，生成重要的故事地点。
 
@@ -744,6 +746,8 @@ ${vars.worldbuilding}
 主要角色：
 ${vars.characters}
 
+原始简介与核心约束：${vars.description || ''}
+原始简介中的主角、道具状态、事件和世界规则必须保留；若推演设定与简介冲突，应调整推演设定，不得改写简介。
 请基于以上信息生成重要地点。`;
   },
 };
@@ -756,7 +760,7 @@ const plotOutline: PromptTemplate = {
   id: 'plot-outline',
   name: '剧情总纲',
   version: 1,
-  variables: ['title', 'genre', 'targetWordCount', 'worldbuilding', 'characters', 'locations'],
+  variables: ['title', 'genre', 'description', 'targetWordCount', 'worldbuilding', 'characters', 'locations'],
   buildSystem(vars) {
     const totalChapters = Math.max(10, Math.ceil(Number(vars.targetWordCount) / 3000));
     return `你是一个专业的小说剧情规划师。根据小说的所有设定，生成完整的剧情总纲。
@@ -801,6 +805,8 @@ ${vars.characters}
 重要地点：
 ${vars.locations}
 
+原始简介与核心约束：${vars.description || ''}
+原始简介中的主角、道具状态、事件和世界规则必须保留；若推演设定与简介冲突，应调整推演设定，不得改写简介。明确解释简介中的异常，不得用另一个谜题替换它。
 请为这部小说生成完整的剧情总纲。`;
   },
 };

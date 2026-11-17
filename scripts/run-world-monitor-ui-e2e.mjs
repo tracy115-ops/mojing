@@ -36,6 +36,9 @@ try {
     window.monitorImport=async(file,symbol)=>{const source=await(await fetch(file)).text(),line=source.split(String.fromCharCode(10)).find(l=>l.startsWith('import')&&l.includes(symbol));return line.slice(line.indexOf('"')+1,line.lastIndexOf('"'));};
     window.monitorStore=(await import(await monitorImport('/src/components/VideoStudio/WorldEngine.tsx','useVideoStudioStore'))).useVideoStudioStore;
     const {WorldViewport}=await import(await monitorImport('/src/components/VideoStudio/WorldEngine.tsx','WorldViewport')),sync=WorldViewport.prototype.sync;
+    const record=WorldViewport.prototype.record;window.monitorRecordResults=[];window.monitorNotices=[];
+    new MutationObserver(()=>{const text=document.querySelector('.ant-message')?.textContent;if(text&&!monitorNotices.includes(text))monitorNotices.push(text);}).observe(document.body,{subtree:true,childList:true,characterData:true});
+    WorldViewport.prototype.record=async function(onTime){try{const blob=await record.call(this,onTime);monitorRecordResults.push({size:blob.size,type:blob.type});return blob;}catch(error){monitorRecordResults.push({error:String(error)});throw error;}};
     window.monitorFrames=[];WorldViewport.prototype.sync=function(...args){sync.apply(this,args);window.monitorViewport=this;if(!this.renderer.monitorWrapped){const render=this.renderer.render.bind(this.renderer),engine=this;this.renderer.monitorWrapped=true;this.renderer.render=(scene,camera)=>{const actor=[...engine.objects.values()][0]?.root;monitorFrames.push({time:engine.time,recording:engine.recording,focal:camera.getFocalLength(),position:camera.position.toArray(),aspect:camera.aspect,actor:actor?.position.toArray()});if(monitorFrames.length>1000)monitorFrames.shift();render(scene,camera);};}};
     const {createWorld,createWorldObject,addWorldPath}=await import('/src/services/video-studio/document.ts');
     const w=createWorld('Camera monitor fixture');w.duration=4;w.fps=24;w.objects=[addWorldPath(createWorldObject('actor','Moving cast'),[-2,0,0],[2,0,0],4,'walk')];
@@ -76,14 +79,19 @@ try {
   assert.equal(await evaluate('JSON.stringify(monitorStore.getState().worlds[0])'), beforeViews);
   console.log('Per-camera 1280×720 capture restores the view; adoption copies/retimes the full camera curve into the active shot and supports undo.');
 
-  await evaluate('window.monitorRecorder=MediaRecorder;window.MediaRecorder=class{constructor(){throw new Error("Injected monitor recorder failure")}static isTypeSupported(){return true}};');
+  await evaluate('window.monitorEncoder=VideoEncoder;window.VideoEncoder=class extends window.monitorEncoder{configure(){throw new Error("Injected monitor encoder failure")}};');
   await textButton('导出预演视频', '.world-engine-output-actions'); await waitFor('!document.querySelector(".world-engine-output-actions .ant-btn-loading") && !!document.querySelector("[data-testid=world-camera-monitor]")', 'failed recorder restores monitoring');
   assert.equal((await inspect()).view, 'monitor'); assert.equal((await inspect()).controls, false);
-  await evaluate('window.MediaRecorder=window.monitorRecorder;monitorFrames=[];');
-  await textButton('导出预演视频', '.world-engine-output-actions'); await waitFor('monitorStore.getState().assets.some(a=>a.kind==="video")', 'program recording from monitor', 25000);
+  await evaluate('window.VideoEncoder=class extends window.monitorEncoder{static async isConfigSupported(config){await new Promise(ok=>setTimeout(ok,1200));return super.isConfigSupported(config)}};monitorFrames=[];');
+  await textButton('导出预演视频', '.world-engine-output-actions');
+  await delay(350);
+  assert.equal(await evaluate('monitorViewport.time'), 0, 'the scene clock must wait until the recorder actually starts');
+  await waitFor('monitorStore.getState().assets.some(a=>a.kind==="video")', 'program recording from monitor', 90000);
+  await evaluate('window.VideoEncoder=window.monitorEncoder');
+  console.log('Recorder diagnostic:', await evaluate('({results:monitorRecordResults,notices:monitorNotices})'));
   const recording = await evaluate('monitorFrames.filter(f=>f.recording)'); assert.ok(recording.some(f => f.time < 1 && Math.round(f.focal) === 35)); assert.ok(recording.some(f => f.time > 2 && Math.round(f.focal) === 85)); assert.ok(recording.every(f => Math.abs(f.aspect - 16 / 9) < .0001));
   assert.equal((await inspect()).view, 'monitor'); assert.equal((await inspect()).scissor, false); assert.equal((await renderFrames(3)).length, 4);
-  const decoded = await evaluate(`(async()=>{const v=document.createElement('video');v.muted=true;v.src=monitorStore.getState().assets.find(a=>a.kind==='video').url;await new Promise((ok,fail)=>{v.onloadedmetadata=ok;v.onerror=fail;});const c=document.createElement('canvas');c.width=80;c.height=45;const ctx=c.getContext('2d'),sample=async t=>{await new Promise(ok=>{v.onseeked=ok;v.currentTime=t;});ctx.drawImage(v,0,0,80,45);return[...ctx.getImageData(0,0,80,45).data];},a=await sample(.3),b=await sample(3.2);return{size:[v.videoWidth,v.videoHeight],difference:a.reduce((n,v,i)=>n+Math.abs(v-b[i]),0)/a.length};})()`); assert.deepEqual(decoded.size, [1280, 720]); assert.ok(decoded.difference > 2);
+  const decoded = await evaluate(`(async()=>{const v=document.createElement('video');v.muted=true;v.src=monitorStore.getState().assets.find(a=>a.kind==='video').url;await new Promise((ok,fail)=>{v.onloadedmetadata=ok;v.onerror=fail;});const c=document.createElement('canvas');c.width=80;c.height=45;const ctx=c.getContext('2d'),sample=async t=>{await new Promise(ok=>{v.onseeked=ok;v.currentTime=t;});ctx.drawImage(v,0,0,80,45);return[...ctx.getImageData(0,0,80,45).data];},a=await sample(.3),b=await sample(3.2);return{size:[v.videoWidth,v.videoHeight],duration:v.duration,difference:a.reduce((n,v,i)=>n+Math.abs(v-b[i]),0)/a.length};})()`); assert.deepEqual(decoded.size, [1280, 720]); assert.ok(Math.abs(decoded.duration - 4) < .1, `actual video duration: ${decoded.duration}`); assert.ok(decoded.difference > 2);
   await segment('白模'); assert.equal((await renderFrames(2)).length, 4); await segment('深度'); assert.equal((await renderFrames(2)).length, 4); await segment('材质');
   console.log('Recorder failure cleanup and decoded program-only video passed; monitor layout and render modes restore afterward.');
 
@@ -109,6 +117,7 @@ try {
   assert.deepEqual(browser.errors, []); assert.ok(external.every(url => !/generations|\/tasks/.test(url)), 'no real model requests');
   console.log('Dark/light 1600/900/650px layouts, responsive scissor alignment, portrait capture, camera deletion and orbit/shot restoration passed. No real models were called.');
 } catch (error) {
+  console.error('Recorder diagnostic:', JSON.stringify(await evaluate('({results:window.monitorRecordResults,events:window.monitorRecorderEvents,notices:window.monitorNotices})').catch(()=>null)));
   console.error('Monitor diagnostic:', await evaluate('({text:document.body.innerText.slice(-3500),world:window.monitorStore?.getState().worlds[0],view:window.monitorViewport?.view,sources:window.monitorViewport?.monitorSources})').catch(() => null));
   console.error('Runtime errors:', browser.errors); console.error('Screenshot:', await screenshot('mojing-world-monitor-failure.png').catch(() => null)); throw error;
 } finally { browser.close(); }

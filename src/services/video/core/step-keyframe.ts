@@ -934,7 +934,8 @@ function buildKeyframeInput(
       referenceBound: hasCharacterReference,
     }),
     buildOffscreenBindingText(shot),
-    '[Subject authority] Bound subject records and their assigned reference tiles are authoritative. If the shot description or a negative constraint conflicts with a bound subject record, preserve the bound record.',
+    '[Subject authority] Bound subject records and their assigned reference tiles are authoritative for identity and wardrobe. Preserve the same face, hair, body, clothing and accessory design.',
+    '[Shot state authority] The First-frame state is authoritative for pose, expression, camera framing, and movable prop placement or open/closed state. A subject reference is not a frozen action state. Do not copy its pose or its held/open props when this shot explicitly changes them, places them aside, or excludes them from the frame. Apply the shot state while preserving subject identity and wardrobe.',
   ].filter(Boolean).join('\n\n');
 }
 

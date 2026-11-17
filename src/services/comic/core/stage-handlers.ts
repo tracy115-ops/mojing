@@ -119,7 +119,7 @@ export function populateStageInput(pid: string, stage: ComicTrackedStage, ctx: S
       break;
     }
     case 'panel_script':
-      if (existing.prompt === undefined) patch.prompt = ctx.sourceText.slice(0, 500);
+      if (existing.prompt === undefined) patch.prompt = ctx.sourceText;
       if (existing.panelCount === undefined) patch.panelCount = ctx.panelCount;
       break;
     case 'panel_image':
@@ -330,12 +330,12 @@ export async function executePanelScript(
   if (!result) return null;
 
   // 如果 LLM 提取了新角色(用户初始没填角色),写入 spec
-  let spec = workingSpec;
-  if (result.extractedCharacters && result.extractedCharacters.length > 0) {
-    spec = { ...workingSpec, characters: result.extractedCharacters };
-    store.setSceneSpec(pid, spec);
-  }
-  store.setPanels(pid, result.panels);
+  const spec = {
+    ...workingSpec,
+    characters: result.extractedCharacters?.length ? result.extractedCharacters : workingSpec.characters,
+    panels: result.panels,
+  };
+  store.setSceneSpec(pid, spec);
   store.setStageStatus(pid, 'panel_script', 'completed', {
     progress: 1,
     error: result.degraded ? '使用 fallback 切分(LLM 调用失败)' : undefined,
@@ -530,7 +530,9 @@ export async function executeDialogueBurn(
   const burnedCount = result.panels.filter(
     (p) => p.dialogue && p.dialogue.trim(),
   ).length;
-  const skippedCount = result.skippedPanelIds.length;
+  const skippedCount = result.skippedPanelIds.filter(id =>
+    workingSpec.panels.some(p => p.id === id && p.dialogue?.trim()),
+  ).length;
   const errMsg =
     skippedCount > 0 ? `${skippedCount} 个分镜烧录失败` : undefined;
   store.setStageStatus(pid, 'dialogue_burn', 'completed', {
@@ -548,13 +550,7 @@ export async function executeDialogueBurn(
 // --- handler 注册表 ---
 
 /** pipeline 处理的 stage 顺序 */
-export const RUNTIME_STAGE_ORDER: ComicTrackedStage[] = [
-  'character_anchor',
-  'panel_script',
-  'panel_image',
-  'dialogue_burn',
-  'page_compose',
-];
+export { COMIC_PIPELINE_STAGES as RUNTIME_STAGE_ORDER } from '@/types/comic';
 
 export const STAGE_HANDLERS: Partial<
   Record<ComicStage, (ctx: StageContext) => Promise<StageResult | null>>
@@ -615,7 +611,7 @@ export function isStageLiveCompleted(
     return proj.spec.panels.length > 0;
   }
   if (stage === 'panel_image') {
-    return proj.spec.panels.some((p) => p.imageUrl);
+    return proj.spec.panels.length > 0 && proj.spec.panels.every((p) => p.imageUrl);
   }
   if (stage === 'dialogue_burn') {
     return proj.stages['dialogue_burn']?.status === 'completed';

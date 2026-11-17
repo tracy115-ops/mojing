@@ -32,21 +32,8 @@ interface MusicStoreState {
 export const useMusicStore = create<MusicStoreState>()(
   persist(
     (set, get) => ({
-      tracks: [
-        {
-          id: 'demo_track_1',
-          title: '赛博夜流 · 霓虹狂想曲',
-          style: 'Cyberpunk Synthwave, Heavy Bass, 128 BPM',
-          prompt: 'A high-energy cyberpunk synthwave track with heavy bassline and futuristic synth leads.',
-          lyrics: '[Verse 1]\n霓虹在雨夜闪烁\n数据的河流穿梭\n[Chorus]\n在赛博的世界里无声高歌\n自由是最后的选择',
-          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73361.mp3?filename=cyberpunk-2099-10701.mp3',
-          durationSeconds: 142,
-          tags: ['赛博朋克', '电子音乐', '燃向'],
-          isInstrumental: false,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-      currentTrackId: 'demo_track_1',
+      tracks: [],
+      currentTrackId: null,
       isPlaying: false,
       credits: 10, // 初始赠送 10 次 AI 音乐创作额度
       addTrack: (track) =>
@@ -71,6 +58,13 @@ export const useMusicStore = create<MusicStoreState>()(
     }),
     {
       name: 'mojing-music-store',
+      // Playback is transient. Never restore a playing badge without audio.
+      partialize: ({ isPlaying: _isPlaying, ...state }) => state,
+      merge: (persisted, current) => {
+        const state = persisted as Partial<MusicStoreState>;
+        const tracks = (state.tracks ?? []).filter(track => track.id !== 'demo_track_1');
+        return { ...current, ...state, tracks, isPlaying: false, currentTrackId: tracks.some(track => track.id === state.currentTrackId) ? state.currentTrackId! : null };
+      },
     },
   ),
 );

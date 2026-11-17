@@ -11,6 +11,21 @@ Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 public static class E2EDialogNative {
+  private delegate bool EnumWindowCallback(IntPtr hwnd, IntPtr parameter);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowCallback callback, IntPtr parameter);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int maxCount);
+  public static IntPtr FindOwnedDialog(uint expectedPid) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((hwnd, parameter) => {
+      uint pid; GetWindowThreadProcessId(hwnd, out pid);
+      if (pid != expectedPid) return true;
+      var name = new System.Text.StringBuilder(256);
+      GetClassName(hwnd, name, name.Capacity);
+      if (name.ToString() != "#32770") return true;
+      found = hwnd; return false;
+    }, IntPtr.Zero);
+    return found;
+  }
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "SendMessageW")]
@@ -28,16 +43,15 @@ function Get-OwnedHandle($element) {
   if ($handle -eq [IntPtr]::Zero -or $owner -ne $AppProcessId) { throw 'Dialog control does not belong to E2E process' }
   return $handle
 }
-$deadline = [DateTime]::UtcNow.AddSeconds(20)
+$deadline = [DateTime]::UtcNow.AddSeconds(45)
 $dialog = $null
 do {
-  $dialog = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
-    [System.Windows.Automation.TreeScope]::Descendants,
-    [System.Windows.Automation.AndCondition]::new(
-      [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId),
-      [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770')
-    )
-  )
+  # Enumerate owned top-level windows first. Searching the entire desktop's
+  # accessibility tree can miss a newly opened dialog while other apps redraw.
+  $ownedDialog = [E2EDialogNative]::FindOwnedDialog([uint32]$AppProcessId)
+  if ($ownedDialog -ne [IntPtr]::Zero) {
+    $dialog = [System.Windows.Automation.AutomationElement]::FromHandle($ownedDialog)
+  }
   if (-not $dialog) { Start-Sleep -Milliseconds 150 }
 } until ($dialog -or [DateTime]::UtcNow -gt $deadline)
 if (-not $dialog) { throw "No native file dialog for E2E process $AppProcessId" }

@@ -89,11 +89,7 @@ export async function runComicPipeline(
       break;
     }
     // 把产物累积到 ctx,供下一 stage 用
-    if (result.extractedCharacters) {
-      ctx = { ...ctx, workingSpec: { ...ctx.workingSpec, characters: result.extractedCharacters } };
-    } else if (result.spec) {
-      ctx = { ...ctx, workingSpec: result.spec };
-    }
+    ctx = { ...ctx, workingSpec: result.spec };
   }
 
   return allOk;
@@ -156,7 +152,12 @@ export async function runFromStage(
     workingSpec: freshProj.spec,
   };
 
-  const startIdx = RUNTIME_STAGE_ORDER.indexOf(stage);
+  // Legacy dialogue results did not retain clean originals. Resetting them
+  // invalidates panel_image, so rebuild that prerequisite before burning text.
+  const startIdx = RUNTIME_STAGE_ORDER.indexOf(
+    stage === 'dialogue_burn' && freshProj.spec.panels.some((p) => !p.imageUrl)
+      ? 'panel_image' : stage,
+  );
   if (startIdx < 0) {
     void logger.warn(
       `[comic/pipeline] runFromStage: stage ${stage} 不在 RUNTIME_STAGE_ORDER`,
@@ -181,11 +182,7 @@ export async function runFromStage(
       allOk = false;
       break;
     }
-    if (result.extractedCharacters) {
-      ctx = { ...ctx, workingSpec: { ...ctx.workingSpec, characters: result.extractedCharacters } };
-    } else if (result.spec) {
-      ctx = { ...ctx, workingSpec: result.spec };
-    }
+    ctx = { ...ctx, workingSpec: result.spec };
   }
 
   return allOk;

@@ -71,7 +71,7 @@ export async function stepStoryboard(
       : rawPrompt,
     responseFormat: 'json',
     temperature: 0.6,
-    maxTokens: 4096,
+    maxTokens: 8192,
   };
 
   try {

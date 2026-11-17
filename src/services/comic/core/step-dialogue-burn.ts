@@ -78,7 +78,8 @@ async function burnPanel(
   panel: ComicPanelSpec,
   ctx: DialogueBurnContext,
 ): Promise<ComicPanelSpec> {
-  const dataUri = await readAsDataUri(panel.imageUrl!);
+  const originalImageUrl = panel.originalImageUrl ?? panel.imageUrl!;
+  const dataUri = await readAsDataUri(originalImageUrl);
   const img = await loadImage(dataUri);
 
   const canvas = document.createElement('canvas');
@@ -118,7 +119,7 @@ async function burnPanel(
     `comic_panel_burned_${panel.index + 1}`,
   );
 
-  return { ...panel, imageUrl: newUrl };
+  return { ...panel, originalImageUrl, imageUrl: newUrl };
 }
 
 // --- 气泡绘制 ---
@@ -138,8 +139,21 @@ function drawBubble(
 ): void {
   const padding = 24;
   const bubbleW = Math.min(params.canvasW * 0.55, 480);
-  const bubbleH = Math.max(params.fontSize * 3.2, 96);
   const margin = 32;
+  g.font = `${params.fontSize}px ${FONT_FAMILY}`;
+  // An ellipse's bounding rectangle is not a safe text area. Keep every line
+  // inside its inscribed rectangle, and size the bubble to the wrapped text.
+  const oval = params.shape === 'oval';
+  const textWidth = oval ? bubbleW * Math.SQRT1_2 - padding : bubbleW - padding * 2;
+  const lines = wrapText(g, text, textWidth);
+  const lineHeight = Math.ceil(params.fontSize * 1.3);
+  const textHeight = lines.length * lineHeight;
+  const bubbleH = Math.max(params.fontSize * 3.2, 96, Math.ceil(
+    oval ? (textHeight + padding) / Math.SQRT1_2 : textHeight + padding * 2,
+  ));
+  if (bubbleH > params.canvasH - margin * 2) {
+    throw new Error('Dialogue does not fit this panel; shorten it or reduce the font size.');
+  }
 
   // 横向锚点
   let bubbleX: number;
@@ -170,17 +184,11 @@ function drawBubble(
 
   // 文字(换行)
   g.fillStyle = '#000000';
-  g.font = `${params.fontSize}px ${FONT_FAMILY}`;
   g.textBaseline = 'top';
-  wrapAndDrawText(
-    g,
-    text,
-    bubbleX + padding / 2,
-    bubbleY + padding / 2,
-    bubbleW - padding,
-    bubbleH - padding,
-    params.fontSize,
-  );
+  g.textAlign = isNarration ? 'left' : 'center';
+  const textX = isNarration ? bubbleX + padding : bubbleX + bubbleW / 2;
+  const textY = bubbleY + (bubbleH - textHeight) / 2;
+  lines.forEach((line, index) => g.fillText(line, textX, textY + index * lineHeight));
 }
 
 function drawOval(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
@@ -215,42 +223,32 @@ function drawRoundedRect(
   g.stroke();
 }
 
-function wrapAndDrawText(
+function wrapText(
   g: CanvasRenderingContext2D,
   text: string,
-  x: number,
-  y: number,
   maxW: number,
-  maxH: number,
-  fontSize: number,
-): void {
-  const lineHeight = Math.round(fontSize * 1.3);
-  const chars = Array.from(text);
+): string[] {
+  const chars = Array.from(text.replace(/\r\n?/g, '\n'));
+  const lines: string[] = [];
   let line = '';
-  let lineY = y;
 
   for (const char of chars) {
     if (char === '\n') {
-      g.fillText(line, x, lineY);
+      lines.push(line);
       line = '';
-      lineY += lineHeight;
-      if (lineY + fontSize > y + maxH) return;
       continue;
     }
     const testLine = line + char;
     const width = g.measureText(testLine).width;
     if (width > maxW && line) {
-      g.fillText(line, x, lineY);
+      lines.push(line);
       line = char;
-      lineY += lineHeight;
-      if (lineY + fontSize > y + maxH) return;
     } else {
       line = testLine;
     }
   }
-  if (line) {
-    g.fillText(line, x, lineY);
-  }
+  if (line || !lines.length) lines.push(line);
+  return lines;
 }
 
 // --- 图片加载 ---
