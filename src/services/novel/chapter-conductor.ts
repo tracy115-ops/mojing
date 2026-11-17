@@ -10,8 +10,8 @@ import { parseLLMJson } from './llm-json';
 
 // --- Constants ---
 
-const MAX_BEATS = 3;
-const MIN_BEAT_WORDS = 1000;
+const MAX_BEATS = 5;
+const MIN_BEAT_WORDS = 400;
 const WORDS_PER_CHAPTER_TARGET = 3000;
 
 const HIGH_ENERGY_FOCUSES: Set<BeatFocus> = new Set(['action', 'hook', 'character_intro', 'suspense']);
@@ -26,9 +26,9 @@ const PHASE_THRESHOLDS = {
 } as const;
 
 const PHASE_INSTRUCTIONS: Record<ConductorPhase, string> = {
-  unfurl: '【铺陈阶段】自由展开，充分描写。可以铺陈细节、展开对话、描写环境。',
-  converge: '【收束阶段】收紧节奏。不要再开新的情节线。压缩环境和心理描写，保持叙事推进。',
-  land: '【着陆阶段】必须结束。不再开新场景。用1-2句收束当前情绪。可以制造悬念结尾。',
+  unfurl: '【展开阶段】写清当前场景的目的、阻力和人物选择，不为铺陈而堆细节。',
+  converge: '【收束阶段】优先完成已开始的关键行动，缩短无信息变化的重复描写与过渡。',
+  land: '【收束阶段】完成当前行动及其后果，停止引入旁支；不要为达到字数而截断关键因果。',
 };
 
 // ============================================================
@@ -37,7 +37,7 @@ const PHASE_INSTRUCTIONS: Record<ConductorPhase, string> = {
 
 /**
  * Magnify a chapter outline into 3-6 beats using LLM.
- * Falls back to a 4-beat 起承转合 pattern if LLM fails.
+ * Stop on invalid planning rather than inventing a generic plot.
  */
 export async function magnifyOutlineToBeats(
   outline: string,
@@ -46,7 +46,7 @@ export async function magnifyOutlineToBeats(
 ): Promise<Beat[]> {
   const request: LLMGenerateRequest = {
     taskType: 'planning',
-    systemPrompt: `你是一个叙事节拍规划师。将章节大纲拆分为 2-3 个叙事节拍(beat)。
+    systemPrompt: `你是一个叙事节拍规划师。按大纲的场景与因果拆分为 2-5 个叙事节拍(beat)，不能另外编造事件。
 
 每个 beat 必须指定：
 - "description": 节拍内容描述（具体场景/事件，50-100字，含具体动作和对话线索）
@@ -58,24 +58,25 @@ export async function magnifyOutlineToBeats(
 - hook 类型只能在第一个 beat 使用
 - 第一个 beat 负责承接上一章/建立场景
 - 最后一个 beat 负责收束或制造悬念
-- action/suspense 类型的 beat 分配更多字数
-- **最多 3 个 beat**——给每个 beat 充分的展开空间
-- 偏好 2-3 个大 beat，而非 4-6 个小 beat
+- 字数由关键选择与场景需要决定，不因动作类型自动获得更多篇幅
+- 最多5个beat，分段不得漏掉大纲的关键行动及后果
 
-输出严格JSON数组：
-[{"description":"...","targetWords":1200,"focus":"action","sceneGoal":"..."}, ...]`,
+输出严格JSON对象：
+{"beats":[{"description":"...","targetWords":1200,"focus":"action","sceneGoal":"..."}]}`,
     userPrompt: `大纲：\n${outline}\n\n目标总字数：${targetWords}字\n章节序号：第${chapterIndex + 1}章\n请拆分为beats。`,
     responseFormat: 'json',
     temperature: 0.7,
     maxTokens: 2048,
+    thinking: false,
   };
 
   try {
     const response = await providerRouter.generate(request);
-    const raw = parseLLMJson<unknown[]>(response.content);
-    if (!raw || !Array.isArray(raw)) throw new Error('Expected array');
+    const parsed = parseLLMJson<unknown>(response.content);
+    const raw = Array.isArray(parsed) ? parsed : (parsed as { beats?: unknown[] } | null)?.beats;
+    if (!raw || !Array.isArray(raw) || !raw.length) throw new Error('Expected nonempty beat array');
 
-    let beats: Beat[] = raw.slice(0, MAX_BEATS).map((item: unknown, i: number) => {
+    let beats: Beat[] = raw.map((item: unknown, i: number) => {
       const b = item as Record<string, unknown>;
       return {
         index: i,
@@ -95,8 +96,7 @@ export async function magnifyOutlineToBeats(
 
     return beats;
   } catch (err) {
-    console.warn('ChapterConductor: beat magnification failed, using fallback', err);
-    return buildFallbackBeats(outline, targetWords, chapterIndex);
+    throw new Error(`章节节拍规划未完成，已停止写作：${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -159,13 +159,8 @@ export function adjustBeatTargetWords(
 ): number {
   let adjusted = beat.targetWords;
 
-  // Power fantasy: high energy beats are immune to compression
-  if (isHighEnergy(beat.focus)) {
-    // Transfer debt to this beat's allocation
-    adjusted = Math.max(adjusted, beat.targetWords); // Never compress high energy
-  } else if (signal.phase === 'converge' || signal.phase === 'land') {
-    // Compressible beats absorb overspend debt
-    adjusted = Math.max(MIN_BEAT_WORDS, beat.targetWords - Math.ceil(overspendDebt * 0.5));
+  if (signal.phase === 'converge' || signal.phase === 'land') {
+    adjusted = Math.max(MIN_BEAT_WORDS, beat.targetWords - Math.ceil(overspendDebt / Math.max(1, signal.beatsRemaining)));
   }
 
   return adjusted;
@@ -247,33 +242,6 @@ function rescaleToTarget(beats: Beat[], targetWords: number): Beat[] {
     ...b,
     targetWords: Math.max(MIN_BEAT_WORDS, Math.round(b.targetWords * ratio)),
   }));
-}
-
-function buildFallbackBeats(outline: string, targetWords: number, chapterIndex: number): Beat[] {
-  const patterns: Beat[][] = [
-    // Chapter 1: hook + core event + suspense (3-beat, expanded)
-    [
-      { index: 0, description: '开篇钩子与主角出场：用强烈的场景冲突抓住读者，建立主角形象', targetWords: Math.round(targetWords * 0.3), focus: 'hook' as BeatFocus, sceneGoal: '抓住注意力并建立主角' },
-      { index: 1, description: '核心事件展开：冲突双方正面交锋，揭示关键信息或推进主线', targetWords: Math.round(targetWords * 0.45), focus: 'action' as BeatFocus, sceneGoal: '推进主线、深化冲突' },
-      { index: 2, description: '悬念收束与情感落点：留下一根刺，制造继续阅读的动力', targetWords: Math.round(targetWords * 0.25), focus: 'suspense' as BeatFocus, sceneGoal: '制造悬念' },
-    ],
-    // Chapter 2: sensory + dialogue + suspense (3-beat)
-    [
-      { index: 0, description: '承接上章悬念，建立新场景：通过角色五感展开环境', targetWords: Math.round(targetWords * 0.25), focus: 'sensory' as BeatFocus, sceneGoal: '场景过渡与铺垫' },
-      { index: 1, description: '事件推进与角色互动：核心对话推进，关系深化或冲突升级', targetWords: Math.round(targetWords * 0.5), focus: 'dialogue' as BeatFocus, sceneGoal: '深化角色关系、推进剧情' },
-      { index: 2, description: '新的悬念或转折：揭示关键信息或制造意外', targetWords: Math.round(targetWords * 0.25), focus: 'suspense' as BeatFocus, sceneGoal: '悬念收尾' },
-    ],
-  ];
-
-  // Default: 起承转合 (3-beat — 起+承合并, 转, 合)
-  const defaultPattern: Beat[] = [
-    { index: 0, description: '起·承：场景建立、承接上章、初步推进', targetWords: Math.round(targetWords * 0.3), focus: 'narration' as BeatFocus, sceneGoal: '建立场景与推进' },
-    { index: 1, description: '转：冲突升级或关键转折出现，硬碰硬化解', targetWords: Math.round(targetWords * 0.45), focus: 'action' as BeatFocus, sceneGoal: '制造转折与高潮' },
-    { index: 2, description: '合：情感落点与悬念收束', targetWords: Math.round(targetWords * 0.25), focus: 'emotion' as BeatFocus, sceneGoal: '情感落点' },
-  ];
-
-  const selected = chapterIndex < patterns.length ? patterns[chapterIndex] : defaultPattern;
-  return rescaleToTarget(selected, targetWords);
 }
 
 export { WORDS_PER_CHAPTER_TARGET, HIGH_ENERGY_FOCUSES, COMPRESSIBLE_FOCUSES };

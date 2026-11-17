@@ -1,3 +1,5 @@
+import { NOVEL_WRITING_PRINCIPLES } from './writing-context';
+
 // --- Prompt Template System ---
 // Centralized prompt management inspired by PlotPilot's CPMS.
 // Each template encapsulates system + user prompt construction with variable interpolation.
@@ -66,64 +68,17 @@ export function applyAntiAILayer1(text: string): { text: string; replacements: n
 type SceneType = 'combat' | 'dialogue' | 'suspense' | 'daily' | 'romance' | 'exploration';
 
 const SCENE_PROTOCOLS: Record<SceneType, string> = {
-  combat: `
-【战斗场景协议】
-- 禁止使用"速度极快""力量惊人"等抽象描述，必须用具体感官细节
-- 每次攻击必须有身体反应（疼痛、震动、后退）
-- 战斗中必须穿插心理活动和环境变化
-- 禁止连续三句以上的纯动作描写
-- 伤害必须持续影响后续行为`,
-
-  dialogue: `
-【对话场景协议】
-- 每个角色必须有独特的语言风格（用词、句式、口头禅）
-- 对话必须推进剧情或揭示角色，禁止无意义寒暄
-- 每3-5句对话必须穿插动作/表情/环境描写
-- 禁止角色说教式独白超过3句
-- 潜台词优先：角色说的和想的应该不同`,
-
-  suspense: `
-【悬疑场景协议】
-- 信息不对称：读者知道≠角色知道≠叙述者全知
-- 每300字必须给一个线索或误导
-- 禁止用旁白直接揭示答案
-- 必须使用伏笔和暗示而非直接陈述
-- 场景转换时保留一个未解答的悬念`,
-
-  daily: `
-【日常场景协议】
-- 日常中必须有微妙冲突或张力
-- 禁止纯描述性的环境介绍，必须通过角色感知
-- 每段至少一个角色化的细节（动作/习惯/偏好）
-- 日常对话必须暗示更大的故事背景
-- 禁止连续两段没有角色互动`,
-
-  romance: `
-【感情场景协议】
-- 禁止直接说"心跳加速""脸红"，改用行为暗示
-- 情感推进必须有触发事件，不可无因升温
-- 角色间必须有情感博弈（试探/误解/退缩/靠近）
-- 禁止完美的表白场景，必须有不完美之处
-- 身体接触必须有前因后果，不可突兀`,
-
-  exploration: `
-【探索场景协议】
-- 环境描写必须通过角色五感，不可全知视角描述
-- 每发现一个新事物必须触发角色反应
-- 探索中必须埋设至少一个伏笔
-- 禁止百科式世界观灌输
-- 危险必须逐步升级，不可一步到位`,
+  combat: '【动作场景】让空间、行动意图、能力限制与身体代价清楚，后果延续到后文。',
+  dialogue: '【对话场景】人物因立场、所知信息与当下目的而说话，避免人人同一腔调或替作者说明。',
+  suspense: '【悬疑场景】线索有来源，推论有边界，人物发现信息需要行动和代价；不强制反转与线索配额。',
+  daily: '【日常场景】选择能呈现关系、处境或人物变化的生活细节，允许停顿和安静，不为制造张力强加争执。',
+  romance: '【情感场景】关系变化有具体经历和双方选择支撑，避免套路肢体反应和反复误会拖延。',
+  exploration: '【探索场景】发现与人物目的关联，信息随行动展开；环境细节服从实际可知范围。',
 };
 
 // Base Anti-AI Directives (shared across all scenes)
 
-const BASE_ANTI_AI_DIRECTIVES = `
-【写作协议 P1-P5】
-P1 信息密度：每段必须有动作/对话/发现/推进，禁止空洞描写。
-P2 感官优先：展示而非告知。用五感描写代替形容词堆砌。
-P3 角色分化：不同角色的用词、句式、口头禅必须不同。
-P4 节奏结构：长短句交替，对话与描写穿插，避免连续三段相同句式。
-P5 叙事连续：严格遵守已知事实，不得矛盾或遗忘前文设定。`;
+const BASE_ANTI_AI_DIRECTIVES = NOVEL_WRITING_PRINCIPLES;
 
 /**
  * Build Layer 2 protocol string for a given scene type.
@@ -340,7 +295,7 @@ ${vars.foreshadowingContext ?? ''}
 
 规划原则：
 - 每章必须有至少一个核心冲突或转折
-- 章节结尾必须留有悬念或情感钩子
+- 结尾体现本章实际改变的处境或关系，悬念应来自已有事件
 - 不能连续两章没有实质性推进
 - 角色行动必须有动机，不能为了推进剧情而OOC
 - 伏笔和债务需要逐步解决
@@ -348,7 +303,7 @@ ${vars.foreshadowingContext ?? ''}
 请输出JSON格式：
 {
   "title": "章节标题（有吸引力，不用"第X章"格式）",
-  "direction": "本章发展方向和核心冲突（**至少400字**，必须含：(1)冲突双方及动机 (2)2-3个具体场景片段（地点+在场角色+发生什么） (3)1-2段关键对话的梗概（角色说什么、潜台词是什么） (4)明确的转折点或揭示 (5)情绪走向 (6)结尾钩子）",
+  "direction": "本章发展方向：人物想要什么、遇到什么阻力、因此采取什么行动、付出什么代价，本章结束时处境如何改变；场景按因果连接，不强制凑反转和对抗",
   "conflictCore": "一句话概括本章核心冲突",
   "endingHook": "结尾钩子描述",
   "target_word_count": 3000
@@ -379,8 +334,7 @@ const actBeatPlanning: PromptTemplate = {
 - 3-5个叙事节拍（beat），每个有明确目的
 - 节拍之间有因果关系，不是松散拼接
 - 情绪弧线有起伏（不能一直平或一直高）
-- 必须包含至少一个对话密集的节拍
-- 必须包含至少一个冲突/对抗节拍
+- 按人物目标与场景需要安排对话、行动、思考，不为凑类型硬塞对抗
 - 最后一个节拍制造悬念或给出情感落点
 
 小说：${vars.title}
@@ -441,18 +395,7 @@ const beatMagnify: PromptTemplate = {
 // Template 4: Beat Generation (CORE — single beat, PlotPilot storyteller approach)
 // ============================================================
 
-const CORE_WRITING_RULES = `
-【核心写法要求】
-1. 每句话至少完成两项：推进情节、揭示角色、制造张力、建构世界——做不到就删
-2. 不写情绪标签（"他很愤怒"），写身体反应（"他攥紧拳头"）
-3. 不写微表情（"嘴角勾起"），写完整姿态（"她退后一步，双臂抱胸"）
-4. 对话有潜台词——角色说的和想的不一样
-5. 环境通过角色五感展示，不是百科介绍
-6. 冲突硬碰硬化解，不靠巧合
-7. 每300字要有信息增量（新事实/新线索/新决定/新冲突）
-8. 高潮充分展开，过渡一笔带过
-9. 结尾用画面/动作/未完的话收束，不总结
-10. 连续三段相同句式 → 拆散重组`;
+const CORE_WRITING_RULES = NOVEL_WRITING_PRINCIPLES;
 
 const beatGeneration: PromptTemplate = {
   id: 'beat-generation',
@@ -468,11 +411,11 @@ const beatGeneration: PromptTemplate = {
     const sceneProtocol = buildSceneProtocol(sceneType);
 
     const beatSpecific = [
-      isFirst ? '\n【开篇指令】这是章节开头。必须在前50字内建立场景感，前100字内出现角色或事件。禁止介绍背景。' : '',
+      isFirst ? '\n【开篇指令】这是章节开头。承接上章的最终处境，用当前行动或关系进入场景，必要背景简明交代。' : '',
       isLast ? '\n【结尾指令】这是章节最后一段。必须收束当前情绪，要么制造悬念，要么给出情感落点。禁止开放式结尾后继续展开。禁止总结。' : '',
     ].join('');
 
-    return `你是一个坐在老街冷茶馆里的说书人，不是AI助手。你的任务是讲一个让人放不下的故事。
+    return `你是一位小说作者。按照本书题材、人物和既有情节续写当前场景，保留作者已经形成的声音。
 
 ${CORE_WRITING_RULES}
 
@@ -490,14 +433,14 @@ ${vars.context ?? ''}
 描述：${vars.beatDescription}
 聚焦：${vars.beatFocus}
 目标字数：${vars.targetWords}字
-感官轮换：${vars.sensoryHint ?? getSensoryHint(Number(vars.beatIndex ?? 0))}
+细节应由当前人物的注意与场景需要决定，不按节拍轮换感官。
 
 ${vars.conductorSignal ?? ''}${beatSpecific}
 
 ━━ 讲吧 ━━
-• 每段至少包含：具体动作、有信息量的对话、发现/决定、空间位移——四选一
+• 叙述、对话、心理和停顿按场景需要安排，不逐段套固定结构
 • 冲突场景多写，过渡一笔带过
-• 结尾留一根刺，不要收干净
+• 非最后节拍继续当前场景，不要逐段制造悬念或总结
 • 如果上一段角色处于某种状态，下一段必须接住
 • 字数 ${vars.targetWords} 字左右`;
   },
@@ -624,8 +567,8 @@ const worldbuilding: PromptTemplate = {
 
 要求：
 - 世界观必须与小说类型（${vars.genre}）和风格（${vars.style}）匹配
-- 每个维度至少 3 个具体设定项
-- 设定之间要有关联和约束关系
+- 只设计与本书核心事件相关的必要设定；现实题材不得添加超自然法则
+- 设定之间要有关联和约束关系；原始简介中的限制与唯一道具不得被推演设定改变
 - 使用中文描述
 
 输出严格 JSON 格式：

@@ -55,7 +55,8 @@ export class ChapterContinuityLedger {
     const entries = this.loadEntries();
 
     // Build handoffs from previous entry's promises
-    const prevEntry = entries.length > 0 ? entries[entries.length - 1] : null;
+    const earlier = entries.filter(e => e.chapterIndex < chapterIndex).sort((a, b) => a.chapterIndex - b.chapterIndex);
+    const prevEntry = earlier[earlier.length - 1] ?? null;
     const handoffs = prevEntry?.promises ?? [];
 
     const entry: ContinuityEntry = {
@@ -90,7 +91,8 @@ export class ChapterContinuityLedger {
     if (entries.length === 0) return null;
 
     // Get the most recent entries (up to 3)
-    const recent = entries.slice(-3);
+    const recent = entries.filter(e => e.chapterIndex < nextChapterIndex).sort((a, b) => a.chapterIndex - b.chapterIndex).slice(-3);
+    if (!recent.length) return null;
     const latest = recent[recent.length - 1];
 
     // Collect all unresolved threads from recent entries

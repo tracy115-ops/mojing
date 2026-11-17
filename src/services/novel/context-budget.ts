@@ -237,7 +237,7 @@ export class ContextBudgetAllocator {
       phase === 'convergence' || phase === 'finale'
         ? `禁止开新坑。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。收敛等级: ${(rules.convergenceLevel * 100).toFixed(0)}%。`
         : `允许铺陈新支线和新角色。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。`,
-      rules.dailyLifeAllowed ? '允许日常描写。' : '禁止日常描写，保持叙事推进。',
+      '场景取舍依据人物选择与故事后果；安静场景和日常描写也可以承载关系变化，不按阶段一律禁止。',
     ].join('\n');
 
     this.registerSlot({
@@ -380,6 +380,7 @@ export class ContextBudgetAllocator {
       }));
 
     const t0Tokens = t0Allocated.reduce((s, slot) => s + this.estimateTokens(slot.content), 0);
+    if (t0Tokens > this.totalBudget) throw new Error('必要叙事上下文超过当前预算，已停止生成以避免丢失事实与接续正文。');
     let remainingBudget = this.totalBudget - t0Tokens;
 
     // Step 2: Sort compressible slots by priority (descending)
@@ -460,7 +461,7 @@ export class ContextBudgetAllocator {
       currentPhase === 'convergence' || currentPhase === 'finale'
         ? `⚠️ 禁止开新坑。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。收敛等级: ${(rules.convergenceLevel * 100).toFixed(0)}%。`
         : `✅ 允许铺陈新支线和新角色。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。`,
-      rules.dailyLifeAllowed ? '✅ 允许日常描写。' : '⚠️ 禁止日常描写，保持叙事推进。',
+      '场景取舍依据人物选择与故事后果；安静场景和日常描写也可以承载关系变化，不按阶段一律禁止。',
     ].join('\n');
   }
 

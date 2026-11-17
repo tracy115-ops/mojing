@@ -3,7 +3,7 @@
 // ============================================================================
 
 import React, { useMemo, useState } from 'react';
-import { Typography, Card, Space, Empty, Button, Progress } from 'antd';
+import { Typography, Card, Space, Empty, Button, Progress, message } from 'antd';
 import {
   AuditOutlined, CheckCircleOutlined, WarningOutlined,
 } from '@ant-design/icons';
@@ -12,6 +12,7 @@ import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chap
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';
+import { getNovelChapters } from '@/services/novel/writing-context';
 
 const { Text } = Typography;
 
@@ -25,6 +26,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   plot_coherence: 'readerDim.plotCoherence',
   foreshadowing_usage: 'readerDim.foreshadowUsage',
   voice_quality: 'readerDim.voiceQuality',
+  premise_fidelity: 'novel.editor.dim.premise_fidelity',
 };
 
 const ChapterReviewPanel: React.FC<ChapterReviewPanelProps> = ({ novelId }) => {
@@ -38,19 +40,23 @@ const ChapterReviewPanel: React.FC<ChapterReviewPanelProps> = ({ novelId }) => {
   // Get real chapter content from project store
   const project = useProjectStore((s) => s.projects.find((p) => p.id === novelId));
   const novelMeta = project?.metadata as NovelMetadata | undefined;
-  const chapters = novelMeta?.chapters ?? [];
+  const chapters = useMemo(() => novelMeta ? getNovelChapters(novelMeta) : [], [novelMeta]);
   const contentChapters = useMemo(() => chapters.filter((c) => c.content && c.content.length > 50), [chapters]);
 
   const handleReview = async () => {
     if (contentChapters.length === 0) return;
     setLoading(true);
     const lastChapter = contentChapters[contentChapters.length - 1];
-    const report = await reviewer.reviewChapter(lastChapter.order, lastChapter.content);
-    if (report) {
+    try {
+      if (!project || !novelMeta) return;
+      const report = await reviewer.reviewChapter(lastChapter.order, lastChapter.content, {
+        source: { title: project.title, description: project.description, genre: novelMeta.genre, style: novelMeta.style, language: novelMeta.language },
+        chapters, outline: lastChapter.outline,
+      });
       setLatestReview(report);
       setHistory(reviewer.loadHistory());
-    }
-    setLoading(false);
+    } catch (error) { message.error(t('novel.editor.reviewFailed') + ': ' + String(error)); }
+    finally { setLoading(false); }
   };
 
   const scoreColor = (score: number) => {
@@ -75,6 +81,7 @@ const ChapterReviewPanel: React.FC<ChapterReviewPanelProps> = ({ novelId }) => {
       </div>
 
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        <p><Text type="secondary">{t('novel.editor.reviewLimit')}</Text></p>
         {!latestReview ? (
           <Empty description={t('chapterReview.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
         ) : (

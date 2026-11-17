@@ -86,7 +86,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(120_000),
+      signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
     });
 
     if (!response.ok) {
@@ -105,7 +105,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           method: 'POST',
           headers: this.getHeaders(),
           body: JSON.stringify(body),
-          signal: this.timeoutSignal(120_000),
+          signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
         });
       }
 
@@ -145,7 +145,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(120_000),
+      signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
     });
 
     if (!response.ok) {

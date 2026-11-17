@@ -58,5 +58,13 @@ try {
   cancelled = false;
   for await (const chunk of provider.stream(request)) { assert.equal(chunk.delta, 'First paragraph.'); break; }
   assert.equal(cancelled, true, 'stopping consumption releases the network reader');
+  const timeouts = [];
+  provider.timeoutSignal = ms => { timeouts.push(ms); return undefined; };
+  source = JSON.stringify({choices:[{message:{content:'{"summary":"Review finished."}'},finish_reason:'stop'}]});
+  await provider.generate({...request,thinking:true,maxTokens:16384});
+  assert.deepEqual(requests.at(-1).thinking,{type:'enabled'});
+  assert.equal(timeouts.at(-1),360000,'reasoning editorial requests can outlast the former two-minute deadline');
+  await provider.generate({...request,thinking:false});
+  assert.equal(timeouts.at(-1),120000);
   console.log('LLM streaming passed: fragmented UTF-8 SSE, JSON mode, bounded DeepSeek writing, truncation, empty output, interrupted EOF, provider errors and reader cancellation.');
 } finally { globalThis.fetch = originalFetch; }

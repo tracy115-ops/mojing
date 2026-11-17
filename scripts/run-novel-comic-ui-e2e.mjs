@@ -10,6 +10,7 @@ const url = process.env.MOJING_SMOKE_URL || 'http://127.0.0.1:1420/';
 const origin = new URL(url).origin;
 const app = await chromeSession({ url, port: 9256 });
 const requests = [], external = [], blockedProbes = [];
+const novelProse = '雨水敲着车窗。' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '林岚从黄色帆布包中取出旧票，走向车载摄像头。';
 const colors = ['#d93434', '#32b34d', '#3355d4', '#d4a834'];
 const tiles = await Promise.all(colors.map(background => sharp({ create: { width: 360, height: 640, channels: 3, background } }).png().toBuffer()));
 const panels = colors.map((_, i) => ({ description: `Panel marker ${i}: Lin Lan inspects the yellow bag on the bus.`, dialogue: i === 3 ? '车票上的日期，是明天。' : '', characterIds: ['char_0'], shotType: i === 0 ? 'wide' : 'medium' }));
@@ -39,9 +40,19 @@ app.onEvent(event => {
       result = JSON.stringify({ data: [{ b64_json: tiles[index].toString('base64') }] });
     } else if (body.messages[0].content.includes('漫画分镜师')) {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ characters: [{ id: 'char_0', name: '林岚', appearance: '30-year-old woman, black bob, dark blue bus uniform.' }], panels }) }, finish_reason: 'stop' }] });
+    } else if (system.includes('你是小说策划编辑')) {
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ready:true,outline:'经审读：林岚收车发现黄色帆布包，核对旧票并登记失物；调查来自可验证的来源。',changes:['Remove unsupported planning details.'],unresolvedIssues:[]}) },finish_reason:'stop' }] });
+    } else if (system.includes('认真通读作品的小说编辑')) {
+      const assessment = { dimensions: ['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name => ({ name, score: 80 })), summary: 'Fixture editorial response, not a live quality judgment.', findings: [], continuityNotes: [{ fact: '林岚取票走向摄像头。', quote: '林岚从黄色帆布包中取出旧票，走向车载摄像头。' }] };
+      if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'critical',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved hard problem.',suggestion:'Fixture correction direction.' });
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) }, finish_reason: 'stop' }] });
+    } else if (system.includes('叙事节拍规划师')) {
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ beats: [0,1,2].map(i => ({ description:'Lin Lan checks the ticket, scene '+i, targetWords:1000,focus:'dialogue',sceneGoal:'Track the ticket owner.' })) }) },finish_reason:'stop' }] });
+    } else if (system.includes('小说责任编辑')) {
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits: [{ before: '雨水敲着车窗。', after: '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }, {before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'}] }) }, finish_reason: 'stop' }] });
     } else if (body.stream) {
       type = 'text/event-stream';
-      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : '雨水敲着车窗。林岚从黄色帆布包中取出旧票，走向车载摄像头。' }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
+      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
     } else {
       result = JSON.stringify({ choices: [{ message: { content: '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
     }
@@ -53,7 +64,7 @@ const choose = async (selector, label) => {
   const point = await app.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
   await app.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await app.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
-  const option = `(()=>{const input=document.querySelector(${JSON.stringify(selector)}),popup=document.getElementById(input.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');if(!popup||popup.classList.contains('ant-select-dropdown-hidden'))return;return[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)});})()`;
+  const option = `(()=>{const input=document.querySelector(${JSON.stringify(selector)});if(!input)return;const popup=document.getElementById(input.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');if(!popup||popup.classList.contains('ant-select-dropdown-hidden'))return;return[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)});})()`;
   await app.waitFor(`!!(${option})`, 'option '+label); await app.evaluate(`(${option}).click()`);
 };
 const novelExpr = "JSON.parse(localStorage.getItem('mojing-projects')).state.projects[0]";
@@ -100,14 +111,55 @@ try {
   await app.waitFor('document.body.innerText.includes("悬疑反转")', 'project genre inherited');
   await app.textButton('生成');
   await app.waitFor(`${novelExpr}.metadata.storyNodes[0].content.length>20`, 'generated prose');
-  const writing = requests.filter(r => /大纲规划师|大神级网络小说作家/.test(r.body.messages?.[0]?.content || ''));
+  await app.waitFor(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':chapter-reviews') || '[]').length===1`, 'automatic editorial review');
+  const writing = requests.filter(r => /大纲规划师|你是一位小说作者/.test(r.body.messages?.[0]?.content || ''));
   assert.equal(writing.length, 2);
+  assert.equal(requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说策划编辑')).length,1,'review a new plan once and reuse it while context is unchanged');
+  assert.ok(writing[1].body.messages[1].content.includes('经审读：'),'write from the reviewed plan rather than the unexamined planning response');
   for (const { body } of writing) {
     assert.match(body.messages[0].content, /林岚，30岁女公交司机/);
     assert.match(body.messages[0].content, /线索必须可以验证/);
     assert.deepEqual(body.thinking, { type: 'disabled' });
   }
   await app.screenshot('novel-context.png');
+  assert.ok(novelProse.length > 4000);
+  await app.waitFor(`[...document.querySelectorAll('button')].some(b=>b.textContent==='润色'&&!b.disabled)`, 'editor ready after review');
+  await app.textButton('润色');
+  await app.waitFor('!!document.querySelector(".ant-modal-confirm")', 'editorial edit preview');
+  assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`), novelProse, 'proposals do not replace the chapter before adoption');
+  await app.evaluate(`document.querySelectorAll('.ant-modal-confirm input[type="checkbox"]')[1].click()`);
+  await app.textButton('采用修订并重新审稿', '.ant-modal-confirm');
+  const revisedProse = '雨点敲着车顶。' + novelProse.slice('雨水敲着车窗。'.length);
+  await app.waitFor(`${novelExpr}.metadata.storyNodes[0].content.startsWith('雨点敲着车顶。')`, 'adopt exact edit');
+  assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`), revisedProse, 'retain every unedited character and the ending of a long chapter');
+  await app.waitFor(`document.body.innerText.includes('已审读，待作者确认')`, 'review actual revised text');
+  const editorialRequests = requests.filter(r => /认真通读作品的小说编辑|小说责任编辑/.test(r.body.messages?.[0]?.content || ''));
+  assert.equal(editorialRequests.length, 3);
+  for (const request of editorialRequests) {
+    assert.ok(request.body.messages[1].content.includes('走向车载摄像头。'), 'review and revision requests contain the complete ending');
+    assert.deepEqual(request.body.response_format, { type: 'json_object' });
+    assert.deepEqual(request.body.thinking, { type: 'enabled' }, 'editorial comparison and revision use reasoning mode');
+    assert.ok(request.body.max_tokens >= 12000, 'leave room for both reasoning and the complete editorial response');
+  }
+  await app.screenshot('novel-editorial-review.png');
+  const autoStart = requests.length;
+  const autoContract = await app.evaluate(`(async()=>{
+    const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+    const chapters=[{id:'auto-0',order:0,title:'Contract',outline:'林岚调查旧票。',content:'',status:'planned',wordCount:0}];
+    const engine=new AutopilotEngine({novelId:'editorial-contract',title:'AutopilotQualityContract',description:'现实世界，禁止超自然。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:(id,updates)=>Object.assign(chapters[0],updates),onAddChapter:()=>chapters[0].id,onAddVolume:()=>'',onUpdateMetadata:()=>{}});
+    engine.state.status='running';
+    const content=await engine.doChapterGeneration(0,chapters[0].outline,chapters[0].id);
+    await engine.doChapterReview(0,content,chapters[0].id);
+    await engine.doQualityGateRewrite(0,content,chapters[0].id);
+    return {content,status:engine.state.status,chapterStatus:chapters[0].status};
+  })()`);
+  assert.equal(autoContract.content, [novelProse,novelProse,novelProse].join('\n\n'), 'automatic writing preserves complete beats beyond target word counts');
+  const beatRequests = requests.slice(autoStart).filter(r => r.body.stream);
+  assert.equal(beatRequests.length,3);
+  assert.ok(beatRequests[1].body.messages[0].content.includes(novelProse), 'second beat receives the complete first beat');
+  assert.ok(beatRequests[2].body.messages[0].content.includes([novelProse,novelProse].join('\n\n')), 'third beat receives all text already written in the chapter');
+  assert.equal(autoContract.status,'paused','an unresolved critical issue must pause automatic writing');
+  assert.equal(autoContract.chapterStatus,'revising','failed review/revision must never mark the chapter complete');
   await app.click('button[aria-label="漫画工坊"]');
   await app.waitFor('[...document.querySelectorAll("button")].some(e=>e.textContent==="新建漫画")', 'comic page');
   await app.textButton('新建漫画');

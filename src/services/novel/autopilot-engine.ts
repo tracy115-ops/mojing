@@ -26,16 +26,17 @@ import { ChapterContinuityLedger } from './chapter-continuity-ledger';
 import { ChapterSummarizer } from './chapter-summarizer';
 import { AutoBibleGenerator } from './auto-bible-generator';
 import { ConflictDetector } from './conflict-detector';
-import { QualityGateService } from './quality-gate';
+import { ChapterReviewer, type ChapterReviewContext } from './chapter-reviewer';
+import { applyEditorialEdits } from './editorial-review';
+import { textFingerprint } from './writing-context';
 import {
   magnifyOutlineToBeats,
   getConductorSignal,
   adjustBeatTargetWords,
   WORDS_PER_CHAPTER_TARGET,
 } from './chapter-conductor';
-import { smartTruncate, buildSoftLandingPrompt } from './smart-truncation';
 import { runMiddlewareChain } from './beat-middleware';
-import { getTemplate, getSensoryHint } from './prompt-templates';
+import { getTemplate } from './prompt-templates';
 
 export type AutopilotEventType =
   | 'stage_change'
@@ -61,6 +62,8 @@ interface AutopilotConfig {
   title: string;
   genre: string;
   style: string;
+  description?: string;
+  language?: string;
   targetChapterCount: number;
   targetWordCount: number;
   existingChapters: NovelChapter[];
@@ -97,7 +100,7 @@ export class AutopilotEngine {
   private chapterSummarizer: ChapterSummarizer;
   private autoBibleGenerator: AutoBibleGenerator;
   private conflictDetector: ConflictDetector;
-  private qualityGate: QualityGateService;
+  private reviewer: ChapterReviewer;
   private repo: NarrativeRepository;
   private abortController: AbortController | null = null;
   private handlers: Set<AutopilotEventHandler> = new Set();
@@ -121,12 +124,12 @@ export class AutopilotEngine {
     this.chapterSummarizer = new ChapterSummarizer(config.novelId);
     this.autoBibleGenerator = new AutoBibleGenerator(config.novelId);
     this.conflictDetector = new ConflictDetector();
-    this.qualityGate = new QualityGateService(config.novelId);
+    this.reviewer = new ChapterReviewer(config.novelId);
     this.state = {
       novelId: config.novelId,
       status: 'idle',
       currentStage: 'idle',
-      currentChapterNumber: config.existingChapters.length,
+      currentChapterNumber: config.existingChapters.find(c => c.status !== 'complete')?.order ?? config.existingChapters.length,
       currentBeatIndex: 0,
       targetChapterCount: config.targetChapterCount,
       targetWordCount: config.targetWordCount,
@@ -256,6 +259,7 @@ export class AutopilotEngine {
 
       try {
         await this.generateChapter(ch);
+        if (!this.isRunning() || this.abortController?.signal.aborted) return;
         this.state.consecutiveFailures = 0;
         this.state.currentWordCount = this.config.getChapters().reduce(
           (s, c) => s + c.wordCount,
@@ -283,7 +287,9 @@ export class AutopilotEngine {
           const store = await import('@/stores/autopilotStore').then(m => m.useAutopilotStore.getState());
           store.setAutopilotState(this.state.novelId, { lastError: `第${ch + 1}章失败: ${this.state.lastError}` });
         } catch { /* store not available */ }
-        await this.delay(2000);
+        this.updateStatus('paused');
+        this.emit('status_change', { status: 'paused', reason: 'chapter_failed' });
+        return;
       }
     }
 
@@ -347,6 +353,7 @@ export class AutopilotEngine {
     // Stage 3: Chapter generation (beat loop)
     this.setStage('chapter_generation');
     let content = await this.doChapterGeneration(chapterIndex, outline, chapterId);
+    if (this.abortController?.signal.aborted) return;
 
     // Stage 4: Chapter review
     this.setStage('chapter_review');
@@ -354,6 +361,7 @@ export class AutopilotEngine {
 
     // Stage 5: Quality gate with targeted rewrite loop
     content = await this.doQualityGateRewrite(chapterIndex, content, chapterId);
+    if (this.state.status === 'paused' || this.abortController?.signal.aborted) return;
 
     // Post-chapter aftermath
     await this.doAftermath(chapterIndex, content, chapterId);
@@ -361,13 +369,27 @@ export class AutopilotEngine {
 
   // --- Stage implementations ---
 
+  private isRunning(): boolean { return this.state.status === 'running'; }
+
+  private reviewContext(chapterIndex: number): ChapterReviewContext {
+    const chapters = this.config.getChapters();
+    return { source: {
+      title: this.config.title, description: this.config.description || '', genre: this.config.genre,
+      style: this.config.style, language: this.config.language,
+    }, chapters, outline: chapters.find(c => c.order === chapterIndex)?.outline };
+  }
+
+  private readingContext(chapterIndex: number): string {
+    return this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex));
+  }
+
   private async doMacroPlanning(chapterIndex: number): Promise<{ title: string; direction: string }> {
     this.emit('stage_change', { stage: 'macro_planning', chapter: chapterIndex });
 
     const prevChapters = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-3)
-      .map((c) => `第${c.order + 1}章 ${c.title}: ${c.outline}`)
+        .map((c) => `第${c.order + 1}章 ${c.title}结尾原文: ${c.content.slice(-500)}`)
       .join('\n');
 
     const phaseDirective = this.storyPhase
@@ -398,7 +420,7 @@ export class AutopilotEngine {
     const template = getTemplate('macro-planning');
     const request: LLMGenerateRequest = {
       taskType: 'planning',
-      systemPrompt: template!.buildSystem({
+      systemPrompt: this.readingContext(chapterIndex) + '\n\n' + template!.buildSystem({
         title: this.config.title,
         genre: this.config.genre,
         style: this.config.style,
@@ -457,7 +479,7 @@ export class AutopilotEngine {
     const template = getTemplate('global-planning');
     const request: LLMGenerateRequest = {
       taskType: 'planning',
-      systemPrompt: template!.buildSystem({
+      systemPrompt: this.readingContext(0) + '\n\n' + template!.buildSystem({
         title: this.config.title,
         genre: this.config.genre,
         style: this.config.style,
@@ -620,7 +642,7 @@ export class AutopilotEngine {
     const template = getTemplate('act-beat-planning');
     const request: LLMGenerateRequest = {
       taskType: 'planning',
-      systemPrompt: template!.buildSystem({
+      systemPrompt: this.readingContext(chapterIndex) + '\n\n' + template!.buildSystem({
         title: this.config.title,
         genre: this.config.genre,
         style: this.config.style,
@@ -635,11 +657,12 @@ export class AutopilotEngine {
         chapterTitle: macroPlan.title,
       }),
       temperature: 0.8,
-      maxTokens: 1024,
+      maxTokens: 4096,
+      thinking: false,
     };
 
     const response = await providerRouter.generate(request);
-    return response.content;
+    return this.reviewer.prepareOutline(chapterIndex, response.content, this.reviewContext(chapterIndex));
   }
 
   // --- Beat-based Chapter Generation (core upgrade) ---
@@ -674,7 +697,7 @@ export class AutopilotEngine {
 
       // Build context for this beat
       this.budget = new ContextBudgetAllocator();
-      this.buildBeatContext(chapterIndex, outline, beat, signal);
+      this.buildBeatContext(chapterIndex, outline, beat, signal, chapterContent);
 
       const { prompt: contextPrompt } = this.budget.allocate();
 
@@ -693,7 +716,6 @@ export class AutopilotEngine {
         conductorSignal: signal.beatInstruction,
         beatIndex: String(beat.index),
         totalBeats: String(beats.length),
-        sensoryHint: getSensoryHint(beat.index),
       });
 
       let userPrompt = template.buildUser({
@@ -709,9 +731,8 @@ export class AutopilotEngine {
       }
 
       // Append soft landing hint if needed
-      const landingHint = buildSoftLandingPrompt(wordsUsed, WORDS_PER_CHAPTER_TARGET, chapterContent);
-      if (landingHint) {
-        userPrompt += `\n\n${landingHint}`;
+      if (signal.isFinalBeat && wordsUsed > WORDS_PER_CHAPTER_TARGET * 0.8) {
+        userPrompt += '\n\n篇幅已充分展开。请完成本章计划中的关键行动及其后果，简化重复描写和过渡，不要用突然中断替代应有的因果收束。';
       }
 
       const request: LLMGenerateRequest = {
@@ -719,7 +740,8 @@ export class AutopilotEngine {
         systemPrompt,
         userPrompt,
         temperature: 0.75,
-        maxTokens: Math.min(4096, Math.ceil(adjustedTarget * 1.5)),
+        maxTokens: Math.min(8192, Math.max(2048, Math.ceil(adjustedTarget * 2))),
+        thinking: false,
       };
 
       this.emit('beat_start', {
@@ -754,10 +776,7 @@ export class AutopilotEngine {
         }
       }
 
-      // Smart truncation if beat exceeded target
-      if (beatContent.length > adjustedTarget) {
-        beatContent = smartTruncate(beatContent, adjustedTarget);
-      }
+      if (this.abortController?.signal.aborted) return chapterContent + beatContent;
 
       // Run middleware chain
       const mwResult = runMiddlewareChain(beat, beatContent, signal, prevBeatContent);
@@ -774,7 +793,7 @@ export class AutopilotEngine {
         overspendDebt = Math.max(0, overspendDebt - (beat.targetWords - actualWords));
       }
 
-      chapterContent += beatContent;
+      chapterContent += (chapterContent ? '\n\n' : '') + beatContent;
       prevBeatContent = beatContent;
 
       this.emit('beat_complete', {
@@ -808,7 +827,7 @@ export class AutopilotEngine {
   /**
    * Build per-beat context budget with all registered slots.
    */
-  private buildBeatContext(chapterIndex: number, outline: string, beat: Beat, signal: { phase: string }): void {
+  private buildBeatContext(chapterIndex: number, outline: string, beat: Beat, signal: { phase: string }, currentChapterContent = ''): void {
     const factLockText = this.memory.buildFactLockText();
     const beatLockText = this.memory.buildBeatLockText();
     const clueLockText = this.memory.buildClueLockText();
@@ -824,6 +843,14 @@ export class AutopilotEngine {
       this.state.targetChapterCount,
     );
     this.budget.registerStoryAnchor(`小说: ${this.config.title} | 类型: ${this.config.genre} | 风格: ${this.config.style}`);
+    const readingContext = this.readingContext(chapterIndex);
+    this.budget.registerSlot({ name: 'EDITORIAL_CONTINUITY', tier: 'T0', content: readingContext,
+      estimatedTokens: this.estimateTokens(readingContext), priority: 140, minTokens: 0 });
+    if (currentChapterContent) {
+      const continuation = `【本章已写正文，接续末句，不要重写、复述或重新开场】\n${currentChapterContent}`;
+      this.budget.registerSlot({ name: 'CURRENT_CHAPTER_PROSE', tier: 'T0', content: continuation,
+        estimatedTokens: this.estimateTokens(continuation), priority: 139, minTokens: 0 });
+    }
     if (factLockText) this.budget.registerFactLock(factLockText);
     if (beatLockText) this.budget.registerBeatLock(beatLockText);
     if (clueLockText) this.budget.registerClueLock(clueLockText);
@@ -845,7 +872,7 @@ export class AutopilotEngine {
     const prevChapterSummary = this.config.getChapters()
       .filter((c) => c.order < chapterIndex && c.content)
       .slice(-1)
-      .map((c) => `第${c.order + 1}章 "${c.title}": ${c.outline || c.content.slice(0, 300)}`)
+      .map((c) => `第${c.order + 1}章 "${c.title}"结尾原文: ${c.content.slice(-500)}`)
       .join('\n');
     if (prevChapterSummary) this.budget.registerPreviouslyOn(prevChapterSummary);
 
@@ -855,7 +882,7 @@ export class AutopilotEngine {
       .slice(-5);
     if (recentChapters.length > 1) {
       const recapLines = recentChapters.map((c) =>
-        `第${c.order + 1}章 "${c.title}": ${c.outline || c.content.slice(0, 150)}`
+        `第${c.order + 1}章 "${c.title}"正文片段: ${c.content.slice(-300)}`
       );
       this.budget.registerMultiChapterRecap(`【近期剧情回顾（最近${recapLines.length}章）】\n${recapLines.join('\n')}`);
     }
@@ -970,187 +997,59 @@ export class AutopilotEngine {
       });
     }
 
-    // T0: Quality gate corrective directives (highest priority)
-    const qualityDirectives = this.qualityGate.getPendingDirectives();
-    if (qualityDirectives.length > 0) {
-      const directiveText = qualityDirectives.join('\n');
-      this.budget.registerSlot({
-        name: 'QUALITY_GATE_DIRECTIVES', tier: 'T0', content: directiveText,
-        estimatedTokens: this.estimateTokens(directiveText),
-        maxTokens: 800, minTokens: 100, priority: 50,
-      });
-      this.qualityGate.clearDirectives();
-    }
-  }
-
-  private async applyVoiceCorrection(content: string, chapterIndex: number, chapterId: string): Promise<string | null> {
-    try {
-      const fp = this.voiceFingerprint.getFingerprint();
-      if (!fp) return null;
-      const constraint = this.voiceFingerprint.buildStyleConstraint(fp);
-      if (constraint.directives.length === 0) return null;
-
-      const rewritePrompt = [
-        `请将以下文本重写，严格遵循原始文风。`,
-        `文风要求：${constraint.directives.join('；')}`,
-        constraint.bannedPatterns.length > 0 ? `绝对禁止：${constraint.bannedPatterns.join('、')}` : '',
-        `参考指标 — 平均句长:${fp.features.avgSentenceLength}字 对话占比:${(fp.features.dialogueRatio * 100).toFixed(0)}% 情感基调:${fp.features.emotionalTone}`,
-        `只输出重写后的文本，不要任何解释。保持剧情和角色完全不变，只调整文风。`,
-      ].filter(Boolean).join('\n');
-
-      const request: LLMGenerateRequest = {
-        taskType: 'rewrite',
-        systemPrompt: rewritePrompt,
-        userPrompt: content,
-        temperature: 0.5,
-        maxTokens: content.length + 500,
-      };
-
-      const response = await providerRouter.generate(request);
-      const corrected = response.content.trim();
-      if (corrected.length > content.length * 0.7) {
-        this.config.onUpdateChapter(chapterId, {
-          content: corrected,
-          wordCount: corrected.length,
-          status: 'drafting',
-        });
-        return corrected;
-      }
-    } catch (err) {
-      console.warn('AutopilotEngine: voice correction failed', err);
-    }
-    return null;
   }
 
   private estimateTokens(text: string): number {
-    return Math.ceil(text.length / 3);
+    const chinese = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+    return Math.ceil(chinese * 1.5 + (text.length - chinese) * 0.3);
   }
 
   private async doChapterReview(chapterIndex: number, content: string, chapterId: string): Promise<void> {
     this.emit('stage_change', { stage: 'chapter_review', chapter: chapterIndex });
-
-    const factLockText = this.memory.buildFactLockText();
-    const beatLockText = this.memory.buildBeatLockText();
-
-    const template = getTemplate('chapter-review')!;
-    const request: LLMGenerateRequest = {
-      taskType: 'review',
-      systemPrompt: template.buildSystem({ factLock: factLockText, beatLock: beatLockText }),
-      userPrompt: content,
-      responseFormat: 'json',
-      temperature: 0.3,
-      maxTokens: 1024,
-    };
-
-    try {
-      const response = await providerRouter.generate(request);
-      const review = parseLLMJson<{ pass?: boolean; overall?: number }>(response.content);
-      if (!review) throw new Error('review parse failed');
-      const passed = review.pass !== false && (review.overall ?? 0) >= 6;
-
-      this.config.onUpdateChapter(chapterId, {
-        status: passed ? 'complete' : 'revising',
-      });
-
-      this.emit('review_complete', {
-        chapter: chapterIndex,
-        chapterId,
-        review,
-        passed,
-      });
-    } catch {
-      this.config.onUpdateChapter(chapterId, { status: 'complete' });
-    }
+    this.config.onUpdateChapter(chapterId, { status: 'revising' });
+    const review = await this.reviewer.reviewChapter(chapterIndex, content, this.reviewContext(chapterIndex));
+    this.emit('review_complete', { chapter: chapterIndex, chapterId, review, passed: review.status === 'reviewed' });
   }
 
-  /**
-   * Quality gate with targeted rewrite loop (PlotPilot-style 定向修写).
-   * Runs after chapter review. If quality issues are detected,
-   * triggers an immediate targeted rewrite of the current chapter
-   * before proceeding to aftermath.
-   */
-  private async doQualityGateRewrite(
-    chapterIndex: number,
-    content: string,
-    chapterId: string,
-  ): Promise<string> {
-    const chapterNumber = chapterIndex + 1;
-    let currentContent = content;
-
+  private async doQualityGateRewrite(chapterIndex: number, content: string, chapterId: string): Promise<string> {
+    let current = content;
     try {
-      this.emit('stage_change', { stage: 'chapter_review', chapter: chapterIndex, substage: 'quality_gate' });
-
-      const rewriteResult = await this.qualityGate.evaluateAndRewrite(
-        chapterNumber,
-        content,
-        (attempt, score, rewritten) => {
-          this.emit('chapter_progress', {
-            chapter: chapterIndex,
-            chapterId,
-            qualityGateRewrite: { attempt, score, rewritten },
-          });
-        },
-      );
-
-      if (rewriteResult.improved) {
-        currentContent = rewriteResult.rewrittenContent;
-
-        // Update chapter with rewritten content
-        this.config.onUpdateChapter(chapterId, {
-          content: currentContent,
-          wordCount: currentContent.length,
-          status: 'complete',
-        });
-
-        this.config.onUpdateStoryNode?.(chapterId, {
-          status: 'complete',
-        });
-
-        this.emit('chapter_progress', {
-          chapter: chapterIndex,
-          chapterId,
-          wordCount: currentContent.length,
-          rewritten: true,
-          rewriteAttempts: rewriteResult.attempts,
-          qualityScore: rewriteResult.finalScore,
-        });
+      let review = this.reviewer.loadHistory().find(r => r.chapter === chapterIndex && r.contentFingerprint === textFingerprint(current));
+      if (!review) review = await this.reviewer.reviewChapter(chapterIndex, current, this.reviewContext(chapterIndex));
+      if (review.status === 'needs-revision' && review.findings.length) {
+        const edits = await this.reviewer.proposeRevision(chapterIndex, current, this.reviewContext(chapterIndex), 'review', review);
+        if (edits.length) {
+          const candidate = applyEditorialEdits(current, edits);
+          const after = await this.reviewer.reviewChapter(chapterIndex, candidate, this.reviewContext(chapterIndex));
+          const critical = (r: typeof review) => r!.findings.filter(f => f.severity === 'critical').length;
+          const major = (r: typeof review) => r!.findings.filter(f => f.severity !== 'minor').length;
+          if (critical(after) <= critical(review) && (after.status === 'reviewed' || major(after) < major(review))) {
+            this.repo.saveCustomData('chapter-revision:' + chapterId, { before: current, afterFingerprint: textFingerprint(candidate), timestamp: new Date().toISOString() });
+            current = candidate;
+            review = after;
+            this.config.onUpdateChapter(chapterId, { content: current, wordCount: current.length, status: 'revising' });
+          } else {
+            this.reviewer.saveReview(review);
+          }
+        }
       }
-
-      // Exhausted retries but still below threshold → pause engine for human intervention
-      if (rewriteResult.needsHumanIntervention) {
-        this.config.onUpdateChapter(chapterId, {
-          content: currentContent,
-          wordCount: currentContent.length,
-          status: 'revising',
-        });
-
-        this.config.onUpdateStoryNode?.(chapterId, {
-          status: 'revising',
-        });
-
+      const passed = review.status === 'reviewed';
+      this.config.onUpdateChapter(chapterId, { status: passed ? 'complete' : 'revising' });
+      this.config.onUpdateStoryNode?.(chapterId, { status: passed ? 'complete' : 'revising' });
+      this.emit('review_complete', { chapter: chapterIndex, chapterId, review, passed });
+      if (!passed) {
         this.updateStatus('paused');
-        this.emit('status_change', { status: 'paused' });
-        this.emit('error', {
-          error: `质量门: 第${chapterNumber}章经${rewriteResult.attempts}次定向修写仍不达标(${rewriteResult.finalScore}/100)，引擎已暂停，请人工审核`,
-          qualityGateHumanIntervention: true,
-          chapterNumber,
-          finalScore: rewriteResult.finalScore,
-          unresolvedIssues: rewriteResult.unresolvedIssues,
-          rewrittenContent: currentContent,
-        });
-
-        return currentContent;
+        this.emit('status_change', { status: 'paused', reason: 'editorial_review' });
+        this.emit('error', { error: '第' + (chapterIndex + 1) + '章仍有影响阅读的问题，已保留草稿并暂停，等待审读。', unresolvedIssues: review.findings, qualityGateHumanIntervention: true });
       }
-
-      if (!rewriteResult.improved) {
-        this.config.onUpdateChapter(chapterId, { status: 'complete' });
-      }
-    } catch (err) {
-      console.warn('AutopilotEngine: quality gate rewrite failed, using original content', err);
-      this.config.onUpdateChapter(chapterId, { status: 'complete' });
+    } catch (error) {
+      this.config.onUpdateChapter(chapterId, { status: 'revising' });
+      this.config.onUpdateStoryNode?.(chapterId, { status: 'revising' });
+      this.updateStatus('paused');
+      this.emit('status_change', { status: 'paused', reason: 'review_failed' });
+      this.emit('error', { error: '审稿或修订未完成，草稿已保留：' + String(error), qualityGateHumanIntervention: true });
     }
-
-    return currentContent;
+    return current;
   }
 
   private async doAftermath(chapterIndex: number, content: string, chapterId: string): Promise<void> {
@@ -1321,17 +1220,7 @@ export class AutopilotEngine {
     try {
       const driftReport = await this.voiceFingerprint.detectDrift(content, chapterNumber);
       this.voiceFingerprint.saveDriftReport(driftReport);
-      if (driftReport.driftDetected && driftReport.similarity < 0.5) {
-        // Severe drift — trigger voice-corrected rewrite
-        this.emit('error', {
-          error: `文风严重漂移(相似度${(driftReport.similarity * 100).toFixed(0)}%)，正在修正...`,
-          voiceDrift: driftReport,
-        });
-        const corrected = await this.applyVoiceCorrection(content, chapterIndex, chapterId);
-        if (corrected) {
-          content = corrected;
-        }
-      } else if (driftReport.driftDetected) {
+      if (driftReport.driftDetected) {
         this.emit('error', {
           error: `文风漂移警告(相似度${(driftReport.similarity * 100).toFixed(0)}%): ${driftReport.suggestedFix ?? '建议检查文风一致性'}`,
           voiceDrift: driftReport,

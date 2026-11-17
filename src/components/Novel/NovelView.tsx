@@ -22,6 +22,7 @@ import { useProviderStore } from '@/stores/providerStore';
 import { AutopilotEngine } from '@/services/novel/autopilot-engine';
 import type { AutopilotEvent } from '@/services/novel/autopilot-engine';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { getNovelChapters } from '@/services/novel/writing-context';
 import { StoryTreeService, type StoryTreeNode } from '@/services/novel/story-tree';
 import type { NovelChapter, NovelMetadata } from '@/types';
 import type { StoryNode, StoryNodeType } from '@/types/narrative';
@@ -714,9 +715,11 @@ const NovelView: React.FC = () => {
       title: activeProject.title,
       genre: meta.genre,
       style: meta.style,
+      description: activeProject.description,
+      language: meta.language,
       targetChapterCount,
       targetWordCount: meta.targetWordCount,
-      existingChapters: meta.chapters,
+      existingChapters: getNovelChapters(meta),
       onUpdateChapter: (chapterId, updates) => {
         useProjectStore.getState().updateChapter(activeProjectId, chapterId, updates);
         // Keep StoryNode in sync
@@ -749,7 +752,7 @@ const NovelView: React.FC = () => {
       getChapters: () => {
         const proj = useProjectStore.getState().projects.find((p) => p.id === activeProjectId);
         if (proj?.type === 'novel') {
-          return (proj.metadata as NovelMetadata).chapters;
+          return getNovelChapters(proj.metadata as NovelMetadata);
         }
         return [];
       },

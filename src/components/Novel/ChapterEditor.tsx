@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select } from 'antd';
+import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select, Checkbox, Tag } from 'antd';
 import {
   ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined,
-  ZoomInOutlined, ZoomOutOutlined, LineChartOutlined, ExperimentOutlined,
+  ZoomInOutlined, ZoomOutOutlined, ExperimentOutlined,
   ReloadOutlined, ExpandOutlined, FormatPainterOutlined,
   FileSearchOutlined,
 } from '@ant-design/icons';
@@ -10,6 +10,9 @@ import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chapter-reviewer';
+import { buildWritingContext, NOVEL_WRITING_PRINCIPLES, textFingerprint } from '@/services/novel/writing-context';
+import { applyEditorialEdits } from '@/services/novel/editorial-review';
 import type { NovelChapter, NovelMetadata, CreativeProject } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 
@@ -41,7 +44,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [outlineDraft, setOutlineDraft] = useState(chapter.outline);
   const [contentDraft, setContentDraft] = useState(chapter.content);
   const [fontSize, setFontSize] = useState(loadFontSize);
-  const [tensionScore, setTensionScore] = useState<number | null>(null);
+  const [reviewer] = useState(() => new ChapterReviewer(novel.id));
+  const [review, setReview] = useState<ChapterReviewReport | null>(() => reviewer.loadHistory().find(r => r.chapter === chapter.order) ?? null);
+  const [autoReview, setAutoReview] = useState(true);
   const [showOutlineRef, setShowOutlineRef] = useState(true);
   const [editingRef, setEditingRef] = useState(false);
   const [refText, setRefText] = useState(chapter.outline ?? '');
@@ -49,24 +54,26 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     fantasy: 'xuanhuan', scifi: 'scifi', romance: 'urban_romance', mystery: 'suspense', literary: 'literary', wuxia: 'wuxia',
   }[metadata.genre] ?? metadata.genre ?? 'literary'));
   const [novelPOV, setNovelPOV] = useState<string>('third_person');
-  const [novelPacing, setNovelPacing] = useState<string>('standard');
   const abortRef = useRef<AbortController | null>(null);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSave = useRef<{ updates: Partial<NovelChapter>; save: typeof onUpdate } | null>(null);
   const endpoints = useProviderStore((s) => s.endpoints);
+  const contentRef = useRef(contentDraft);
+  contentRef.current = contentDraft;
 
-  const hasEndpoint = endpoints.length > 0;
+  const hasEndpoint = endpoints.some(e => e.enabled && e.category === 'llm');
 
-  const getNovelContext = () => {
-    const bible = new NarrativeRepository(novel.id).loadBible();
-    return `小说名称：《${novelTitle}》\n类型：${metadata.genre}\n风格：${metadata.style}\n语言：${metadata.language}
-简介与创作约束：${novel.description}
-文风公约：${bible.styleNotes.map(n => `${n.key}: ${n.value}`).join('\n')}
-世界设定：${bible.worldSettings.map(w => `${w.name}: ${w.description}`).join('\n')}
-人物设定：${bible.characters.map(c => `${c.name}: ${c.description}; ${c.appearance}; ${c.personality}`).join('\n')}
-地点：${bible.locations.map(l => `${l.name}: ${l.description}`).join('\n')}
-剧情总纲：${bible.timelineNotes.filter(n => n.id === 'plot-outline').map(n => n.event).join('\n')}`;
-  };
+  const getReviewContext = () => ({
+    source: { title: novelTitle, description: novel.description, genre: metadata.genre, style: metadata.style, language: metadata.language },
+    chapters: allChapters, outline: outlineDraft,
+  });
+  const getNovelContext = () => buildWritingContext(getReviewContext().source,
+    new NarrativeRepository(novel.id).loadBible(), allChapters, chapter.order, reviewer.loadHistory());
+  const reference = reviewer.buildContext(chapter.order, getReviewContext());
+  const referenceRef = useRef(reference);
+  referenceRef.current = reference;
+  const currentReview = review?.contentFingerprint === textFingerprint(contentDraft)
+    && review.contextFingerprint === textFingerprint(reference) ? review : null;
 
   const handleZoom = useCallback((delta: number) => {
     setFontSize((prev) => {
@@ -108,6 +115,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   }, [chapter.id, chapter.outline]);
 
   const handleGenerateOutline = async () => {
+    flushSave();
     if (!hasEndpoint) {
       message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
       return;
@@ -115,25 +123,22 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
 
     setGenerating('outline');
     try {
-      const prevChapters = allChapters
-        .filter((c) => c.order < chapter.order && c.content)
-        .slice(-3)
-        .map((c) => `第${c.order + 1}章 ${c.title}: ${c.outline}`)
-        .join('\n');
-
       const request: LLMGenerateRequest = {
         taskType: 'planning',
         systemPrompt: `你是一个专业的小说大纲规划师。根据已有章节信息，为当前章节生成详细大纲。
-大纲应包含：场景设定、主要事件、人物行动、情绪走向、关键对话要点。
+大纲应明确本章要改变的处境、人物目标和阻力、关键选择及其代价、场景之间的因果、与上章的接点和本章结束时的新状态。每个情节依据已发生的正文，不能把旧大纲当作事实。不要用重复检查、无来由的线索或强制反转填满篇幅。
+${NOVEL_WRITING_PRINCIPLES}
+用约600～1000字写清可以展开的场景与人物选择，不逐项规定比喻、手势、微表情和秒数。
 必须遵守以下项目简介、人物和世界规则，不得擅自改换题材或主角：\n${getNovelContext()}`,
-        userPrompt: `${prevChapters ? `前几章摘要：\n${prevChapters}\n\n` : ''}请为第${chapter.order + 1}章 "${chapter.title}" 生成详细大纲。`,
-        temperature: 0.8,
+        userPrompt: `当前写作意图：${outlineDraft || '依据主线决定本章的实质推进'}\n请为第${chapter.order + 1}章 "${chapter.title}" 生成详细大纲。`,
+        temperature: 0.65,
         maxTokens: 4096,
         thinking: false,
       };
 
       const response = await providerRouter.generate(request);
-      onUpdate({ outline: response.content, status: 'drafting' });
+      const outline = await reviewer.prepareOutline(chapter.order, response.content, getReviewContext());
+      onUpdate({ outline, status: 'drafting' });
       message.success(t('common.success'));
     } catch (err) {
       message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
@@ -143,64 +148,54 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   };
 
   const handleGenerateContent = async () => {
+    flushSave();
     if (!hasEndpoint) {
       message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
       return;
     }
 
-    if (!chapter.outline) {
+    if (!outlineDraft.trim()) {
       message.warning(t('novel.outline') + ' — ' + t('novel.empty'));
       return;
     }
 
     setGenerating('content');
     setStreamContent('');
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      const prevSummary = allChapters
-        .filter((c) => c.order < chapter.order && c.content)
-        .slice(-1)
-        .map((c) => c.content.slice(-500))
-        .join('\n');
-
+      const writingOutline = await reviewer.prepareOutline(chapter.order, outlineDraft, getReviewContext());
+      if (controller.signal.aborted) return;
+      setOutlineDraft(writingOutline);
+      onUpdate({ outline: writingOutline });
       const genrePrompts: Record<string, string> = {
-        xuanhuan: '玄幻热血风格：强调气场压迫感、招式光影、境界突破的震撼细节，动作打斗干净利落，充满爽点。',
-        urban_romance: '都市细腻风格：强调人物眼神拉扯、微表情、心理活动与柔光氛围感，台词带有潜台词。',
-        suspense: '悬疑冷酷风格：强调冷色调环境描摹、细节伏笔、心理压迫感与出人意料的反转。',
-        cyberpunk: '赛博朋克风格：强调霓虹霓影、机械质感、高科技低生活氛围与冷峻叙事。',
+        xuanhuan: '玄幻：能力、境界与成长遵守既有规则，让力量变化影响人物选择和利益，不用光影与威压替代战斗过程和代价。',
+        urban_romance: '都市情感：让关系变化来自双方的处境与选择，不靠误会反复拖延或堆叠微表情。',
+        suspense: '悬疑：调查来自可获得的信息与可执行的行动，线索有来源，推论有边界，答案回应原始谜题。',
+        cyberpunk: '赛博朋克：技术、权力和生计影响人物处境，让设定在具体行动中起作用，避免用霓虹与机械名词堆砌气氛。',
         scifi: '科幻风格：技术与社会设定自洽，通过具体行动呈现技术带来的冲突，遵守已有世界规则。',
         literary: '文学叙事风格：通过具体细节、人物行动与有潜台词的对话推进故事，尊重现实与人物动机。',
-        wuxia: '古风武侠风格：强调诗意环境描摹、侠义风骨、招式意境与古风用词韵味。',
+        wuxia: '武侠：立场、恩怨与行动代价构成侠义选择，武功和江湖规则前后一致，叙述用语沿用作品风格。',
       };
 
       const styleGuide = genrePrompts[novelGenre] ?? genrePrompts.literary;
-      const povGuide = novelPOV === 'first_person' ? '使用第一人称("我")沉浸式叙述。' : '使用第三人称全知视角叙述。';
-      const pacingGuide =
-        novelPacing === 'climax' ? '高潮爆发节奏：动作紧凑，单句篇幅简练，制造极强剧情张力与爽点。' :
-        novelPacing === 'buildup' ? '铺垫蓄力节奏：注重环境细节烘托、眼神心理描写，为后续冲突蓄势。' :
-        '标准叙事节奏：张弛有度，情节与描写交替推进。';
+      const povGuide = novelPOV === 'first_person' ? '使用第一人称，保持叙述者的知识边界。' : '使用第三人称有限视角，沿用前文的焦点人物，不任意进入其他人的内心。';
 
-      const systemPrompt = `你是一位顶尖的大神级网络小说作家。请根据大纲创作文学品质极高、极具吸引力的章节正文。
+      const systemPrompt = `你是一位小说作者。根据故事约束、已发生的正文与本章写作意图，完成能够接续阅读的章节。
 
 【流派文风指导】：${styleGuide}
 【叙事视角】：${povGuide}
-【叙事节奏】：${pacingGuide}
-
-【顶级写作与反 AI 规则（必须严格遵守）】：
-1. 严禁出现“首先...其次...总而言之”等机械连接词。
-2. 严禁在章节结尾写空洞的鸡汤感升华总结（如“这一刻他明白了生活的真谛”），直接停留在具体的情节动作或悬念留白处。
-3. 拒绝平铺直叙，对话中必须插入人物神态、无意识动作或心理活动潜台词（如“他压低眼帘，指尖捏紧杯沿”）。
-4. 语言要富有画面感与镜头感，拒绝假大空的修饰词。
-5. 目标字数：2500 - 4500 字。
+${NOVEL_WRITING_PRINCIPLES}
+目标篇幅约2500～3500字，以本章事件的完整性为先，不为凑字数重复描写，不重复上一章开头或已经完成的调查。
 
 必须遵守以下项目简介、人物和世界规则：\n${getNovelContext()}`;
 
       const request: LLMGenerateRequest = {
         taskType: 'generation',
         systemPrompt,
-        userPrompt: `${prevSummary ? `上一章结尾接续：\n${prevSummary}\n\n` : ''}本章大纲：\n${chapter.outline}\n\n请开始创作第${chapter.order + 1}章 "${chapter.title}" 的精彩正文：`,
-        temperature: 0.88,
+        userPrompt: `本章大纲：\n${writingOutline}\n\n请创作第${chapter.order + 1}章 "${chapter.title}" 的完整正文，承接前文的最终处境。`,
+        temperature: 0.75,
         maxTokens: 8192,
         thinking: false,
       };
@@ -208,23 +203,26 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
       let fullContent = '';
 
       for await (const chunk of providerRouter.stream(request)) {
-        if (abortRef.current?.signal.aborted) break;
+        if (controller.signal.aborted) return;
         fullContent += chunk.delta;
         setStreamContent(fullContent);
       }
 
       if (fullContent) {
+        saveRevisionBackup(contentDraft, fullContent);
+        setContentDraft(fullContent);
+        contentRef.current = fullContent;
         onUpdate({ content: fullContent, status: 'drafting', wordCount: fullContent.length });
         setStreamContent('');
-        message.success(t('common.success'));
+        if (autoReview) await runReview(fullContent, { ...getReviewContext(), outline: writingOutline });
+        else message.success(t('novel.editor.draftSaved'));
       }
     } catch (err) {
-      if (!abortRef.current?.signal.aborted) {
+      if (!controller.signal.aborted) {
         message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
       }
     } finally {
-      setGenerating(null);
-      abortRef.current = null;
+      if (abortRef.current === controller) { setGenerating(null); abortRef.current = null; }
     }
   };
 
@@ -237,113 +235,98 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     setGenerating(null);
   };
 
-  // --- AI Rewrite / Polish / Expand / Summarize ---
-
-  const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize' | 'consistency_check') => {
-    if (!hasEndpoint) {
-      message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
-      return;
-    }
-
-    const content = streamContent || chapter.content;
-    if (!content || content.length < 20) {
-      message.warning(t('editor.noContent'));
-      return;
-    }
-
-    setGenerating(mode);
-    try {
-      const prompts: Record<string, { system: string; user: string }> = {
-        rewrite: {
-          system: '你是一位小说编辑。请重写以下段落，保持核心情节不变，但使用不同的表达方式，使文笔更加优美流畅。',
-          user: `请重写以下段落：\n\n${content.slice(0, 3000)}`,
-        },
-        polish: {
-          system: '你是一位资深文字编辑。请润色以下文本，修复语法问题，提升文笔质量，减少重复和冗余表达。只输出润色后的文本。',
-          user: `请润色以下文本：\n\n${content.slice(0, 4000)}`,
-        },
-        expand: {
-          system: '你是一位小说家。请在保持原有内容和风格的基础上，适当扩展以下段落的细节描写（如环境、心理、动作），增加约30%的篇幅。只输出扩展后的文本。',
-          user: `请扩展以下段落的细节描写：\n\n${content.slice(0, 3000)}`,
-        },
-        summarize: {
-          system: '你是一位小说编辑助手。请为以下章节内容生成摘要，包含：核心事件、角色行动、情感走向。100-200字。',
-          user: `请总结以下章节：\n\n${content.slice(0, 6000)}`,
-        },
-        consistency_check: {
-          system: '你是一位严苛的小说主编。请针对以下小说文本进行【剧情逻辑、角色人设一致性、伏笔闭环】的质检，给出综合评分（100分制），并列出可能存在的吃书/逻辑冲突/细节漏洞。格式要清晰明了。',
-          user: `小说名称：《${novelTitle}》\n章节：${chapter.title}\n大纲：${chapter.outline ?? '无'}\n正文内容：\n${content.slice(0, 5000)}`,
-        },
-      };
-
-      const { system, user } = prompts[mode as keyof typeof prompts];
-      const request: LLMGenerateRequest = {
-        taskType: 'generation',
-        systemPrompt: system,
-        userPrompt: user,
-        temperature: mode === 'rewrite' ? 0.8 : 0.3,
-        maxTokens: mode === 'expand' ? 6000 : mode === 'summarize' ? 500 : 4096,
-        thinking: false,
-      };
-
-      const response = await providerRouter.generate(request);
-
-      if (mode === 'summarize') {
-        // Update outline with summary
-        onUpdate({ outline: response.content });
-        message.success(t('editor.summaryDone'));
-      } else if (mode === 'consistency_check') {
-        Modal.info({
-          title: '🔍 AI 剧情逻辑与人设一致性质检报告',
-          width: 680,
-          content: (
-            <div style={{ maxHeight: 450, overflowY: 'auto', whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6 }}>
-              {response.content}
-            </div>
-          ),
-          okText: '收到并优化',
-        });
-      } else {
-        // Replace content with rewritten/polished/expanded version
-        onUpdate({ content: response.content, wordCount: response.content.length });
-        message.success(t('editor.rewriteDone'));
-      }
-    } catch (err) {
-      message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setGenerating(null);
-    }
+  const saveRevisionBackup = (before: string, after: string) => {
+    if (before && before !== after) new NarrativeRepository(novel.id).saveCustomData('chapter-revision:' + chapter.id,
+      { before, afterFingerprint: textFingerprint(after), timestamp: new Date().toISOString() });
   };
 
-  // --- Tension Scoring (local heuristic) ---
+  const showReview = (report: ChapterReviewReport) => Modal.info({
+    title: t('novel.editor.reviewTitle'), width: 760,
+    content: <div style={{ maxHeight: 500, overflowY: 'auto', lineHeight: 1.7 }}>
+      <p>{report.summary}</p>
+      <Text type="secondary">{t('novel.editor.reviewLimit')}</Text>
+      <p>{report.dimensions.map(d => t('novel.editor.dim.' + d.name) + ': ' + d.score).join(' · ')}</p>
+      {report.findings.map((f, i) => <div key={i} style={{ marginBottom: 16 }}>
+        <Tag color={f.severity === 'critical' ? 'error' : f.severity === 'major' ? 'warning' : 'default'}>{t('novel.editor.severity.' + f.severity)}</Tag>
+        <strong>{f.problem}</strong>
+        <blockquote style={{ borderLeft: '2px solid var(--border-secondary)', paddingLeft: 12, whiteSpace: 'pre-wrap' }}>{f.quote}</blockquote>
+        {f.referenceQuote && <p><Text type="secondary">{t('novel.editor.reference')}: {f.referenceQuote}</Text></p>}
+        <p>{f.suggestion}</p>
+      </div>)}
+    </div>,
+  });
 
-  const handleTensionScore = () => {
-    const content = streamContent || chapter.content;
-    if (!content || content.length < 100) return;
+  const runReview = async (content = contentRef.current, context = getReviewContext()) => {
+    if (!content.trim() || !hasEndpoint) return;
+    setGenerating('review');
+    const originalReference = referenceRef.current;
+    try {
+      const result = await reviewer.reviewChapter(chapter.order, content, context);
+      setReview(result);
+      if (contentRef.current === content && referenceRef.current === originalReference) onUpdate({ status: result.status === 'needs-revision' ? 'revising' : 'drafting' });
+    } catch (error) {
+      message.error(t('novel.editor.reviewFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
+    } finally { setGenerating(null); }
+  };
 
-    // Simple heuristic scoring based on content patterns
-    let score = 5;
-    const text = content;
+  const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize' | 'consistency_check' | 'review') => {
+    flushSave();
+    if (!hasEndpoint) { message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint')); return; }
+    const content = contentRef.current;
+    const originalReference = referenceRef.current;
+    if (content.trim().length < 20) { message.warning(t('editor.noContent')); return; }
+    if (mode === 'consistency_check') { await runReview(content); return; }
+    setGenerating(mode);
+    try {
+      if (mode === 'summarize') {
+        const response = await providerRouter.generate({ taskType: 'extraction',
+          systemPrompt: '你是小说编辑。根据完整正文提取100～200字摘要，区分已发生事实和人物猜想，保留结尾处境、重要选择和未解问题。不要把规划当作事实。',
+          userPrompt: content, temperature: 0.2, maxTokens: 700, thinking: false });
+        new NarrativeRepository(novel.id).saveCustomData('manual-summary:' + chapter.id,
+          { contentFingerprint: textFingerprint(content), summary: response.content });
+        Modal.info({ title: t('editor.aiSummarize'), content: <p style={{ whiteSpace: 'pre-wrap' }}>{response.content}</p>, width: 680 });
+        return;
+      }
+      const edits = await reviewer.proposeRevision(chapter.order, content, getReviewContext(), mode, currentReview ?? undefined);
+      if (!edits.length) { message.info(t('novel.editor.noEdits')); return; }
+      const selected = new Set(edits.map((_, i) => i));
+      Modal.confirm({
+        title: t('novel.editor.revisionPreview'), width: 800,
+        okText: t('novel.editor.applyRevision'), cancelText: t('common.cancel'),
+        content: <div style={{ maxHeight: 480, overflowY: 'auto' }}>
+          {edits.map((edit, i) => <div key={i} style={{ marginBottom: 20 }}>
+            <p><Checkbox defaultChecked onChange={e => { if (e.target.checked) selected.add(i); else selected.delete(i); }}><strong>{edit.reason}</strong></Checkbox></p>
+            <Text type="secondary">{t('novel.editor.before')}</Text><p style={{ whiteSpace: 'pre-wrap' }}>{edit.before}</p>
+            <Text type="secondary">{t('novel.editor.after')}</Text><p style={{ whiteSpace: 'pre-wrap' }}>{edit.after || t('novel.editor.deleted')}</p>
+          </div>)}
+        </div>,
+        onOk: () => {
+          if (contentRef.current !== content || referenceRef.current !== originalReference) {
+            message.warning(t('novel.editor.sourceChanged'));
+            return Promise.reject(new Error('Chapter or reference changed during revision'));
+          }
+          if (!selected.size) {
+            message.warning(t('novel.editor.selectEdits'));
+            return Promise.reject(new Error('No edits selected'));
+          }
+          const revised = applyEditorialEdits(content, edits.filter((_, i) => selected.has(i)));
+          saveRevisionBackup(content, revised);
+          contentRef.current = revised;
+          setContentDraft(revised);
+          onUpdate({ content: revised, wordCount: revised.length, status: 'revising' });
+          void runReview(revised);
+        },
+      });
+    } catch (error) { message.error(t('common.failed') + ': ' + (error instanceof Error ? error.message : String(error))); }
+    finally { setGenerating(null); }
+  };
 
-    // Conflict indicators
-    if (text.match(/冲突|对抗|争执|战斗|打斗|厮杀/g)) score += 1;
-    if (text.match(/危险|威胁|紧急|崩溃|绝望/g)) score += 0.5;
-    if (text.match(/惊讶|震惊|不可思议|难以置信/g)) score += 0.5;
-
-    // Dialogue density (more dialogue = more tension)
-    const dialogMatches = text.match(/[""][^""]*[""]|「[^」]*」/g);
-    if (dialogMatches && dialogMatches.length > 5) score += 0.5;
-
-    // Short sentences (pacing indicator)
-    const shortSentences = text.split(/[。！？\n]/).filter((s) => s.length > 0 && s.length < 10);
-    if (shortSentences.length > text.split(/[。！？\n]/).length * 0.3) score += 0.5;
-
-    // Suspense keywords
-    if (text.match(/秘密|隐藏|真相|谜团|不知|困惑/g)) score += 0.5;
-
-    score = Math.min(10, Math.max(0, Math.round(score * 10) / 10));
-    setTensionScore(score);
-    message.info(`${t('tension.score')}: ${score}/10`);
+  const restoreRevision = () => {
+    const backup = new NarrativeRepository(novel.id).loadCustomData<{ before: string; afterFingerprint: string } | null>('chapter-revision:' + chapter.id, null);
+    if (!backup || backup.afterFingerprint !== textFingerprint(contentDraft)) { message.warning(t('novel.editor.restoreUnavailable')); return; }
+    flushSave();
+    setContentDraft(backup.before);
+    onUpdate({ content: backup.before, wordCount: backup.before.length, status: 'revising' });
   };
 
   const wordCount = streamContent || contentDraft || '';
@@ -382,9 +365,10 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     {
       key: 'consistency_check',
       icon: <FileSearchOutlined />,
-      label: '🔍 AI 剧情与人设一致性检查',
+      label: t('novel.editor.reviewTitle'),
       onClick: () => handleAITool('consistency_check'),
     },
+    { key: 'restore_revision', icon: <ReloadOutlined />, label: t('novel.editor.restoreRevision'), onClick: restoreRevision },
   ];
 
   return (
@@ -409,6 +393,15 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
         </Space>
       </div>
 
+      <div style={{ padding: '6px 12px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-secondary)' }}>
+        <Checkbox checked={autoReview} onChange={e => setAutoReview(e.target.checked)}>{t('novel.editor.autoReview')}</Checkbox>
+        <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'review'} disabled={!contentDraft.trim() || generating !== null || !hasEndpoint} onClick={() => { flushSave(); void runReview(); }}>{t('novel.editor.runReview')}</Button>
+        {currentReview ? <>
+          <Tag color={currentReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(currentReview.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed')}</Tag>
+          <Button size="small" type="link" onClick={() => showReview(currentReview)}>{t('novel.editor.viewReview')}</Button>
+          <Button size="small" disabled={generating !== null || !currentReview.findings.length} onClick={() => handleAITool('review')}>{t('novel.editor.reviseIssues')}</Button>
+        </> : <Text type="secondary">{t(review ? 'novel.editor.reviewStale' : 'novel.editor.unreviewed')}</Text>}
+      </div>
       {/* Tabs: outline / content */}
       <Tabs
         size="small"
@@ -425,13 +418,14 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   onBlur={flushSave}
                   placeholder={t("novel.outlinePlaceholder")}
                   style={{ height: 'calc(100% - 40px)', resize: 'vertical', ...textareaStyle }}
-                  disabled={generating === 'outline'}
+                  disabled={generating !== null}
                 />
                 <div style={{ marginTop: 8 }}>
                   <Button
                     icon={<ThunderboltOutlined />}
                     onClick={handleGenerateOutline}
                     loading={generating === 'outline'}
+                    disabled={generating !== null}
                     size="small"
                     type="primary"
                     ghost
@@ -494,19 +488,13 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                   value={streamContent || contentDraft}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
                   onBlur={flushSave}
+                  disabled={generating === 'content'}
                   placeholder={t("novel.contentPlaceholder")}
                   style={{ flex: 1, resize: 'vertical', minHeight: 300, ...textareaStyle }}
                 />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                   <Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
-                    {tensionScore !== null && (
-                      <Tooltip title={t('tension.score')}>
-                        <Text style={{ fontSize: 12, color: tensionScore >= 7 ? '#22c55e' : tensionScore >= 4 ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>
-                          <LineChartOutlined /> {tensionScore}/10
-                        </Text>
-                      </Tooltip>
-                    )}
                   </Space>
                   <Space>
                     {generating === 'content' ? (
@@ -563,18 +551,11 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
                             {t('editor.aiTools')}
                           </Button>
                         </Dropdown>
-                        <Tooltip title={t('editor.tensionScore')}>
-                          <Button
-                            size="small"
-                            icon={<LineChartOutlined />}
-                            onClick={handleTensionScore}
-                            disabled={!chapter.content}
-                          />
-                        </Tooltip>
                         <Button
                           icon={<ThunderboltOutlined />}
                           onClick={handleGenerateContent}
                           loading={generating === 'content'}
+                          disabled={generating !== null}
                           size="small"
                           type="primary"
                         >
