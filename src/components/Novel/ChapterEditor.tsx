@@ -11,8 +11,8 @@ import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chapter-reviewer';
-import { buildWritingContext, NOVEL_WRITING_PRINCIPLES, textFingerprint } from '@/services/novel/writing-context';
-import { applyEditorialEdits } from '@/services/novel/editorial-review';
+import { NOVEL_WRITING_PRINCIPLES, textFingerprint, WRITING_REFERENCE_KEYS } from '@/services/novel/writing-context';
+import { applyEditorialEdits, isReviewCurrent } from '@/services/novel/editorial-review';
 import type { NovelChapter, NovelMetadata, CreativeProject } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 
@@ -43,6 +43,8 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [streamContent, setStreamContent] = useState('');
   const [outlineDraft, setOutlineDraft] = useState(chapter.outline);
   const [contentDraft, setContentDraft] = useState(chapter.content);
+  const [activeTab, setActiveTab] = useState(chapter.content.trim() ? 'content' : 'outline');
+  const [, refreshReference] = useState(0);
   const [fontSize, setFontSize] = useState(loadFontSize);
   const [reviewer] = useState(() => new ChapterReviewer(novel.id));
   const [review, setReview] = useState<ChapterReviewReport | null>(() => reviewer.loadHistory().find(r => r.chapter === chapter.order) ?? null);
@@ -67,13 +69,16 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     source: { title: novelTitle, description: novel.description, genre: metadata.genre, style: metadata.style, language: metadata.language },
     chapters: allChapters, outline: outlineDraft,
   });
-  const getNovelContext = () => buildWritingContext(getReviewContext().source,
-    new NarrativeRepository(novel.id).loadBible(), allChapters, chapter.order, reviewer.loadHistory());
+  const getNovelContext = () => reviewer.buildContext(chapter.order, getReviewContext(), 'writing');
   const reference = reviewer.buildContext(chapter.order, getReviewContext());
-  const referenceRef = useRef(reference);
-  referenceRef.current = reference;
-  const currentReview = review?.contentFingerprint === textFingerprint(contentDraft)
-    && review.contextFingerprint === textFingerprint(reference) ? review : null;
+  const reviewContextRef = useRef(getReviewContext);
+  reviewContextRef.current = getReviewContext;
+  const currentReview = isReviewCurrent(review, contentDraft, reference) ? review : null;
+
+  useEffect(() => new NarrativeRepository(novel.id).subscribe(WRITING_REFERENCE_KEYS, () => {
+    setReview(reviewer.loadHistory().find(r => r.chapter === chapter.order) ?? null);
+    refreshReference(value => value + 1);
+  }), [novel.id, reviewer, chapter.order]);
 
   const handleZoom = useCallback((delta: number) => {
     setFontSize((prev) => {
@@ -94,7 +99,8 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const debouncedSave = useCallback((field: 'outline' | 'content', value: string) => {
     if (field === 'outline') setOutlineDraft(value);
     else { setContentDraft(value); setStreamContent(''); }
-    pendingSave.current = { save: onUpdate, updates: { ...pendingSave.current?.updates, [field]: value } };
+    pendingSave.current = { save: onUpdate, updates: { ...pendingSave.current?.updates, [field]: value,
+      ...(field === 'content' ? { status: 'drafting', wordCount: value.length } : {}) } };
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(flushSave, 1500);
   }, [onUpdate, flushSave]);
@@ -160,6 +166,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     }
 
     setGenerating('content');
+    setActiveTab('content');
     setStreamContent('');
     const controller = new AbortController();
     abortRef.current = controller;
@@ -188,6 +195,7 @@ ${NOVEL_WRITING_PRINCIPLES}
 【叙事视角】：${povGuide}
 ${NOVEL_WRITING_PRINCIPLES}
 目标篇幅约2500～3500字，以本章事件的完整性为先，不为凑字数重复描写，不重复上一章开头或已经完成的调查。
+写作前先在内部核对：前文约定是否兑现、信息是怎样被看见或获知的、关键推断还有哪些未排除的解释、场景结束后到底改变了什么。大纲是可调整的方案，不能为了照抄它而破坏前文、强加职业规章或将猜测写成证实。只输出最终正文，不重复章节标题。
 
 必须遵守以下项目简介、人物和世界规则：\n${getNovelContext()}`;
 
@@ -196,8 +204,8 @@ ${NOVEL_WRITING_PRINCIPLES}
         systemPrompt,
         userPrompt: `本章大纲：\n${writingOutline}\n\n请创作第${chapter.order + 1}章 "${chapter.title}" 的完整正文，承接前文的最终处境。`,
         temperature: 0.75,
-        maxTokens: 8192,
-        thinking: false,
+        maxTokens: 16384,
+        thinking: true,
       };
 
       let fullContent = '';
@@ -245,7 +253,6 @@ ${NOVEL_WRITING_PRINCIPLES}
     content: <div style={{ maxHeight: 500, overflowY: 'auto', lineHeight: 1.7 }}>
       <p>{report.summary}</p>
       <Text type="secondary">{t('novel.editor.reviewLimit')}</Text>
-      <p>{report.dimensions.map(d => t('novel.editor.dim.' + d.name) + ': ' + d.score).join(' · ')}</p>
       {report.findings.map((f, i) => <div key={i} style={{ marginBottom: 16 }}>
         <Tag color={f.severity === 'critical' ? 'error' : f.severity === 'major' ? 'warning' : 'default'}>{t('novel.editor.severity.' + f.severity)}</Tag>
         <strong>{f.problem}</strong>
@@ -259,11 +266,11 @@ ${NOVEL_WRITING_PRINCIPLES}
   const runReview = async (content = contentRef.current, context = getReviewContext()) => {
     if (!content.trim() || !hasEndpoint) return;
     setGenerating('review');
-    const originalReference = referenceRef.current;
+    const originalReference = reviewer.buildContext(chapter.order, context);
     try {
       const result = await reviewer.reviewChapter(chapter.order, content, context);
       setReview(result);
-      if (contentRef.current === content && referenceRef.current === originalReference) onUpdate({ status: result.status === 'needs-revision' ? 'revising' : 'drafting' });
+      if (contentRef.current === content && reviewer.buildContext(chapter.order, reviewContextRef.current()) === originalReference) onUpdate({ status: result.status === 'needs-revision' ? 'revising' : 'drafting' });
     } catch (error) {
       message.error(t('novel.editor.reviewFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
     } finally { setGenerating(null); }
@@ -273,7 +280,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     flushSave();
     if (!hasEndpoint) { message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint')); return; }
     const content = contentRef.current;
-    const originalReference = referenceRef.current;
+    const originalReference = reviewer.buildContext(chapter.order, getReviewContext());
     if (content.trim().length < 20) { message.warning(t('editor.noContent')); return; }
     if (mode === 'consistency_check') { await runReview(content); return; }
     setGenerating(mode);
@@ -300,20 +307,21 @@ ${NOVEL_WRITING_PRINCIPLES}
             <Text type="secondary">{t('novel.editor.after')}</Text><p style={{ whiteSpace: 'pre-wrap' }}>{edit.after || t('novel.editor.deleted')}</p>
           </div>)}
         </div>,
-        onOk: () => {
-          if (contentRef.current !== content || referenceRef.current !== originalReference) {
+        onOk: close => {
+          if (contentRef.current !== content || reviewer.buildContext(chapter.order, reviewContextRef.current()) !== originalReference) {
             message.warning(t('novel.editor.sourceChanged'));
-            return Promise.reject(new Error('Chapter or reference changed during revision'));
+            return;
           }
           if (!selected.size) {
             message.warning(t('novel.editor.selectEdits'));
-            return Promise.reject(new Error('No edits selected'));
+            return;
           }
           const revised = applyEditorialEdits(content, edits.filter((_, i) => selected.has(i)));
           saveRevisionBackup(content, revised);
           contentRef.current = revised;
           setContentDraft(revised);
           onUpdate({ content: revised, wordCount: revised.length, status: 'revising' });
+          close();
           void runReview(revised);
         },
       });
@@ -405,6 +413,8 @@ ${NOVEL_WRITING_PRINCIPLES}
       {/* Tabs: outline / content */}
       <Tabs
         size="small"
+        activeKey={activeTab}
+        onChange={setActiveTab}
         style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
         items={[
           {

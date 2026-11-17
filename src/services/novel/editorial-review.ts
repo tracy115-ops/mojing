@@ -1,3 +1,5 @@
+import { textFingerprint } from './writing-context.ts';
+
 export const EDITORIAL_DIMENSIONS = [
   'premise_fidelity', 'character_consistency', 'timeline_consistency',
   'plot_coherence', 'foreshadowing_usage', 'voice_quality',
@@ -50,6 +52,29 @@ export function resolveEditorialParagraph(text: string, id: unknown, prefix = 'C
   return paragraph;
 }
 
+/** Review evidence may span adjacent paragraphs; revision anchors remain single paragraphs. */
+export function resolveEditorialCitation(text: string, id: unknown, prefix = 'C'): string {
+  if (typeof id !== 'string') throw new Error('审稿段落编号无效');
+  const match = new RegExp(`^${prefix}([1-9]\\d*)(?:-${prefix}([1-9]\\d*))?$`).exec(id);
+  if (!match) throw new Error('审稿段落编号无效');
+  const start = Number(match[1]), end = Number(match[2] || match[1]);
+  const paragraphs = editorialParagraphs(text);
+  if (start > end || end - start >= 20) throw new Error('审稿引用范围无效，最多连续20段');
+  if (!paragraphs[start - 1] || !paragraphs[end - 1]) throw new Error('审稿引用了未提供的段落');
+  let offset = 0, from = 0, to = 0;
+  for (let i = 0; i < end; i++) {
+    const position = text.indexOf(paragraphs[i], offset);
+    if (i === start - 1) from = position;
+    offset = position + paragraphs[i].length;
+    to = offset;
+  }
+  return text.slice(from, to);
+}
+
+export function isReviewCurrent(report: { contentFingerprint?: string; contextFingerprint?: string } | null | undefined, content: string, context: string): boolean {
+  return !!report && report.contentFingerprint === textFingerprint(content) && report.contextFingerprint === textFingerprint(context);
+}
+
 /** Reject invented evidence and incomplete scores rather than reporting a false pass. */
 export function parseEditorialAssessment(raw: string, content: string, context: string): EditorialAssessment {
   const value = record(JSON.parse(raw));
@@ -62,14 +87,16 @@ export function parseEditorialAssessment(raw: string, content: string, context: 
   const findings = value.findings.map(input => {
     const f = record(input);
     if (!EDITORIAL_DIMENSIONS.includes(f.dimension as EditorialDimension) || !['minor', 'major', 'critical'].includes(String(f.severity))) throw new Error('审稿问题分类无效');
-    const quote = f.paragraphId ? resolveEditorialParagraph(content, f.paragraphId) : nonempty(f.quote);
-    const referenceQuote = f.referenceId ? resolveEditorialParagraph(context, f.referenceId, 'R') : typeof f.referenceQuote === 'string' ? f.referenceQuote : '';
-    if (!content.includes(quote) || (referenceQuote && !context.includes(referenceQuote))) throw new Error('审稿引用无法对应提供的原文或前文');
+    const quote = f.paragraphId ? resolveEditorialCitation(content, f.paragraphId) : nonempty(f.quote);
+    const referencePrefix = typeof f.referenceId === 'string' && f.referenceId.startsWith('C') ? 'C' : 'R';
+    const referenceSource = referencePrefix === 'C' ? content : context;
+    const referenceQuote = f.referenceId ? resolveEditorialCitation(referenceSource, f.referenceId, referencePrefix) : typeof f.referenceQuote === 'string' ? f.referenceQuote : '';
+    if (!content.includes(quote) || (referenceQuote && !referenceSource.includes(referenceQuote))) throw new Error('审稿引用无法对应提供的原文或前文');
     return { dimension: f.dimension as EditorialDimension, severity: f.severity as EditorialFinding['severity'], quote, referenceQuote, problem: nonempty(f.problem), suggestion: nonempty(f.suggestion) };
   });
   const continuityNotes = value.continuityNotes.map(input => {
     const note = record(input);
-    const quote = note.paragraphId ? resolveEditorialParagraph(content, note.paragraphId) : nonempty(note.quote);
+    const quote = note.paragraphId ? resolveEditorialCitation(content, note.paragraphId) : nonempty(note.quote);
     if (!content.includes(quote)) throw new Error('章后事实引用无法对应正文');
     return { fact: nonempty(note.fact), quote };
   });
@@ -94,5 +121,5 @@ export function applyEditorialEdits(content: string, edits: EditorialEdit[]): st
 }
 
 export function needsEditorialRevision(assessment: EditorialAssessment): boolean {
-  return assessment.findings.some(f => f.severity !== 'minor') || assessment.dimensions.some(d => d.score < 65);
+  return assessment.findings.some(f => f.severity !== 'minor');
 }

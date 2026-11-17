@@ -23,7 +23,7 @@ const run = (command, args, options = {}) => new Promise(resolveRun => {
 const contracts = (await readdir('scripts')).filter(name => /^test-.*\.mjs$/.test(name) && !['test-tts.mjs', 'test-llm-json-parser.mjs'].includes(name));
 const suites = [
   ...contracts.map(name => ({ id: name.slice(0, -4), script: name, kind: 'contract' })),
-  ...['application', 'novel-comic', 'video', 'studio', 'image-mask', 'studio-library', 'studio-upload', 'world-sequence', 'world-model-animation', 'world-monitor', 'world-offline', 'world-sets'].map(name => ({ id: name + '-ui-e2e', script: 'run-' + name + '-ui-e2e.mjs', kind: 'browser' })),
+  ...['application', 'novel-comic', 'novel-workbench', 'video', 'studio', 'image-mask', 'studio-library', 'studio-upload', 'world-sequence', 'world-model-animation', 'world-monitor', 'world-offline', 'world-sets'].map(name => ({ id: name + '-ui-e2e', script: 'run-' + name + '-ui-e2e.mjs', kind: 'browser' })),
   { id: 'native', kind: 'rust' },
   { id: 'release-e2e', script: 'run-release-e2e.mjs', kind: 'desktop' },
   { id: 'world-offline-desktop-e2e', script: 'run-world-offline-desktop-e2e.mjs', kind: 'desktop' },

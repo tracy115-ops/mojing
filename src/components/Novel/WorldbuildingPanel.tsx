@@ -4,7 +4,7 @@
 // ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { Collapse, Input, Button, Space, Tag, Progress, message } from 'antd';
+import { Collapse, Input, Button, Space, Tag, message } from 'antd';
 import {
   ThunderboltOutlined, GlobalOutlined, TeamOutlined, ReloadOutlined,
   ReadOutlined, CoffeeOutlined, SaveOutlined,
@@ -53,9 +53,9 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
   const { t } = useTranslation();
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick(v => v + 1), []);
-  useEffect(() => { const i = setInterval(refresh, 10000); return () => clearInterval(i); }, [refresh]);
 
   const [repo] = useState(() => new NarrativeRepository(novelId));
+  useEffect(() => repo.subscribe(['worldbuilding'], refresh), [repo, refresh]);
 
   const [wb, setWb] = useState<Worldbuilding>(() => repo.loadWorldbuilding());
   const [dirty, setDirty] = useState(false);
@@ -98,12 +98,6 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
     }));
     setDirty(true);
   };
-
-  const filledCount = DIMENSION_META.reduce((acc, dim) => {
-    const fields = wb.dimensions[dim.key].fields;
-    const hasContent = Object.values(fields).some((v) => v.trim());
-    return acc + (hasContent ? 1 : 0);
-  }, 0);
 
   const items = DIMENSION_META.map((dim) => {
     const fields = wb.dimensions[dim.key].fields;
@@ -148,11 +142,6 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
       }}>
         <span><GlobalOutlined style={{ marginRight: 6 }} />{t('worldbuilding.title')}</span>
         <Space>
-          <Progress
-            type="circle" size={24} percent={(filledCount / 5) * 100}
-            format={() => `${filledCount}/5`}
-            style={{ marginRight: 4 }}
-          />
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refresh} />
           <Button
             type="primary" size="small" icon={<SaveOutlined />}
@@ -163,6 +152,7 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
         </Space>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{t('workbench.world.hint')}</p>
         <Collapse items={items} size="small" defaultActiveKey={['coreRules']} />
       </div>
     </div>

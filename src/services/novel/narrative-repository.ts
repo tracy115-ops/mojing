@@ -23,10 +23,12 @@ import type {
   ChapterCast,
 } from '@/types/narrative';
 import type { AutopilotState, CircuitBreakerState } from '@/types/pipeline';
+import type { WritingReferences } from './writing-context';
 
 // --- Storage Keys ---
 
 const STORAGE_PREFIX = 'mojing-narrative';
+const CHANGE_EVENT = 'mojing-narrative-changed';
 
 function key(novelId: string, suffix: string): string {
   return `${STORAGE_PREFIX}:${novelId}:${suffix}`;
@@ -48,7 +50,9 @@ function save<T>(storageKey: string, data: T): void {
     localStorage.setItem(storageKey, JSON.stringify(data));
   } catch (err) {
     console.warn(`NarrativeRepository: failed to save ${storageKey}`, err);
+    return;
   }
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: storageKey }));
 }
 
 // ============================================================================
@@ -60,6 +64,21 @@ export class NarrativeRepository {
 
   constructor(novelId: string) {
     this.novelId = novelId;
+  }
+
+  loadWritingReferences(): WritingReferences {
+    return { worldbuilding: this.loadWorldbuilding(), storylines: this.loadStorylines(), casts: this.loadChapterCasts(),
+      foreshadowing: this.loadForeshadowing(), triples: this.loadTriples(),
+      props: this.loadCustomData('props', []), propEvents: this.loadCustomData('prop-events', []) };
+  }
+
+  subscribe(suffixes: readonly string[], onChange: () => void): () => void {
+    const keys = new Set(suffixes.map(suffix => key(this.novelId, suffix)));
+    const sameWindow = (event: Event) => { if (keys.has((event as CustomEvent<string>).detail)) onChange(); };
+    const otherWindow = (event: StorageEvent) => { if (event.storageArea === localStorage && (event.key === null || keys.has(event.key))) onChange(); };
+    window.addEventListener(CHANGE_EVENT, sameWindow);
+    window.addEventListener('storage', otherWindow);
+    return () => { window.removeEventListener(CHANGE_EVENT, sameWindow); window.removeEventListener('storage', otherWindow); };
   }
 
   // --- Story Bible ---
@@ -425,6 +444,7 @@ export interface AutopilotCheckpoint {
   foreshadowingSnapshot: Foreshadowing[];
   chapterIndex: number;
   beatIndex: number;
+  nextChapterIndex?: number;
 }
 
 export interface NarrativeSnapshot {

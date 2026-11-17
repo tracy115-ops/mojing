@@ -1,185 +1,99 @@
-// ============================================================================
-// Chapter Review Panel — Multi-dimension chapter quality review display
-// ============================================================================
-
-import React, { useMemo, useState } from 'react';
-import { Typography, Card, Space, Empty, Button, Progress, message } from 'antd';
-import {
-  AuditOutlined, CheckCircleOutlined, WarningOutlined,
-} from '@ant-design/icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Typography, Card, Empty, Button, Tag, Select, message } from 'antd';
+import { AuditOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chapter-reviewer';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
+import { isReviewCurrent } from '@/services/novel/editorial-review';
 import { useProjectStore } from '@/stores/projectStore';
 import type { NovelMetadata } from '@/types';
-import { getNovelChapters } from '@/services/novel/writing-context';
+import { getNovelChapters, WRITING_REFERENCE_KEYS } from '@/services/novel/writing-context';
 
 const { Text } = Typography;
 
-interface ChapterReviewPanelProps {
-  novelId: string;
-}
-
-const DIMENSION_LABELS: Record<string, string> = {
-  character_consistency: 'readerDim.characterConsistency',
-  timeline_consistency: 'readerDim.timelineConsistency',
-  plot_coherence: 'readerDim.plotCoherence',
-  foreshadowing_usage: 'readerDim.foreshadowUsage',
-  voice_quality: 'readerDim.voiceQuality',
-  premise_fidelity: 'novel.editor.dim.premise_fidelity',
-};
-
-const ChapterReviewPanel: React.FC<ChapterReviewPanelProps> = ({ novelId }) => {
+const ChapterReviewPanel: React.FC<{ novelId: string; chapterIndex?: number; onSelectChapter?: (index: number) => void }> = ({ novelId, chapterIndex, onSelectChapter }) => {
   const { t } = useTranslation();
-  const [repo] = useState(() => new NarrativeRepository(novelId));
-  const [reviewer] = useState(() => new ChapterReviewer(novelId));
-  const [latestReview, setLatestReview] = useState<ChapterReviewReport | null>(reviewer.getLatestReview());
-  const [history, setHistory] = useState<ChapterReviewReport[]>(reviewer.loadHistory());
+  const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
+  const reviewer = useMemo(() => new ChapterReviewer(novelId), [novelId]);
+  const [history, setHistory] = useState<ChapterReviewReport[]>(() => reviewer.loadHistory());
+  const [, refreshReference] = useState(0);
   const [loading, setLoading] = useState(false);
-
-  // Get real chapter content from project store
+  const [selectedChapter, setSelectedChapter] = useState(chapterIndex);
+  useEffect(() => { setSelectedChapter(chapterIndex); }, [chapterIndex]);
   const project = useProjectStore((s) => s.projects.find((p) => p.id === novelId));
   const novelMeta = project?.metadata as NovelMetadata | undefined;
   const chapters = useMemo(() => novelMeta ? getNovelChapters(novelMeta) : [], [novelMeta]);
-  const contentChapters = useMemo(() => chapters.filter((c) => c.content && c.content.length > 50), [chapters]);
+  const contentChapters = chapters.filter(c => c.content.trim());
+  const selected = chapters.find(c => c.order === selectedChapter) ?? contentChapters[contentChapters.length - 1];
+  const latestReview = history.find(r => r.chapter === selected?.order);
+  const selectChapter = (index: number) => { setSelectedChapter(index); onSelectChapter?.(index); };
+
+  useEffect(() => {
+    setHistory(reviewer.loadHistory());
+    return repo.subscribe(WRITING_REFERENCE_KEYS, () => {
+      setHistory(reviewer.loadHistory());
+      refreshReference(value => value + 1);
+    });
+  }, [repo, reviewer]);
+
+  const contextFor = (chapter: typeof chapters[number]) => ({
+    source: { title: project!.title, description: project!.description, genre: novelMeta!.genre, style: novelMeta!.style, language: novelMeta!.language },
+    chapters, outline: chapter.outline,
+  });
+  const isCurrent = (report: ChapterReviewReport) => {
+    const chapter = chapters.find(c => c.order === report.chapter);
+    return !!chapter && !!project && !!novelMeta && isReviewCurrent(report, chapter.content, reviewer.buildContext(chapter.order, contextFor(chapter)));
+  };
+  const statusLabel = (report: ChapterReviewReport) => !isCurrent(report) ? 'novel.editor.reviewStale'
+    : report.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed';
 
   const handleReview = async () => {
-    if (contentChapters.length === 0) return;
+    const chapter = selected;
+    if (!chapter || !project || !novelMeta) return;
     setLoading(true);
-    const lastChapter = contentChapters[contentChapters.length - 1];
     try {
-      if (!project || !novelMeta) return;
-      const report = await reviewer.reviewChapter(lastChapter.order, lastChapter.content, {
-        source: { title: project.title, description: project.description, genre: novelMeta.genre, style: novelMeta.style, language: novelMeta.language },
-        chapters, outline: lastChapter.outline,
-      });
-      setLatestReview(report);
-      setHistory(reviewer.loadHistory());
+      await reviewer.reviewChapter(chapter.order, chapter.content, contextFor(chapter));
     } catch (error) { message.error(t('novel.editor.reviewFailed') + ': ' + String(error)); }
     finally { setLoading(false); }
   };
 
-  const scoreColor = (score: number) => {
-    if (score >= 80) return '#22c55e';
-    if (score >= 60) return '#f59e0b';
-    return '#ef4444';
-  };
-
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div data-testid="chapter-review-panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{
         padding: '4px 12px', fontWeight: 600, fontSize: 13,
         borderBottom: '1px solid var(--border-secondary)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
         <span><AuditOutlined style={{ marginRight: 6 }} />{t('chapterReview.title')}</span>
-        <Space>
-          <Button size="small" type="primary" onClick={handleReview} loading={loading} disabled={chapters.length === 0}>
-            {t('chapterReview.runReview')}
-          </Button>
-        </Space>
+        <Button size="small" type="primary" onClick={handleReview} loading={loading} disabled={!selected?.content.trim()}>
+          {t('chapterReview.runReview')}
+        </Button>
       </div>
-
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
+        <Select aria-label={t('workbench.review.selectChapter')} value={selected?.order} onChange={selectChapter} disabled={loading}
+          style={{ width: '100%' }} options={chapters.map(c => ({ value: c.order, label: t('novel.chapterOrder', { order: c.order + 1 }) + ' · ' + c.title }))} />
         <p><Text type="secondary">{t('novel.editor.reviewLimit')}</Text></p>
-        {!latestReview ? (
-          <Empty description={t('chapterReview.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-        ) : (
+        {!latestReview ? <Empty description={t('chapterReview.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} /> : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {/* Overall score gauge */}
-            <div style={{ textAlign: 'center' }}>
-              <svg width="120" height="120" viewBox="0 0 120 120">
-                <circle cx="60" cy="60" r="50" fill="none" stroke="var(--border-secondary)" strokeWidth="8" />
-                <circle
-                  cx="60" cy="60" r="50" fill="none"
-                  stroke={scoreColor(latestReview.overallScore)}
-                  strokeWidth="8"
-                  strokeDasharray={`${(latestReview.overallScore / 100) * 314} 314`}
-                  transform="rotate(-90 60 60)"
-                  strokeLinecap="round"
-                />
-                <text x="60" y="55" textAnchor="middle" style={{ fontSize: 24, fontWeight: 700, fill: scoreColor(latestReview.overallScore) }}>
-                  {latestReview.overallScore}
-                </text>
-                <text x="60" y="75" textAnchor="middle" style={{ fontSize: 10, fill: 'var(--text-secondary)' }}>
-                  {t('chapterReview.overallScore')}
-                </text>
-              </svg>
-              <div>
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {t('chapterReview.chapterN', { chapter: latestReview.chapter + 1 })}
-                </Text>
-              </div>
+            <div>
+              <Text>{t('chapterReview.chapterN', { chapter: latestReview.chapter + 1 })}</Text>
+              <p style={{ margin: '6px 0' }}><Tag color={isCurrent(latestReview) && latestReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(statusLabel(latestReview))}</Tag></p>
             </div>
-
-            {/* Summary */}
-            {latestReview.summary && (
-              <Card size="small" style={{ background: 'var(--bg-secondary, rgba(0,0,0,0.02))' }}>
-                <Text style={{ fontSize: 12 }}>{latestReview.summary}</Text>
+            <Card size="small"><Text>{latestReview.summary}</Text></Card>
+            {latestReview.findings.map((finding, index) => (
+              <Card size="small" key={index}>
+                <Tag color={finding.severity === 'critical' ? 'error' : finding.severity === 'major' ? 'warning' : 'default'}>{t('novel.editor.severity.' + finding.severity)}</Tag>
+                <p><strong>{finding.problem}</strong></p>
+                <blockquote style={{ margin: '8px 0', borderLeft: '2px solid var(--border-secondary)', paddingLeft: 10, whiteSpace: 'pre-wrap' }}>{finding.quote}</blockquote>
+                {finding.referenceQuote && <p><Text type="secondary">{t('novel.editor.reference')}: {finding.referenceQuote}</Text></p>}
+                <p>{finding.suggestion}</p>
               </Card>
-            )}
-
-            {/* Dimension scores */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {latestReview.dimensions.map((dim) => {
-                const label = t(DIMENSION_LABELS[dim.name] ?? dim.name);
-                const color = scoreColor(dim.score);
-                return (
-                  <Card key={dim.name} size="small" style={{ padding: '6px 12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <Text style={{ fontSize: 12, fontWeight: 500 }}>{label}</Text>
-                      <Text style={{ fontSize: 12, fontWeight: 700, color }}>{dim.score}/100</Text>
-                    </div>
-                    <Progress
-                      percent={dim.score}
-                      strokeColor={color}
-                      size="small"
-                      showInfo={false}
-                    />
-                    {dim.issues.length > 0 && (
-                      <div style={{ marginTop: 4 }}>
-                        {dim.issues.map((issue, i) => (
-                          <div key={i} style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'flex', gap: 4, marginTop: 2 }}>
-                            <WarningOutlined style={{ color: '#f59e0b', fontSize: 9, marginTop: 2 }} />
-                            <span>{issue}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Card>
-                );
-              })}
-            </div>
-
-            {/* Suggestions */}
-            {latestReview.suggestions.length > 0 && (
-              <Card size="small" title={t('chapterReview.suggestions')}>
-                {latestReview.suggestions.map((s, i) => (
-                  <div key={i} style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                    {i + 1}. {s}
-                  </div>
-                ))}
-              </Card>
-            )}
-
-            {/* History trend */}
-            {history.length > 1 && (
-              <Card size="small" title={t('chapterReview.history')}>
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 60 }}>
-                  {history.slice(-10).map((h, i) => (
-                    <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
-                      <div style={{
-                        width: '100%', maxWidth: 24,
-                        height: Math.max(4, (h.overallScore / 100) * 50),
-                        background: scoreColor(h.overallScore),
-                        borderRadius: 2,
-                      }} />
-                      <Text style={{ fontSize: 8, color: 'var(--text-tertiary)' }}>Ch{h.chapter + 1}</Text>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
+            ))}
+            {history.length > 1 && <Card size="small" title={t('chapterReview.history')}>
+              {[...history].sort((a, b) => a.chapter - b.chapter).slice(-10).map(report => (
+                <p key={report.chapter}><Button type="link" size="small" onClick={() => selectChapter(report.chapter)}>{t('novel.chapterOrder', { order: report.chapter + 1 })}</Button> · {t(statusLabel(report))}</p>
+              ))}
+            </Card>}
           </div>
         )}
       </div>

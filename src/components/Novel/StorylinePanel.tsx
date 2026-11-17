@@ -5,7 +5,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   Button, Card, Empty, Form, Input, Modal, Select, Space, Tag, Popconfirm,
-  message, Tabs, Badge, Progress,
+  message, Tabs,
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined,
@@ -39,6 +39,7 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
   }, [repo]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => repo.subscribe(['storylines'], refresh), [repo, refresh]);
 
   const openModal = (line?: Storyline) => {
     if (line) {
@@ -48,18 +49,20 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
         type: line.type,
         status: line.status,
         description: line.description,
-        chapterStart: line.chapterRange[0],
-        chapterEnd: line.chapterRange[1],
+        chapterStart: line.chapterRange[0] + 1,
+        chapterEnd: line.chapterRange[1] + 1,
       });
     } else {
       setEditing(null);
       form.resetFields();
+      form.setFieldsValue({ type: 'sub', status: 'active', chapterStart: 1, chapterEnd: Math.max(1, totalChapters) });
     }
     setModalOpen(true);
   };
 
   const handleSave = async () => {
-    const values = await form.validateFields();
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
     const id = editing?.id ?? `sl_${Date.now()}`;
     const milestones = editing?.milestones ?? [];
 
@@ -70,7 +73,7 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
       type: values.type,
       status: values.status,
       description: values.description,
-      chapterRange: [values.chapterStart, values.chapterEnd],
+      chapterRange: [Number(values.chapterStart) - 1, Number(values.chapterEnd) - 1],
       milestones,
       color: editing?.color ?? LINE_COLORS[lines.length % LINE_COLORS.length],
     };
@@ -89,8 +92,8 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
   // SVG Git-style graph
   const graphSvg = useMemo(() => {
     if (lines.length === 0) return null;
-    const maxCh = Math.max(totalChapters, ...lines.map((l) => l.chapterRange[1]), 10);
-    const width = Math.max(600, maxCh * 40);
+    const maxCh = Math.max(totalChapters, ...lines.map((l) => l.chapterRange[1] + 1), 10);
+    const width = Math.max(600, 80 + maxCh * 40);
     const rowH = 36;
     const headerH = 20;
     const svgH = headerH + lines.length * rowH + 10;
@@ -153,9 +156,6 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {lines.map((line) => {
-            const progress = line.chapterRange[1] > line.chapterRange[0]
-              ? Math.min(100, Math.round(((totalChapters - line.chapterRange[0]) / (line.chapterRange[1] - line.chapterRange[0])) * 100))
-              : 0;
             return (
               <Card
                 key={line.id}
@@ -254,10 +254,11 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
           </Form.Item>
           <div style={{ display: 'flex', gap: 12 }}>
             <Form.Item name="chapterStart" label={t('storyline.chapterStart')} style={{ flex: 1 }} rules={[{ required: true }]}>
-              <Input type="number" min={0} />
+              <Input type="number" min={1} />
             </Form.Item>
-            <Form.Item name="chapterEnd" label={t('storyline.chapterEnd')} style={{ flex: 1 }} rules={[{ required: true }]}>
-              <Input type="number" min={0} />
+            <Form.Item name="chapterEnd" label={t('storyline.chapterEnd')} style={{ flex: 1 }} dependencies={['chapterStart']}
+              rules={[{ required: true }, ({ getFieldValue }) => ({ validator: (_, value) => Number(value) >= Number(getFieldValue('chapterStart')) ? Promise.resolve() : Promise.reject(new Error(t('storyline.invalidRange'))) })]}>
+              <Input type="number" min={1} />
             </Form.Item>
           </div>
         </Form>

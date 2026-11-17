@@ -3,17 +3,16 @@
 // PlotPilot-inspired: entity-type coloring, contradiction warnings, search
 // ============================================================================
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
-import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip, Alert } from 'antd';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip } from 'antd';
 import {
   ApartmentOutlined, PlusOutlined, DeleteOutlined, SearchOutlined,
-  ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
-  WarningOutlined, ThunderboltOutlined,
+  FullscreenOutlined,
+  CheckOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import { KnowledgeGraphEngine } from '@/services/novel/knowledge-graph';
 import type { RelationshipTriple } from '@/types/narrative';
 import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
 import { useEchartsReady } from '@/hooks/useEchartsReady';
@@ -57,13 +56,13 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   const { t } = useTranslation();
   const chartTheme = useChartTheme();
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
-  const kgEngine = useMemo(() => new KnowledgeGraphEngine(novelId), [novelId]);
 
   const [rawTriples, setRawTriples] = useState<RelationshipTriple[]>(() => repo.loadTriples());
   const [searchQuery, setSearchQuery] = useState('');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [contradictions, setContradictions] = useState(() => kgEngine.detectContradictions());
+  const [revision, refresh] = useState(0);
+  useEffect(() => repo.subscribe(['bible', 'triples'], () => { setRawTriples(repo.loadTriples()); refresh(n => n + 1); }), [repo]);
   const echartRef = useRef<ReactECharts | null>(null);
   const [form] = Form.useForm();
 
@@ -89,13 +88,13 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       }
     }
     return { charNames: names, locNames: locs, bibleTriples: derived };
-  }, [repo]);
+  }, [repo, revision]);
 
   // Merge extracted triples with Bible-derived ones (dedup by subject|predicate|object)
   const triples = useMemo(() => {
     const seen = new Set<string>();
     const merged: RelationshipTriple[] = [];
-    for (const tr of [...rawTriples, ...bibleTriples]) {
+    for (const tr of [...bibleTriples, ...rawTriples]) {
       const k = `${tr.subject}|${tr.predicate}|${tr.object}`;
       if (!seen.has(k)) {
         seen.add(k);
@@ -256,25 +255,14 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
     }
   }, []);
 
-  const handleRunInference = useCallback(() => {
-    const result = kgEngine.runInference();
-    const updated = repo.loadTriples();
-    setRawTriples(updated);
-    setContradictions(kgEngine.detectContradictions());
-    if (result.newTriples.length > 0) {
-      message.success(t('knowledgeGraph.inferenceResult', { count: result.newTriples.length }));
-    } else {
-      message.info(t('knowledgeGraph.noNewInference'));
-    }
-  }, [kgEngine, repo, t]);
-
   const handleResetZoom = useCallback(() => {
     const chart = echartRef.current?.getEchartsInstance();
     if (chart) chart.dispatchAction({ type: 'restore' });
   }, []);
 
   const handleAdd = async () => {
-    const values = await form.validateFields();
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
     const newTriple: RelationshipTriple = {
       subject: values.subject,
       predicate: values.predicate,
@@ -312,27 +300,13 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         <span><ApartmentOutlined style={{ marginRight: 6 }} />{t('knowledgeGraph.title')}</span>
         <Space size={4}>
           <Badge count={triples.length} style={{ backgroundColor: '#3b82f6' }} />
-          <Tooltip title={t('knowledgeGraph.runInference')}>
-            <Button size="small" icon={<ThunderboltOutlined />} onClick={handleRunInference} />
-          </Tooltip>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => setAddModalOpen(true)}>
             {t('common.add')}
           </Button>
         </Space>
       </div>
 
-      {/* Contradiction warnings */}
-      {contradictions.length > 0 && (
-        <Alert
-          type="warning"
-          icon={<WarningOutlined />}
-          showIcon
-          message={`${contradictions.length} ${t('knowledgeGraph.contradictions')}`}
-          description={contradictions[0].description}
-          closable
-          style={{ margin: '4px 12px', fontSize: 11 }}
-        />
-      )}
+      <p style={{ padding: '0 12px', fontSize: 12, color: 'var(--text-secondary)' }}>{t('workbench.graph.hint')}</p>
 
       {/* Search */}
       <div style={{ padding: '6px 12px 0', display: 'flex', gap: 6 }}>
@@ -396,13 +370,20 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
                   <span style={{ color: getEdgeColor(triple.predicate), fontWeight: 500 }}>{triple.predicate}</span>
                   <Tag color="magenta" style={{ fontSize: 9 }}>{triple.object}</Tag>
                   {triple.source === 'extracted' && (
-                    <Tag color="purple" style={{ fontSize: 8 }}>{t('knowledgeGraph.inferred')}</Tag>
+                    <Tag style={{ fontSize: 10 }}>{t('workbench.graph.unconfirmed')}</Tag>
                   )}
                 </div>
+                {triple.source === 'extracted' && <Tooltip title={t('workbench.graph.confirm')}>
+                  <Button type="text" size="small" icon={<CheckOutlined />} onClick={() => repo.saveTriples(repo.loadTriples().map(tr =>
+                    tr.subject === triple.subject && tr.predicate === triple.predicate && tr.object === triple.object ? { ...tr, source: 'bible' as const } : tr))} />
+                </Tooltip>}
+                <Tooltip title={t('workbench.graph.deleteHint')}>
                 <Button
                   type="text" size="small" danger icon={<DeleteOutlined />}
+                  disabled={!rawTriples.some(tr => tr.subject === triple.subject && tr.predicate === triple.predicate && tr.object === triple.object)}
                   onClick={() => handleDelete(idx)}
                 />
+                </Tooltip>
               </List.Item>
             );
           }}

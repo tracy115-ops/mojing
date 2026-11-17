@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { buildWritingContext, getNovelChapters, textFingerprint } from '../src/services/novel/writing-context.ts';
-import { EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits, labelEditorialParagraphs, parseOutlineAssessment } from '../src/services/novel/editorial-review.ts';
+import { EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits, labelEditorialParagraphs, parseOutlineAssessment, resolveEditorialCitation, resolveEditorialParagraph, isReviewCurrent } from '../src/services/novel/editorial-review.ts';
+import { getDueForeshadowing, lastWrittenChapter } from '../src/services/novel/workbench-state.ts';
 
 const source = { title: '末班车之后', description: '包里只有一张日期为明天的车票，禁止超自然。', genre: 'mystery', style: '克制现实叙事' };
 const bible = { novelId: 'test', characters: [], locations: [], worldSettings: [], styleNotes: [], timelineNotes: [{ id: 'plot-outline', event: '规划：交还失物' }] };
@@ -12,6 +13,12 @@ assert.ok(context.indexOf('第1章《章0》') < context.indexOf('第2章《章1
 assert.ok(!context.includes('未来章节的秘密'), 'future prose must not leak into earlier chapters');
 assert.ok(!context.includes('计划拿回车票但尚未发生'), 'outlines are not summaries of events that occurred');
 assert.ok(context.includes('待实现的剧情规划，不是已发生事实'));
+const withStyle = {...bible,styleNotes:[{key:'文风公约',value:'心理描写全部外化'}],worldSettings:[{name:'车票',description:'备用票日期栏手写。'},{name:'调查',description:'照片不能替代实物检查。'}]};
+const reviewContext = buildWritingContext(source,withStyle,chapters,2,[],'review');
+assert.ok(reviewContext.includes('不能仅因心理直述'));
+assert.ok(reviewContext.includes('文风偏好，服务于内容，不是事实或逐句禁令'));
+assert.ok(reviewContext.includes('心理描写全部外化'),'retain author preferences with explicit reading priority, rather than silently rewriting saved settings');
+assert.match(reviewContext,/备用票日期栏手写。\n\n【世界设定：调查】/,'distinct rules are separate evidence paragraphs');
 
 const older = [...chapters.filter(c => c.order < 2), chapter(2, '第三章事实。'), chapter(3, '第四章事实。')];
 const memory = { chapter: 0, contentFingerprint: textFingerprint(older[0].content), continuityNotes: [{ fact: '缓存的保管状态', quote: '林岚把车票交给保安登记。' }] };
@@ -22,6 +29,27 @@ assert.ok(!buildWritingContext(source,bible,changed,4,[memory]).includes('缓存
 const metadata = { chapters: [chapter(9,'旧版正文')], storyNodes: [{ id:'b',nodeType:'chapter',order:20,content:'后章' }, { id:'v',nodeType:'volume',order:0 }, {id:'a',nodeType:'chapter',order:10,content:'前章'}] };
 assert.deepEqual(getNovelChapters(metadata).map(c => [c.id,c.order,c.content]), [['a',0,'前章'],['b',1,'后章']], 'reading tools share the current story tree rather than stale legacy chapters');
 
+const referenceBible = { ...bible, characters: [{ id:'driver',name:'林岚',description:'司机',appearance:'',personality:'',relationships:[],backstory:'熟悉交接程序' }] };
+const refs = {
+  worldbuilding: { dimensions: { society: { title:'单位规则',fields:{handover:'上报缺票必须留存编号'} } } },
+  storylines:[{name:'库存核对',status:'active',description:'通过交接记录核对数量',chapterRange:[0,8],milestones:[{chapter:9,label:'不可提前发生的结局',completed:true}]}],
+  casts:[{chapterIndex:2,lockedCharacters:['driver']}],
+  foreshadowing:[{description:'未核实的票号',status:'resolved',plantedInChapter:1,resolvedInChapter:9,suggestedResolveChapter:9}],
+  triples:[{subject:'林岚',predicate:'同事',object:'方票务',sinceChapter:0,source:'bible'},{subject:'林岚',predicate:'知道幕后真相',object:'不可信的自动提取',sinceChapter:0,source:'extracted'}],
+  props:[{id:'ticket',name:'票夹',description:'40张连号票',attributes:{range:'073801—073840'},holderCharacterId:'未来持有人',lifecycleState:'active',introducedChapter:1}],
+  propEvents:[{propId:'ticket',chapterNumber:1,description:'保安登记票夹',toHolderId:'保安'},{propId:'ticket',chapterNumber:9,description:'未来转交',toHolderId:'未来持有人'}],
+};
+const referenceContext = buildWritingContext(source,referenceBible,chapters,2,[],'writing',refs);
+for(const token of ['上报缺票必须留存编号','库存核对','作者本章出场计划','林岚','未核实的票号','方票务','073801—073840','保安登记票夹']) assert.ok(referenceContext.includes(token),token);
+for(const token of ['不可信的自动提取','不可提前发生的结局','台账记为第9章已回收','未来转交','持有者：未来持有人']) assert.equal(referenceContext.includes(token),false,token);
+assert.ok(referenceContext.includes('不强制本章闭合'));
+const fourOfThirtyFour = Array.from({length:34},(_,i)=>chapter(i,i<4?'已写正文':''));
+assert.equal(lastWrittenChapter(fourOfThirtyFour),4,'empty planned chapters do not advance the written position');
+const threads=[{id:'future',status:'planted',plantedInChapter:2,suggestedResolveChapter:10},{id:'due',status:'planted',plantedInChapter:1,suggestedResolveChapter:4},{id:'resolved',status:'resolved',plantedInChapter:1,suggestedResolveChapter:2},{id:'notYetPlanted',status:'planted',plantedInChapter:6,suggestedResolveChapter:4}];
+assert.deepEqual(getDueForeshadowing(threads,4).map(f=>f.id),['due'],'only unresolved threads planted and due in written prose are reminders');
+assert.equal(lastWrittenChapter([]),0);
+assert.deepEqual(getDueForeshadowing(threads,0),[]);
+
 const prose = '林岚把车票放回自己口袋。她没有问保安。';
 const assessment = { dimensions: EDITORIAL_DIMENSIONS.map(name => ({name,score:95})), summary:'道具归属冲突会破坏后续调查。', findings:[{dimension:'timeline_consistency',severity:'critical',quote:'林岚把车票放回自己口袋。',referenceQuote:'林岚把车票交给保安登记。',problem:'未交代取回车票。',suggestion:'补足取回手续，或仍由保安保管。'}],continuityNotes:[{fact:'林岚未询问保安。',quote:'她没有问保安。'}] };
 assert.equal(needsEditorialRevision(parseEditorialAssessment(JSON.stringify(assessment),prose,context)),true,'a hard contradiction cannot be averaged away by high scores');
@@ -30,10 +58,27 @@ assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,findi
 assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,dimensions:assessment.dimensions.slice(1)}),prose,context), /不完整/);
 assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,dimensions:assessment.dimensions.map(d=>({...d,score:101}))}),prose,context), /有效评分/);
 assert.equal(needsEditorialRevision({...assessment,findings:[]}),false);
+assert.equal(needsEditorialRevision({...assessment,findings:[],dimensions:assessment.dimensions.map(d=>({...d,score:20}))}),false,'an unexplained number cannot invent a revision requirement');
 const numbered = {...assessment, findings:[{...assessment.findings[0],quote:undefined,referenceQuote:undefined,paragraphId:'C1',referenceId:'R1'}],continuityNotes:[{fact:'原文事实',paragraphId:'C1'}]};
 assert.ok(labelEditorialParagraphs(prose).startsWith('[C1]'));
 assert.equal(parseEditorialAssessment(JSON.stringify(numbered),prose,context).findings[0].quote,prose,'paragraph references quote the actual source rather than regenerated quotations');
 assert.throws(()=>parseEditorialAssessment(JSON.stringify({...numbered,findings:[{...numbered.findings[0],paragraphId:'C999'}]}),prose,context), /未提供/);
+const multiParagraph = Array.from({length:100},(_,i)=>`第${i+1}段原文。`).join('\r\n \r\n');
+const rangeReview = {...numbered,findings:[{...numbered.findings[0],paragraphId:'C40-C48',referenceId:'C77'}],continuityNotes:[{fact:'一个段落范围支持的事实',paragraphId:'C95-C96'}]};
+const parsedRange = parseEditorialAssessment(JSON.stringify(rangeReview),multiParagraph,context);
+assert.equal(parsedRange.findings[0].quote,Array.from({length:9},(_,i)=>`第${i+40}段原文。`).join('\r\n \r\n'),'preserve source separators across real-world C40-C48 evidence');
+assert.equal(parsedRange.findings[0].referenceQuote,'第77段原文。','allow comparisons within the current chapter');
+assert.equal(resolveEditorialCitation('重复。\n\n重复。\n \n结尾。','C2-C3'),'重复。\n \n结尾。','repeated paragraphs resolve by position');
+assert.throws(()=>resolveEditorialParagraph(multiParagraph,'C40-C48'),/编号无效/,'revision anchors remain one exact paragraph');
+for (const id of ['C48-C40','C40-C101','C1-C21','C1-R3','C0','C01','C40-48','C2,C3']) {
+  assert.throws(()=>resolveEditorialCitation(multiParagraph,id),/无效|未提供/,id);
+}
+assert.throws(()=>parseEditorialAssessment(JSON.stringify({...rangeReview,findings:[{...rangeReview.findings[0],referenceId:'R77'}]}),multiParagraph,'仅有一段前文'),/未提供/,'do not silently switch an invalid source to the current chapter');
+const fingerprints = {contentFingerprint:textFingerprint(prose),contextFingerprint:textFingerprint(context)};
+assert.ok(isReviewCurrent(fingerprints,prose,context));
+assert.equal(isReviewCurrent(fingerprints,prose,context+'新设定。'),false,'setting changes invalidate a report even when the chapter is unchanged');
+assert.equal(isReviewCurrent(fingerprints,prose+'改文。',context),false);
+assert.equal(isReviewCurrent(null,prose,context),false);
 assert.throws(()=>parseOutlineAssessment(JSON.stringify({ready:true,outline:'',changes:[],unresolvedIssues:[]})), /不完整/);
 assert.throws(()=>parseOutlineAssessment(JSON.stringify({ready:true,outline:'未修正的方案',changes:[],unresolvedIssues:['道具归属仍有矛盾']})), /未解决/);
 assert.equal(parseOutlineAssessment(JSON.stringify({ready:false,outline:'',changes:[],unresolvedIssues:['无法合理接续']})).ready,false);

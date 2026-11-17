@@ -3,7 +3,7 @@
 // PlotPilot-inspired interactive visualization with importance coloring
 // ============================================================================
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { Typography, Tag, Space, Empty, Badge, Drawer, Card, Button } from 'antd';
 import {
   TeamOutlined, ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
@@ -57,10 +57,12 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
   const echartRef = useRef<ReactECharts | null>(null);
 
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
+  const [revision, refresh] = useState(0);
+  useEffect(() => repo.subscribe(['bible', 'triples'], () => refresh(n => n + 1)), [repo]);
 
   const { characters, triples, charSet } = useMemo(() => {
     const bible = repo.loadBible();
-    const allTriples = repo.loadTriples();
+    const allTriples = repo.loadTriples().filter(tr => tr.source === 'bible');
     const charNames = new Set(bible.characters.map((c) => c.name));
     const charTriples = allTriples.filter(
       (tr) => charNames.has(tr.subject) && charNames.has(tr.object),
@@ -96,7 +98,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
     }
 
     return { characters: bible.characters, triples: allLinks, charSet: charNames };
-  }, [repo]);
+  }, [repo, revision]);
 
   const relatedTriples = useMemo(() => {
     if (!selectedChar) return [];

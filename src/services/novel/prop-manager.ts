@@ -395,7 +395,7 @@ ${propsSummary}
   }
 
   private saveAll(props: Prop[]): void {
-    localStorage.setItem(this.storageKey(), JSON.stringify(props));
+    this.repo.saveCustomData('props', props);
   }
 
   private saveEvent(event: PropEvent): void {
@@ -403,7 +403,7 @@ ${propsSummary}
       const raw = localStorage.getItem(this.eventsKey());
       const events: PropEvent[] = raw ? JSON.parse(raw) : [];
       events.push(event);
-      localStorage.setItem(this.eventsKey(), JSON.stringify(events));
+      this.repo.saveCustomData('prop-events', events);
     } catch { /* swallow */ }
   }
 

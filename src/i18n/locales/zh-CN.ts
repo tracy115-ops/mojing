@@ -1314,7 +1314,7 @@ const zhCN: Record<string, string> = {
   'workbench.tab.props': '道具管理',
   'workbench.tab.phase': '阶段/进化',
   'workbench.toggle': '叙事工作台',
-  'workbench.toggleHint': '故事圣经 / 张力曲线 / 伏笔 / 治理 / 道具 / 进化',
+  'workbench.toggleHint': '正文审读、创作资料、人物、伏笔与写作记录',
 
   // ── Dashboard ─────────────────────────────
   'dashboard.title': '叙事仪表盘',
@@ -1434,7 +1434,7 @@ const zhCN: Record<string, string> = {
   'props.lifecycle.damaged': '损毁',
   'props.lifecycle.resolved': '已结局',
   'props.events.title': '{name} — 事件历史',
-  'props.events.empty': '暂无事件记录（生成章节后将自动提取道具事件）',
+  'props.events.empty': '暂无已保存的事件记录',
   'props.transfer': '{from} → {to}',
 
   // ── Tension Chart ─────────────────────────
@@ -1595,7 +1595,7 @@ const zhCN: Record<string, string> = {
   'continuity.handoffs': '交接线索',
 
   // ── Workbench Tab (new) ──────────────────
-  'workbench.tab.audit': '反AI审计',
+  'workbench.tab.audit': '重复用语',
   'workbench.tab.autopilotPipeline': '写作管线',
 
   // ── Autopilot Pipeline View ─────────────────
@@ -1653,10 +1653,10 @@ const zhCN: Record<string, string> = {
   'qualityGate.evaluating': '正在评估章节质量...',
 
   // ── Props hints ──────────────────────────
-  'props.emptyHint': '点击右上角「添加道具」手动创建，或运行自动写作时从章节内容自动提取。',
+  'props.emptyHint': '记录道具的性质、持有者与状态，作为写作和审读的参考。',
 
   // ── Foreshadow hints ─────────────────────
-  'foreshadow.emptyHint': '点击右上角「添加伏笔」手动创建，或运行自动写作时从章节内容自动检测。',
+  'foreshadow.emptyHint': '记录需要发展的线索。建议回收章只是计划，不会自动判定已经解决。',
 
   // ── Psyche (4D Model) ──────────────────
   'psyche.sectionTitle': '心理档案（4D模型）',
@@ -1692,7 +1692,7 @@ const zhCN: Record<string, string> = {
   'dialogue.empty': '选择角色并描述场景后，点击生成',
   'dialogue.needCharAndScene': '请选择角色并输入场景描述',
   'dialogue.fallbackHint': '请配置 API 接口后可生成真实对话',
-  'dialogue.usageHint': '根据角色的性格档案和声音锚点，在指定场景下生成符合角色特征的对话。需先在"故事圣经"中创建角色。',
+  'dialogue.usageHint': '结合前文、当前章正文和角色设定生成对话草案，供作者选择。先在创作资料中添加角色。',
 
   // ── Worldbuilding ─────────────────────────
   'worldbuilding.title': '世界构建',
@@ -1763,19 +1763,19 @@ const zhCN: Record<string, string> = {
 
   // ── Cast Management ───────────────────────
   'cast.title': '角色阵容',
-  'cast.castLock': '章节锁定',
-  'cast.coverage': '覆盖率',
+  'cast.castLock': '出场计划',
+  'cast.coverage': '姓名提及',
   'cast.selectChapter': '选择章节',
   'cast.noChapters': '暂无章节',
   'cast.noCharacters': '请先在故事圣经中添加角色',
   'cast.gotoBible': '前往故事圣经',
-  'cast.lock': '锁定到此章节',
-  'cast.unlock': '解除锁定',
+  'cast.lock': '计划参与本章',
+  'cast.unlock': '移出本章计划',
   'cast.charName': '角色',
-  'cast.chapterCount': '出场章数',
-  'cast.coverageRate': '覆盖率',
-  'cast.autoDetectHint': '绿色标记表示系统根据章节内容自动识别到的角色出场，蓝色为手动锁定。覆盖率由两者综合计算。',
-  'cast.autoDetected': '已识别',
+  'cast.chapterCount': '提及章数',
+  'cast.coverageRate': '已写章占比',
+  'cast.autoDetectHint': '绿色表示正文提及姓名，可能是回忆或转述；蓝色表示作者的出场计划，会用于本章写作。提及统计只计算已有正文的章节。',
+  'cast.autoDetected': '姓名被提及',
 
   // ── Workbench Tabs (new) ──────────────────
   'workbench.tab.dialogue': '对话',
@@ -1785,7 +1785,7 @@ const zhCN: Record<string, string> = {
   'workbench.tab.guardrail': '质量护栏',
   'workbench.tab.consistency': '一致性',
   'workbench.tab.drift': '声纹漂移',
-  'workbench.tab.checkpoint': '时间线',
+  'workbench.tab.checkpoint': '续写记录',
 
   // ── Quality Guardrail ──────────────────────
   'guardrail.title': '质量护栏',
@@ -1853,7 +1853,7 @@ const zhCN: Record<string, string> = {
   'drift.historyTrend': '漂移趋势',
 
   // ── Checkpoint Timeline ────────────────────
-  'checkpointTimeline.title': '检查点时间线',
+  'checkpointTimeline.title': '最近续写记录',
   'checkpointTimeline.empty': '运行自动写作后将自动创建检查点',
   'checkpointTimeline.trigger.chapter_complete': '章节完成',
   'checkpointTimeline.trigger.act_change': '幕变更',
@@ -1939,8 +1939,8 @@ const zhCN: Record<string, string> = {
   'workbench.category.overview': '总览',
   'workbench.category.characters': '角色',
   'workbench.category.plot': '剧情',
-  'workbench.category.quality': '质量',
-  'workbench.category.tools': '工具',
+  'workbench.category.quality': '审读',
+  'workbench.category.tools': '写作记录',
 
   // ── Character Relation Graph ─────────────────
   'relationGraph.title': '角色关系图谱',
@@ -1990,7 +1990,7 @@ const zhCN: Record<string, string> = {
 
   // ── Chapter Review ───────────────────────────
   'chapterReview.title': '章节评审',
-  'chapterReview.empty': '运行评审后将显示多维度质量报告',
+  'chapterReview.empty': '运行评审后查看具体阅读意见与对应原文',
   'chapterReview.runReview': '运行评审',
   'chapterReview.overallScore': '综合评分',
   'chapterReview.chapterN': '第 {chapter} 章评审结果',
@@ -2275,13 +2275,13 @@ const zhCN: Record<string, string> = {
   "novel.editor.autoReview": "生成后审稿",
   "novel.editor.runReview": "审稿与连贯性",
   "novel.editor.reviewTitle": "小说阅读审稿",
-  "novel.editor.reviewLimit": "编辑建议供审读；分数不能代替通读，也不代表作品已定稿。",
+  "novel.editor.reviewLimit": "请结合原文判断编辑建议；审读可能错漏，不能替代通读与作者判断。",
   "novel.editor.reviewFailed": "审稿未完成，正文已保留",
   "novel.editor.draftSaved": "初稿已保存，尚未审稿",
   "novel.editor.needsRevision": "待修订",
   "novel.editor.reviewed": "已审读，待作者确认",
   "novel.editor.unreviewed": "尚未审读当前正文",
-  "novel.editor.reviewStale": "正文或前文已变更，需重新审读",
+  "novel.editor.reviewStale": "正文、前文或设定已变更，需重新审读",
   "novel.editor.viewReview": "查看问题与原文",
   "novel.editor.reviseIssues": "按审稿修订",
   "novel.editor.revisionPreview": "逐段审阅修订",
@@ -2291,8 +2291,8 @@ const zhCN: Record<string, string> = {
   "novel.editor.deleted": "删除此处冗余文字",
   "novel.editor.noEdits": "本次没有提出值得采用的修订，正文已保留",
   "novel.editor.selectEdits": "请选择要采用的修订，或取消以保留原文",
-  "novel.editor.reference": "前文或设定依据",
-  "novel.editor.sourceChanged": "正文已改变，请重新提出修订",
+  "novel.editor.reference": "对照原文",
+  "novel.editor.sourceChanged": "正文或创作依据已改变，请重新提出修订",
   "novel.editor.restoreRevision": "还原上次 AI 修改",
   "novel.editor.restoreUnavailable": "没有可还原版本，或采用修订后正文已被编辑",
   "novel.editor.severity.minor": "局部建议",
@@ -2304,6 +2304,49 @@ const zhCN: Record<string, string> = {
   "novel.editor.dim.plot_coherence": "因果与推进",
   "novel.editor.dim.foreshadowing_usage": "线索与兑现",
   "novel.editor.dim.voice_quality": "文字与叙述",
+  'workbench.manuscript.title': '正文与待办',
+  'workbench.manuscript.written': '已有正文 / 已建章节',
+  'workbench.manuscript.characters': '正文字符数',
+  'workbench.manuscript.review': '逐章审读',
+  'workbench.manuscript.openReview': '查看审稿',
+  'workbench.manuscript.waiting': '待审读 {count} 章',
+  'workbench.manuscript.revision': '有修改意见 {count} 章',
+  'workbench.manuscript.empty': '此章尚无正文',
+  'workbench.manuscript.unreviewed': '尚未审读',
+  'workbench.manuscript.reference': '创作资料',
+  'workbench.manuscript.bibleCount': '已保存 {count} 位角色的设定',
+  'workbench.manuscript.referenceHint': '保存的人物、地点、世界观、支线和道具会进入写作与审读。正文决定已发生的事实，计划不能冒充事件。',
+  'workbench.manuscript.foreshadow': '线索备忘',
+  'workbench.manuscript.openLedger': '打开台账',
+  'workbench.manuscript.noDue': '没有到建议回收章节的记录',
+  'workbench.manuscript.dueHint': '到建议章节仅作提醒，是否回收由实际情节决定。',
+  'workbench.review.selectChapter': '选择审读章节',
+  'workbench.phrases.title': '重复用语对照',
+  'workbench.phrases.hint': '列出当前章重复出现的常见表达及原文，供逐处比较。出现这些词本身没有错；不判定作者身份，也不自动替换。',
+  'workbench.phrases.empty': '词表中没有重复命中；仍需通读正文判断表达',
+  'workbench.phrases.count': '{count} 处',
+  'workbench.checkpoint.hint': '保存自动写作的续写位置，正文仍在章节中。继续任务会先审读已保存草稿；此处不是正文版本备份。',
+  'workbench.checkpoint.savedChapter': '上次保存章节',
+  'workbench.checkpoint.next': '下次继续位置',
+  'workbench.checkpoint.legacy': '旧记录，继续时先核对已保存正文',
+  'workbench.checkpoint.finished': '本次篇幅计划已完成',
+  'workbench.pipeline.hint': '显示当前会话的实际任务状态。任务完成后仍需通读正文，判断内容是否值得采用。',
+  'workbench.pipeline.currentStage': '当前步骤',
+  'workbench.pipeline.draft': '本章生成中的正文',
+  'workbench.pipeline.finishedHint': '任务已完成，当前作品共 {count} 字符。请继续审读与编辑。',
+  'workbench.graph.hint': '展示已保存的关系记录。作者设定会用于写作；旧模型提取仅供核对，不作为已证实事实自动注入。',
+  'workbench.graph.unconfirmed': '待核对',
+  'workbench.graph.confirm': '核对后采用为作者设定，并用于写作',
+  'workbench.graph.deleteHint': '直接录入的记录可删除；人物设定中的关系请在创作资料中编辑',
+  'workbench.world.hint': '只填写与作品有关的规则和细节，留空即可跳过。保存后用于写作和审读；不需要补满所有栏目。',
+  'workbench.props.introducedChapter': '首次登场章节号',
+  'workbench.ledger.dueCount': '建议复看 {count} 条',
+  'foreshadow.resolveHere': '确认已在第{chapter}章回收',
+  'foreshadow.unknownChapter': '尚未记录埋设章节',
+  'foreshadow.plantedChapter': '埋设章节号',
+  'foreshadow.invalidRange': '建议回收章节不能早于埋设章节',
+  'storyline.invalidRange': '结束章节不能早于开始章节',
+  'dialogue.generateFailed': '对话生成未完成，请检查模型服务后重试',
 };
 
 export default zhCN;

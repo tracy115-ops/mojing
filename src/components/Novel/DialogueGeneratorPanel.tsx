@@ -11,16 +11,22 @@ import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { providerRouter } from '@/services/providers';
 import type { LLMGenerateRequest } from '@/types/providers';
 import type { BibleCharacter } from '@/types/narrative';
+import type { NovelMetadata } from '@/types';
+import { useProjectStore } from '@/stores/projectStore';
+import { ChapterReviewer } from '@/services/novel/chapter-reviewer';
+import { getNovelChapters } from '@/services/novel/writing-context';
 
 const { TextArea } = Input;
 
 interface DialogueGeneratorPanelProps {
   novelId: string;
+  chapterIndex: number;
 }
 
-const DialogueGeneratorPanel: React.FC<DialogueGeneratorPanelProps> = ({ novelId }) => {
+const DialogueGeneratorPanel: React.FC<DialogueGeneratorPanelProps> = ({ novelId, chapterIndex }) => {
   const { t } = useTranslation();
   const [repo] = useState(() => new NarrativeRepository(novelId));
+  const project = useProjectStore(s => s.projects.find(p => p.id === novelId));
 
   const [characters, setCharacters] = useState<BibleCharacter[]>([]);
   const [selectedCharId, setSelectedCharId] = useState<string | undefined>();
@@ -33,6 +39,8 @@ const DialogueGeneratorPanel: React.FC<DialogueGeneratorPanelProps> = ({ novelId
   }, [repo]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => repo.subscribe(['bible'], refresh), [repo, refresh]);
+  useEffect(() => { setGenerated(''); }, [chapterIndex]);
 
   const selectedChar = useMemo(
     () => characters.find((c) => c.id === selectedCharId),
@@ -47,6 +55,14 @@ const DialogueGeneratorPanel: React.FC<DialogueGeneratorPanelProps> = ({ novelId
     setGenerating(true);
     setGenerated('');
     try {
+      if (!project || project.type !== 'novel') throw new Error(t('dialogue.generateFailed'));
+      const meta = project.metadata as NovelMetadata;
+      const chapters = getNovelChapters(meta);
+      const chapter = chapters.find(c => c.order === chapterIndex);
+      const reference = new ChapterReviewer(novelId).buildContext(chapterIndex, {
+        source: { title: project.title, description: project.description, genre: meta.genre, style: meta.style, language: meta.language },
+        chapters, outline: chapter?.outline,
+      }, 'writing');
       const psyche = selectedChar.psyche;
       const voice = selectedChar.voiceAnchor;
       const prompt = `你是角色"${selectedChar.name}"。
@@ -63,20 +79,14 @@ ${selectedChar.personality ? `性格: ${selectedChar.personality}` : ''}
 
       const request: LLMGenerateRequest = {
         taskType: 'generation',
-        systemPrompt: `你是角色对话生成器。根据角色的心理档案和场景描述，生成符合角色性格的对话。只输出角色说的话。`,
-        userPrompt: prompt,
-        maxTokens: 500,
+        systemPrompt: `你是角色对话生成器。这是供作者选择的对话草案，结合前文与当前章已经发生的内容。人物的知识、关系和目的须有依据；口头禅和性格只作参考，不必每句都出现。只输出角色说的话。\n\n${reference}`,
+        userPrompt: `${chapter?.content ? `【当前章已写正文】\n${chapter.content}\n\n` : ''}${prompt}`,
+        maxTokens: 2048,
       };
       const response = await providerRouter.generate(request);
       setGenerated(response.content.trim());
-    } catch {
-      // Fallback: generate a template dialogue
-      const tic = selectedChar.voiceAnchor?.verbalTic ?? '';
-      const style = selectedChar.voiceAnchor?.speechStyle ?? '';
-      setGenerated(
-        `${tic ? tic + '……' : ''}（基于${selectedChar.name}的${style || '性格'}，在此场景下的对话）\n\n` +
-        `[${t('dialogue.fallbackHint')}]`,
-      );
+    } catch (error) {
+      message.error(t('dialogue.generateFailed') + ': ' + String(error));
     } finally {
       setGenerating(false);
     }
@@ -113,7 +123,8 @@ ${selectedChar.personality ? `性格: ${selectedChar.personality}` : ''}
           style={{ width: '100%' }}
           placeholder={t('dialogue.selectCharacterPlaceholder')}
           value={selectedCharId}
-          onChange={setSelectedCharId}
+          onChange={id => { setSelectedCharId(id); setGenerated(''); }}
+          disabled={generating}
           showSearch
           optionFilterProp="label"
           options={characters.map((c) => ({ value: c.id, label: c.name }))}
@@ -153,6 +164,7 @@ ${selectedChar.personality ? `性格: ${selectedChar.personality}` : ''}
         <TextArea
           rows={3}
           value={sceneDesc}
+          disabled={generating}
           onChange={(e) => setSceneDesc(e.target.value)}
           placeholder={t('dialogue.sceneDescPlaceholder')}
         />

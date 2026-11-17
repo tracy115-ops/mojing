@@ -3,7 +3,7 @@
 // Inspired by PlotPilot's ManuscriptPropsPanel + PropDetailDrawer
 // ============================================================================
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   Card, Table, Tag, Button, Space, Modal, Form, Input, Select, Typography, Tooltip, Badge, Timeline, Empty, message, Popconfirm,
 } from 'antd';
@@ -32,9 +32,9 @@ const LIFECYCLE_COLOR: Record<LifecycleState, string> = {
 };
 
 const CATEGORY_COLOR: Record<PropCategory, string> = {
-  weapon: '#ef4444', artifact: '#8b5cf6', tool: '#3b82f6',
-  consumable: '#f59e0b', token: '#ec4899', clothing: '#06b6d4',
-  mount: '#22c55e', other: '#6b7280',
+  weapon: 'var(--accent-danger)', artifact: 'var(--accent-primary)', tool: 'var(--accent-info)',
+  consumable: 'var(--accent-warning)', token: 'var(--accent-primary)', clothing: 'var(--accent-info)',
+  mount: 'var(--accent-success)', other: 'var(--text-secondary)',
 };
 
 const CATEGORY_LABEL: Record<PropCategory, string> = {
@@ -55,7 +55,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
   const { t } = useTranslation();
   const [manager] = useState(() => new PropManager(novelId));
   const [repo] = useState(() => new NarrativeRepository(novelId));
-  const bibleCharacters = useMemo(() => repo.loadBible().characters ?? [], [repo]);
+  const [bibleCharacters, setBibleCharacters] = useState(() => repo.loadBible().characters ?? []);
 
   const [props, setProps] = useState<Prop[]>(() => manager.loadAll());
   const [events, setEvents] = useState<PropEvent[]>(() => manager.loadEvents());
@@ -67,7 +67,9 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
   const refresh = useCallback(() => {
     setProps(manager.loadAll());
     setEvents(manager.loadEvents());
-  }, [manager]);
+    setBibleCharacters(repo.loadBible().characters ?? []);
+  }, [manager, repo]);
+  useEffect(() => repo.subscribe(['bible', 'props', 'prop-events'], refresh), [repo, refresh]);
 
   const openModal = (prop?: Prop) => {
     if (prop) {
@@ -77,16 +79,22 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
         aliases: prop.aliases.join(', '),
         category: prop.category,
         holderCharacterId: prop.holderCharacterId,
+        lifecycleState: prop.lifecycleState,
+        introducedChapter: prop.introducedChapter,
       });
     } else {
       setEditingProp(null);
       form.resetFields();
+      form.setFieldsValue({ category: 'other', lifecycleState: 'dormant' });
     }
     setModalOpen(true);
   };
 
   const saveProp = async () => {
-    const values = await form.validateFields();
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
+    const state = { lifecycleState: values.lifecycleState as LifecycleState,
+      introducedChapter: values.introducedChapter ? Number(values.introducedChapter) : undefined };
     if (editingProp) {
       manager.updateProp(editingProp.id, {
         name: values.name,
@@ -94,9 +102,10 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
         aliases: (values.aliases ?? '').split(/[,，、]/).map((s: string) => s.trim()).filter(Boolean),
         category: values.category,
         holderCharacterId: values.holderCharacterId || undefined,
+        ...state,
       });
     } else {
-      manager.createProp({
+      const prop = manager.createProp({
         novelId,
         name: values.name,
         description: values.description,
@@ -104,6 +113,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
         category: values.category,
         holderCharacterId: values.holderCharacterId || undefined,
       });
+      manager.updateProp(prop.id, state);
     }
     refresh();
     setModalOpen(false);
@@ -138,10 +148,9 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* Stats */}
       <div style={statsRow}>
-        <span style={statItem('#22c55e')}>● {props.filter((p) => p.lifecycleState === 'active').length} active</span>
-        <span style={statItem('#3b82f6')}>● {props.filter((p) => p.lifecycleState === 'introduced').length} introduced</span>
-        <span style={statItem('#9ca3af')}>● {props.filter((p) => p.lifecycleState === 'dormant').length} dormant</span>
-        <span style={statItem('#ef4444')}>● {props.filter((p) => p.lifecycleState === 'damaged').length} damaged</span>
+        {(['active', 'introduced', 'dormant', 'damaged'] as LifecycleState[]).map(state => (
+          <span key={state} style={statItem()}>● {props.filter(p => p.lifecycleState === state).length} {t('props.lifecycle.' + state)}</span>
+        ))}
       </div>
 
       {/* Props table */}
@@ -188,11 +197,11 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
             },
             {
               title: t('props.col.holder'), dataIndex: 'holderCharacterId', key: 'holder', width: 80,
-              render: (v) => v ? <Text style={{ fontSize: 11 }}>{v}</Text> : <Text type="secondary" style={{ fontSize: 10 }}>{t('props.col.holderNone')}</Text>,
+              render: (v) => v ? <Text style={{ fontSize: 11 }}>{bibleCharacters.find(c => c.id === v)?.name || v}</Text> : <Text type="secondary" style={{ fontSize: 10 }}>{t('props.col.holderNone')}</Text>,
             },
             {
               title: t('props.col.intro'), dataIndex: 'introducedChapter', key: 'intro', width: 50,
-              render: (v) => v ? `Ch${v}` : '-',
+              render: (v) => v ? t('novel.chapterOrder', { order: v }) : '-',
             },
             {
               title: '', key: 'actions', width: 80, align: 'center',
@@ -211,9 +220,9 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
 
       {/* Detail: Event Timeline */}
       {detailProp && (
-        <Card
+        <Card key={detailProp.id}
           size="small"
-          title={<Space><HistoryOutlined /> {t('props.events.title', { name: detailProp.name })}</Space>}
+          title={<Space><HistoryOutlined /> {t('props.events.title', { name: props.find(p => p.id === detailProp.id)?.name || detailProp.name })}</Space>}
           style={{ marginTop: 4 }}
         >
           {propEvents.length === 0 ? (
@@ -225,7 +234,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
                 children: (
                   <div style={{ fontSize: 11 }}>
                     <Space>
-                      <Tag style={{ fontSize: 9 }}>Ch{e.chapterNumber}</Tag>
+                      <Tag style={{ fontSize: 9 }}>{t('novel.chapterOrder', { order: e.chapterNumber })}</Tag>
                       <Tag color={e.eventType === 'damaged' ? 'red' : e.eventType === 'resolved' ? 'default' : 'blue'} style={{ fontSize: 9 }}>
                         {e.eventType}
                       </Tag>
@@ -273,6 +282,14 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
           <Form.Item name="description" label={t('props.descriptionLabel')}>
             <TextArea rows={2} />
           </Form.Item>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Form.Item name="lifecycleState" label={t('common.status')} style={{ flex: 1 }} rules={[{ required: true }]}>
+              <Select options={(Object.keys(LIFECYCLE_LABEL) as LifecycleState[]).map(value => ({ value, label: t('props.lifecycle.' + value) }))} />
+            </Form.Item>
+            <Form.Item name="introducedChapter" label={t('workbench.props.introducedChapter')} style={{ flex: 1 }}>
+              <Input type="number" min={1} />
+            </Form.Item>
+          </div>
           <Form.Item name="aliases" label={t('props.aliasesLabel')}>
             <Input placeholder={t('props.aliasesPlaceholder')} />
           </Form.Item>

@@ -21,8 +21,8 @@ export class CheckpointManager {
   }
 
   /**
-   * Save a checkpoint before each chapter generation.
-   * This allows resuming from the exact state if generation is interrupted.
+   * Record the continuation position after a reviewed chapter.
+   * Prose is persisted separately in the project; this is not a version snapshot.
    */
   save(params: {
     autopilotState: AutopilotState;
@@ -33,6 +33,7 @@ export class CheckpointManager {
     foreshadowing: Foreshadowing[];
     chapterIndex: number;
     beatIndex: number;
+    nextChapterIndex?: number;
   }): void {
     const checkpoint: AutopilotCheckpoint = {
       novelId: params.autopilotState.novelId,
@@ -47,15 +48,12 @@ export class CheckpointManager {
       foreshadowingSnapshot: structuredClone(params.foreshadowing),
       chapterIndex: params.chapterIndex,
       beatIndex: params.beatIndex,
+      nextChapterIndex: params.nextChapterIndex,
     };
 
     this.repo.saveCheckpoint(checkpoint);
 
-    // Also persist narrative data alongside the checkpoint
-    this.repo.saveForeshadowing(params.foreshadowing);
-    this.repo.saveCompletedBeats(params.beatLock.completedBeats);
-    this.repo.saveTriples(params.factLock.relationshipGraph);
-    this.repo.saveTimelineAnchors(params.factLock.timelineAnchors);
+    // A checkpoint is a resume record. Saving it must not overwrite author-edited ledgers.
   }
 
   /**
@@ -114,7 +112,7 @@ export class CheckpointManager {
       breakerState: cp.breakerState,
       memorySnapshot: cp.memorySnapshot,
       foreshadowing: cp.foreshadowingSnapshot,
-      resumeFromChapter: cp.chapterIndex,
+      resumeFromChapter: cp.nextChapterIndex ?? cp.chapterIndex,
       resumeFromBeat: cp.beatIndex,
     };
   }

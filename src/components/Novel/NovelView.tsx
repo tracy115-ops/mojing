@@ -345,6 +345,12 @@ const NovelView: React.FC = () => {
   const activeChapter = chapters.find((c) => c.id === activeChapterId);
   const hasEndpoint = endpoints.length > 0;
 
+  useEffect(() => {
+    if (activeProject && !chapters.some(c => c.id === activeChapterId)) {
+      setActiveChapterId(chapters.find(c => c.content.trim())?.id ?? chapters[0]?.id ?? null);
+    }
+  }, [activeProject, activeChapterId, chapters]);
+
   // Initialize narrative data from persisted project on mount / project change
   useEffect(() => {
     if (activeProject?.type === 'novel') {
@@ -581,7 +587,8 @@ const NovelView: React.FC = () => {
       case 'stage_change':
         store.setAutopilotState(event.novelId, {
           currentStage: event.data.stage as AutopilotState['currentStage'],
-          currentChapterNumber: (event.data.chapter as number) ?? 0,
+          ...(typeof event.data.chapter === 'number' ? { currentChapterNumber: event.data.chapter } : {}),
+          ...(typeof event.data.progress === 'number' ? { progress: event.data.progress } : {}),
         });
         break;
 
@@ -599,6 +606,7 @@ const NovelView: React.FC = () => {
         break;
 
       case 'chapter_complete': {
+        if (typeof event.data.progress === 'number') store.setAutopilotState(event.novelId, { progress: event.data.progress });
         // Engine sends narrative data directly in the event
         const narrative = event.data.narrative as { triples: RelationshipTriple[]; anchors: TimelineAnchor[]; beats: CompletedBeat[]; foreshadowing: Foreshadowing[] } | undefined;
         if (narrative) {
@@ -619,6 +627,7 @@ const NovelView: React.FC = () => {
       case 'status_change':
         store.setAutopilotState(event.novelId, {
           status: event.data.status as AutopilotState['status'],
+          ...(event.data.status === 'running' ? { lastError: undefined } : {}),
           ...(event.data.error ? { lastError: event.data.error as string } : {}),
         });
         if (event.data.reason === 'circuit_breaker') {
@@ -626,6 +635,7 @@ const NovelView: React.FC = () => {
           store.setAutopilotState(event.novelId, { lastError: err });
         }
         if (event.data.status === 'idle' || event.data.status === 'completed' || event.data.status === 'error') {
+          if (event.data.status === 'completed') store.setAutopilotState(event.novelId, { progress: 1 });
           // Clear streaming content on completion
           store.setAutopilotState(event.novelId, { currentChapterContent: undefined });
           // Final narrative data refresh and persist
@@ -764,6 +774,7 @@ const NovelView: React.FC = () => {
 
     engine.onEvent(handleAutopilotEvent);
     engineRef.current = engine;
+    setAutopilotState(activeProjectId, { ...engine.getState(), lastError: undefined, currentChapterContent: undefined });
     setActiveEngine(activeProjectId);
 
     engine.start();
@@ -959,7 +970,8 @@ const NovelView: React.FC = () => {
                         key={activeProjectId}
                         novelId={activeProjectId}
                         totalChapters={chapters.length}
-                        currentChapter={chapters.filter((c) => c.content).length}
+                        chapterIndex={activeChapter?.order ?? 0}
+                        onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) setActiveChapterId(chapter.id); }}
                       />
                     </div>
                   </div>

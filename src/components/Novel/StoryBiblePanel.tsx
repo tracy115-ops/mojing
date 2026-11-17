@@ -103,6 +103,7 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
   }, [repo]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => repo.subscribe(['bible'], refresh), [repo, refresh]);
 
   // --- Character CRUD ---
 
@@ -135,13 +136,14 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
   };
 
   const saveCharacter = async () => {
-    const values = await charForm.validateFields();
+    let values;
+    try { values = await charForm.validateFields(); } catch { return; }
     const id = editingChar?.id ?? `char_${Date.now()}`;
 
     const char: BibleCharacter = {
       id,
       name: values.name,
-      aliases: values.aliases.split(/[,，、]/).map((s: string) => s.trim()).filter(Boolean),
+      aliases: (values.aliases || '').split(/[,，、]/).map((s: string) => s.trim()).filter(Boolean),
       description: values.description,
       appearance: values.appearance,
       personality: values.personality,
@@ -196,7 +198,8 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
   };
 
   const saveLocation = async () => {
-    const values = await locForm.validateFields();
+    let values;
+    try { values = await locForm.validateFields(); } catch { return; }
     const id = editingLoc?.id ?? `loc_${Date.now()}`;
 
     const loc: BibleLocation = {
@@ -237,7 +240,8 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
   };
 
   const saveWorldSetting = async () => {
-    const values = await wsForm.validateFields();
+    let values;
+    try { values = await wsForm.validateFields(); } catch { return; }
     const id = editingWs?.id ?? `ws_${Date.now()}`;
 
     const ws: BibleWorldSetting = {
@@ -304,7 +308,7 @@ const StoryBiblePanel: React.FC<StoryBiblePanelProps> = ({ novelId }) => {
                   title={
                     <Space>
                       <span style={{ fontWeight: 600 }}>{char.name}</span>
-                      {char.aliases.length > 0 && (
+                      {char.aliases.some(alias => alias.trim()) && (
                         <Text type="secondary" style={{ fontSize: 11 }}>
                           ({char.aliases.join(', ')})
                         </Text>

@@ -45,11 +45,18 @@ app.onEvent(event => {
     } else if (system.includes('认真通读作品的小说编辑')) {
       const assessment = { dimensions: ['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name => ({ name, score: 80 })), summary: 'Fixture editorial response, not a live quality judgment.', findings: [], continuityNotes: [{ fact: '林岚取票走向摄像头。', quote: '林岚从黄色帆布包中取出旧票，走向车载摄像头。' }] };
       if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'critical',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved hard problem.',suggestion:'Fixture correction direction.' });
+      if (/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
+        if (body.messages[1].content.includes('雨水敲着车窗。')) assessment.findings.push({dimension:'plot_coherence',severity:'major',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture initial problem.',suggestion:'Fixture correction.'});
+        if (body.messages[1].content.includes('AutopilotCandidateContract')) assessment.findings.push({dimension:'timeline_consistency',severity:'major',quote:'林岚从黄色帆布包中取出旧票，走向车载摄像头。',referenceQuote:'',problem:'Fixture remaining problem.',suggestion:'Requires author judgment.'});
+      }
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) }, finish_reason: 'stop' }] });
     } else if (system.includes('叙事节拍规划师')) {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ beats: [0,1,2].map(i => ({ description:'Lin Lan checks the ticket, scene '+i, targetWords:1000,focus:'dialogue',sceneGoal:'Track the ticket owner.' })) }) },finish_reason:'stop' }] });
     } else if (system.includes('小说责任编辑')) {
-      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits: [{ before: '雨水敲着车窗。', after: '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }, {before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'}] }) }, finish_reason: 'stop' }] });
+      const alreadyRevised = body.messages[1].content.includes('雨点敲着车顶。');
+      const edits = [{ before: alreadyRevised ? '雨点敲着车顶。' : '雨水敲着车窗。', after: alreadyRevised ? '雨声落在车顶。' : '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }];
+      if (!/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) edits.push({before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'});
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits }) }, finish_reason: 'stop' }] });
     } else if (body.stream) {
       type = 'text/event-stream';
       result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
@@ -61,9 +68,7 @@ app.onEvent(event => {
 });
 const fill = (selector, value) => app.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
 const choose = async (selector, label) => {
-  const point = await app.evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-  await app.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
-  await app.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+  await app.evaluate(`document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').querySelector('.ant-select-selector').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))`);
   const option = `(()=>{const input=document.querySelector(${JSON.stringify(selector)});if(!input)return;const popup=document.getElementById(input.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');if(!popup||popup.classList.contains('ant-select-dropdown-hidden'))return;return[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)});})()`;
   await app.waitFor(`!!(${option})`, 'option '+label); await app.evaluate(`(${option}).click()`);
 };
@@ -119,7 +124,9 @@ try {
   for (const { body } of writing) {
     assert.match(body.messages[0].content, /林岚，30岁女公交司机/);
     assert.match(body.messages[0].content, /线索必须可以验证/);
-    assert.deepEqual(body.thinking, { type: 'disabled' });
+    const proseRequest = body.messages[0].content.includes('你是一位小说作者');
+    assert.deepEqual(body.thinking, { type: proseRequest ? 'enabled' : 'disabled' });
+    if (proseRequest) assert.ok(body.max_tokens >= 16000,'reasoning must leave sufficient budget for the complete prose');
   }
   await app.screenshot('novel-context.png');
   assert.ok(novelProse.length > 4000);
@@ -142,6 +149,31 @@ try {
     assert.ok(request.body.max_tokens >= 12000, 'leave room for both reasoning and the complete editorial response');
   }
   await app.screenshot('novel-editorial-review.png');
+  // Keep the editor and review sidebar mounted while settings change in this window.
+  await app.click('[data-workbench-category="quality"]');
+  await app.evaluate(`[...document.querySelectorAll('.ant-tabs-tab')].find(e=>e.textContent.includes('章节评审')).click()`);
+  await app.waitFor('!!document.querySelector(\'[data-testid="chapter-review-panel"]\')', 'review sidebar');
+  const panel = 'document.querySelector(\'[data-testid="chapter-review-panel"]\')';
+  await app.waitFor(`${panel}.innerText.includes('已审读，待作者确认')`, 'sidebar shares the editor report');
+  await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const repo=new NarrativeRepository(${novelExpr}.id);const bible=repo.loadBible();bible.worldSettings.push({id:'changed-rule',name:'Changed rule',description:'车票需以实物核验。'});repo.saveBible(bible);})()`);
+  await app.waitFor(`${panel}.innerText.includes('正文、前文或设定已变更')`, 'sidebar invalidates stale settings immediately');
+  await app.waitFor(`document.body.innerText.split('正文、前文或设定已变更').length>=3`, 'editor invalidates the same report without reload');
+  await app.textButton('审稿与连贯性');
+  await app.waitFor(`${panel}.innerText.includes('已审读，待作者确认')&&!${panel}.innerText.includes('需重新审读')`, 'new editor review reaches sidebar');
+  await app.waitFor(`[...document.querySelectorAll('button')].some(b=>b.textContent==='润色'&&!b.disabled)`, 'fresh review finished');
+  // A settings change while a preview is open must prevent adoption.
+  await app.textButton('润色');
+  await app.waitFor('!!document.querySelector(".ant-modal-confirm")', 'second revision preview');
+  await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const repo=new NarrativeRepository(${novelExpr}.id);const bible=repo.loadBible();bible.worldSettings[0].description+=' 仅据提供的证据判断。';repo.saveBible(bible);})()`);
+  await app.textButton('采用修订并重新审稿', '.ant-modal-confirm');
+  await app.waitFor(`document.body.innerText.includes('正文或创作依据已改变')`, 'reject stale proposal');
+  assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`),revisedProse,'stale proposals preserve the original draft and ending');
+  await app.textButton('取消','.ant-modal-confirm');
+  await app.screenshot('novel-stale-review.png');
+  await app.call('Page.reload');
+  await app.waitFor(`!!document.querySelector('.ant-tabs-tab-active[data-node-key="content"]')`, 'existing chapters open their prose by default');
+  await app.waitFor(`!!document.querySelector('textarea[placeholder="章节正文..."]')`, 'saved prose editor mounted');
+  assert.equal(await app.evaluate('document.querySelector(\'textarea[placeholder="章节正文..."]\')?.value'),revisedProse);
   const autoStart = requests.length;
   const autoContract = await app.evaluate(`(async()=>{
     const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
@@ -156,10 +188,39 @@ try {
   assert.equal(autoContract.content, [novelProse,novelProse,novelProse].join('\n\n'), 'automatic writing preserves complete beats beyond target word counts');
   const beatRequests = requests.slice(autoStart).filter(r => r.body.stream);
   assert.equal(beatRequests.length,3);
+  for (const {body} of beatRequests) {
+    assert.deepEqual(body.thinking,{type:'enabled'},'automatic prose also reasons about continuity before writing');
+    assert.ok(body.max_tokens>=12000);
+  }
   assert.ok(beatRequests[1].body.messages[0].content.includes(novelProse), 'second beat receives the complete first beat');
   assert.ok(beatRequests[2].body.messages[0].content.includes([novelProse,novelProse].join('\n\n')), 'third beat receives all text already written in the chapter');
   assert.equal(autoContract.status,'paused','an unresolved critical issue must pause automatic writing');
   assert.equal(autoContract.chapterStatus,'revising','failed review/revision must never mark the chapter complete');
+  for (const [novelId,title,accepted] of [['candidate-contract','AutopilotCandidateContract',false],['passing-contract','AutopilotPassingContract',true]]) {
+    const result = await app.evaluate(`(async()=>{
+      const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+      const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');
+      const chapters=[{id:'chapter',order:0,title:'Contract',outline:'林岚调查旧票。',content:${JSON.stringify(novelProse)},status:'drafting',wordCount:${novelProse.length}}];
+      const engine=new AutopilotEngine({novelId:${JSON.stringify(novelId)},title:${JSON.stringify(title)},description:'现实世界，禁止超自然。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:(id,updates)=>Object.assign(chapters[0],updates),onAddChapter:()=>chapters[0].id,onAddVolume:()=>'',onUpdateMetadata:()=>{}});
+      engine.state.status='running';
+      await engine.doChapterReview(0,chapters[0].content,'chapter');
+      const repo=new NarrativeRepository(${JSON.stringify(novelId)});
+      const before=repo.loadCustomData('chapter-reviews',[])[0];
+      const content=await engine.doQualityGateRewrite(0,chapters[0].content,'chapter');
+      return {content,before,after:repo.loadCustomData('chapter-reviews',[])[0],candidate:repo.loadCustomData('chapter-revision-candidate:chapter',null),status:engine.state.status,chapterStatus:chapters[0].status};
+    })()`);
+    assert.ok(result.candidate,'retain candidate and its independent review');
+    assert.equal(result.content,accepted?revisedProse:novelProse);
+    if (accepted) {
+      assert.equal(result.after.contentFingerprint,result.candidate.review.contentFingerprint);
+      assert.equal(result.chapterStatus,'complete');
+    } else {
+      assert.equal(result.candidate.review.findings.length,1,'fixture removes one issue but leaves another major issue');
+      assert.deepEqual(result.after,result.before,'rejected candidate review must not overwrite the original report');
+      assert.equal(result.status,'paused');
+      assert.equal(result.chapterStatus,'revising');
+    }
+  }
   await app.click('button[aria-label="漫画工坊"]');
   await app.waitFor('[...document.querySelectorAll("button")].some(e=>e.textContent==="新建漫画")', 'comic page');
   await app.textButton('新建漫画');

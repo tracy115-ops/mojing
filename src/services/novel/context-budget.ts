@@ -225,20 +225,8 @@ export class ContextBudgetAllocator {
 
   // --- T0: New fine-grained slots (V2) ---
 
-  registerLifecycleDirective(phase: StoryPhase, chapterIndex: number, totalChapters: number): void {
-    const rules = PHASE_RULES[phase];
-    const progress = totalChapters > 0 ? chapterIndex / totalChapters : 0;
-    const phaseLabels: Record<StoryPhase, string> = {
-      opening: '开局期', development: '发展期', convergence: '收敛期', finale: '终局期',
-    };
-
-    const content = [
-      `【故事阶段: ${phaseLabels[phase]} (${(progress * 100).toFixed(0)}%)】`,
-      phase === 'convergence' || phase === 'finale'
-        ? `禁止开新坑。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。收敛等级: ${(rules.convergenceLevel * 100).toFixed(0)}%。`
-        : `允许铺陈新支线和新角色。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。`,
-      '场景取舍依据人物选择与故事后果；安静场景和日常描写也可以承载关系变化，不按阶段一律禁止。',
-    ].join('\n');
+  registerLifecycleDirective(_phase: StoryPhase, chapterIndex: number, totalChapters: number): void {
+    const content = ContextBudgetAllocator.buildPhaseDirective(ContextBudgetAllocator.computeStoryPhase(chapterIndex, totalChapters));
 
     this.registerSlot({
       name: 'LIFECYCLE_DIRECTIVE',
@@ -448,20 +436,9 @@ export class ContextBudgetAllocator {
   }
 
   static buildPhaseDirective(state: StoryPhaseState): string {
-    const { currentPhase, behaviorRules: rules } = state;
-    const phaseLabels: Record<StoryPhase, string> = {
-      opening: '开局期',
-      development: '发展期',
-      convergence: '收敛期',
-      finale: '终局期',
-    };
-
     return [
-      `【故事阶段: ${phaseLabels[currentPhase]} (${(state.progress * 100).toFixed(0)}%)】`,
-      currentPhase === 'convergence' || currentPhase === 'finale'
-        ? `⚠️ 禁止开新坑。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。收敛等级: ${(rules.convergenceLevel * 100).toFixed(0)}%。`
-        : `✅ 允许铺陈新支线和新角色。伏笔闭合压力: ${(rules.foreshadowingPressure * 100).toFixed(0)}%。`,
-      '场景取舍依据人物选择与故事后果；安静场景和日常描写也可以承载关系变化，不按阶段一律禁止。',
+      `【篇幅计划】当前写第${state.currentChapter + 1}章，计划约${state.totalChapters}章；这只是篇幅安排，不能据此判定剧情阶段。`,
+      '是否展开支线、引入人物或回收伏笔，应依据作者大纲、人物选择和已有因果，不按章节比例自动禁止或强制闭合。',
     ].join('\n');
   }
 

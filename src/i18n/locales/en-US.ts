@@ -1314,7 +1314,7 @@ const enUS: typeof zhCN = {
   'workbench.tab.props': 'Props',
   'workbench.tab.phase': 'Phase/Evolution',
   'workbench.toggle': 'Narrative Workbench',
-  'workbench.toggleHint': 'Story Bible / Tension / Foreshadowing / Governance / Props / Evolution',
+  'workbench.toggleHint': 'Manuscript review, reference notes, cast, plot threads and writing records',
 
   // ── Dashboard ─────────────────────────────
   'dashboard.title': 'Narrative Dashboard',
@@ -1434,7 +1434,7 @@ const enUS: typeof zhCN = {
   'props.lifecycle.damaged': 'Damaged',
   'props.lifecycle.resolved': 'Resolved',
   'props.events.title': '{name} — Event History',
-  'props.events.empty': 'No events yet (auto-extracted after chapter generation)',
+  'props.events.empty': 'No saved event records',
   'props.transfer': '{from} → {to}',
 
   // ── Tension Chart ─────────────────────────
@@ -1595,7 +1595,7 @@ const enUS: typeof zhCN = {
   'continuity.handoffs': 'Handoff Notes',
 
   // ── Workbench Tab (new) ──────────────────
-  'workbench.tab.audit': 'Anti-AI',
+  'workbench.tab.audit': 'Repeated phrases',
   'workbench.tab.autopilotPipeline': 'Pipeline',
 
   // ── Autopilot Pipeline View ─────────────────
@@ -1653,10 +1653,10 @@ const enUS: typeof zhCN = {
   'qualityGate.evaluating': 'Evaluating chapter quality...',
 
   // ── Props hints ──────────────────────────
-  'props.emptyHint': 'Click "Add Prop" to create manually, or run autopilot to auto-extract props from chapter content.',
+  'props.emptyHint': 'Record properties, ownership and state as references for writing and review.',
 
   // ── Foreshadow hints ─────────────────────
-  'foreshadow.emptyHint': 'Click "Add Foreshadowing" to create manually, or run autopilot to auto-detect from chapter content.',
+  'foreshadow.emptyHint': 'Record threads to develop. A suggested chapter is a plan, never automatic proof of resolution.',
 
   // ── Psyche (4D Model) ──────────────────
   'psyche.sectionTitle': 'Psychological Profile (4D)',
@@ -1692,7 +1692,7 @@ const enUS: typeof zhCN = {
   'dialogue.empty': 'Select a character and describe the scene, then generate',
   'dialogue.needCharAndScene': 'Please select a character and enter a scene description',
   'dialogue.fallbackHint': 'Configure an API endpoint to generate real dialogue',
-  'dialogue.usageHint': 'Generate dialogue matching a character\'s personality and voice in a given scene. Create characters in Story Bible first.',
+  'dialogue.usageHint': 'Draft dialogue using earlier chapters, the current text and character notes. Add characters in the story bible first.',
 
   // ── Worldbuilding ─────────────────────────
   'worldbuilding.title': 'Worldbuilding',
@@ -1763,19 +1763,19 @@ const enUS: typeof zhCN = {
 
   // ── Cast Management ───────────────────────
   'cast.title': 'Cast',
-  'cast.castLock': 'Chapter Lock',
-  'cast.coverage': 'Coverage',
+  'cast.castLock': 'Cast plan',
+  'cast.coverage': 'Name mentions',
   'cast.selectChapter': 'Select Chapter',
   'cast.noChapters': 'No chapters yet',
   'cast.noCharacters': 'Add characters in Story Bible first',
   'cast.gotoBible': 'Go to Story Bible',
-  'cast.lock': 'Lock to this chapter',
-  'cast.unlock': 'Unlock',
+  'cast.lock': 'Plan participation in this chapter',
+  'cast.unlock': 'Remove from chapter plan',
   'cast.charName': 'Character',
-  'cast.chapterCount': 'Chapters',
-  'cast.coverageRate': 'Coverage',
-  'cast.autoDetectHint': 'Green = auto-detected from chapter content. Blue = manually locked. Coverage combines both.',
-  'cast.autoDetected': 'Detected',
+  'cast.chapterCount': 'Mentioned chapters',
+  'cast.coverageRate': 'Share of written chapters',
+  'cast.autoDetectHint': 'Green means a name is mentioned, including memories or reported speech. Blue is the author’s cast plan, used for writing. Counts use chapters with prose only.',
+  'cast.autoDetected': 'Name mentioned',
 
   // ── Workbench Tabs (new) ──────────────────
   'workbench.tab.dialogue': 'Dialogue',
@@ -1785,7 +1785,7 @@ const enUS: typeof zhCN = {
   'workbench.tab.guardrail': 'Quality',
   'workbench.tab.consistency': 'Consistency',
   'workbench.tab.drift': 'Voice Drift',
-  'workbench.tab.checkpoint': 'Timeline',
+  'workbench.tab.checkpoint': 'Resume record',
 
   // ── Quality Guardrail ──────────────────────
   'guardrail.title': 'Quality Guardrail',
@@ -1853,7 +1853,7 @@ const enUS: typeof zhCN = {
   'drift.historyTrend': 'Drift Trend',
 
   // ── Checkpoint Timeline ────────────────────
-  'checkpointTimeline.title': 'Checkpoint Timeline',
+  'checkpointTimeline.title': 'Latest resume record',
   'checkpointTimeline.empty': 'Checkpoints will be created during autopilot',
   'checkpointTimeline.trigger.chapter_complete': 'Chapter',
   'checkpointTimeline.trigger.act_change': 'Act Change',
@@ -1939,8 +1939,8 @@ const enUS: typeof zhCN = {
   'workbench.category.overview': 'Overview',
   'workbench.category.characters': 'Characters',
   'workbench.category.plot': 'Plot',
-  'workbench.category.quality': 'Quality',
-  'workbench.category.tools': 'Tools',
+  'workbench.category.quality': 'Review',
+  'workbench.category.tools': 'Writing records',
 
   // ── Character Relation Graph ─────────────────
   'relationGraph.title': 'Character Relations',
@@ -1990,7 +1990,7 @@ const enUS: typeof zhCN = {
 
   // ── Chapter Review ───────────────────────────
   'chapterReview.title': 'Chapter Review',
-  'chapterReview.empty': 'Run review to see multi-dimension quality report',
+  'chapterReview.empty': 'Run a review to see specific reading feedback with source passages',
   'chapterReview.runReview': 'Run Review',
   'chapterReview.overallScore': 'Overall Score',
   'chapterReview.chapterN': 'Chapter {chapter} Review Results',
@@ -2275,13 +2275,13 @@ const enUS: typeof zhCN = {
   "novel.editor.autoReview": "Review after generation",
   "novel.editor.runReview": "Review prose and continuity",
   "novel.editor.reviewTitle": "Editorial reading review",
-  "novel.editor.reviewLimit": "Editorial suggestions require reading judgment; scores do not certify a finished work.",
+  "novel.editor.reviewLimit": "Compare editorial suggestions with the manuscript; reviews can miss or misread details and require the author's judgment.",
   "novel.editor.reviewFailed": "Review incomplete; draft preserved",
   "novel.editor.draftSaved": "Draft saved; editorial review pending",
   "novel.editor.needsRevision": "Needs revision",
   "novel.editor.reviewed": "Reviewed; author approval pending",
   "novel.editor.unreviewed": "Current text has not been reviewed",
-  "novel.editor.reviewStale": "Text or context changed; review again",
+  "novel.editor.reviewStale": "Text, prior chapters or settings changed; review again",
   "novel.editor.viewReview": "View findings and evidence",
   "novel.editor.reviseIssues": "Revise findings",
   "novel.editor.revisionPreview": "Review proposed edits",
@@ -2291,8 +2291,8 @@ const enUS: typeof zhCN = {
   "novel.editor.deleted": "Remove this redundant passage",
   "novel.editor.noEdits": "No worthwhile edits proposed; original text preserved",
   "novel.editor.selectEdits": "Select edits to apply, or cancel to keep the original",
-  "novel.editor.reference": "Prior text or premise evidence",
-  "novel.editor.sourceChanged": "Text changed; request fresh edits",
+  "novel.editor.reference": "Source for comparison",
+  "novel.editor.sourceChanged": "Text or writing context changed; request fresh edits",
   "novel.editor.restoreRevision": "Restore previous AI edit",
   "novel.editor.restoreUnavailable": "No matching backup; text may have changed after revision",
   "novel.editor.severity.minor": "Minor",
@@ -2304,6 +2304,49 @@ const enUS: typeof zhCN = {
   "novel.editor.dim.plot_coherence": "Causality and progression",
   "novel.editor.dim.foreshadowing_usage": "Setup and payoff",
   "novel.editor.dim.voice_quality": "Prose and voice",
+  'workbench.manuscript.title': 'Manuscript and next steps',
+  'workbench.manuscript.written': 'With prose / created chapters',
+  'workbench.manuscript.characters': 'Prose characters',
+  'workbench.manuscript.review': 'Chapter reviews',
+  'workbench.manuscript.openReview': 'Open reviews',
+  'workbench.manuscript.waiting': '{count} awaiting review',
+  'workbench.manuscript.revision': '{count} with revision advice',
+  'workbench.manuscript.empty': 'This chapter has no prose yet',
+  'workbench.manuscript.unreviewed': 'Not reviewed',
+  'workbench.manuscript.reference': 'Writing reference',
+  'workbench.manuscript.bibleCount': 'Saved notes for {count} characters',
+  'workbench.manuscript.referenceHint': 'Saved characters, locations, world notes, storylines and props inform writing and review. Prose establishes what happened; plans are not events.',
+  'workbench.manuscript.foreshadow': 'Thread reminders',
+  'workbench.manuscript.openLedger': 'Open ledger',
+  'workbench.manuscript.noDue': 'No records have reached their suggested chapter',
+  'workbench.manuscript.dueHint': 'Suggested chapters are reminders. Resolve threads when the story supports it.',
+  'workbench.review.selectChapter': 'Select chapter to review',
+  'workbench.phrases.title': 'Repeated phrase concordance',
+  'workbench.phrases.hint': 'Compare repeated common expressions in the current chapter. These words are not inherently wrong. This does not identify authorship or replace text.',
+  'workbench.phrases.empty': 'No repeated matches in the phrase list; read the prose to judge expression',
+  'workbench.phrases.count': '{count} occurrences',
+  'workbench.checkpoint.hint': 'Stores where automatic writing can continue; prose remains in chapters. Continuing reviews saved drafts first. This is not a manuscript version backup.',
+  'workbench.checkpoint.savedChapter': 'Last saved chapter',
+  'workbench.checkpoint.next': 'Next continuation',
+  'workbench.checkpoint.legacy': 'Legacy record; check saved prose before continuing',
+  'workbench.checkpoint.finished': 'The current length plan is complete',
+  'workbench.pipeline.hint': 'Shows actual task state in this session. Read the resulting prose to decide whether to keep it.',
+  'workbench.pipeline.currentStage': 'Current step',
+  'workbench.pipeline.draft': 'Prose being generated for this chapter',
+  'workbench.pipeline.finishedHint': 'Task completed. The project contains {count} characters. Continue reading and editing.',
+  'workbench.graph.hint': 'Displays saved relationship records. Author notes inform writing; older model extractions require checking and are not automatically treated as established facts.',
+  'workbench.graph.unconfirmed': 'Needs checking',
+  'workbench.graph.confirm': 'Adopt as an author note for writing after checking',
+  'workbench.graph.deleteHint': 'Direct entries can be deleted here; edit character relationships in the story bible',
+  'workbench.world.hint': 'Fill in only rules and details relevant to your story. Empty fields are optional. Saved notes inform writing and review; there is no need to complete every field.',
+  'workbench.props.introducedChapter': 'First appearance chapter',
+  'workbench.ledger.dueCount': '{count} suggested for review',
+  'foreshadow.resolveHere': 'Confirm resolved in chapter {chapter}',
+  'foreshadow.unknownChapter': 'Planting chapter not recorded',
+  'foreshadow.plantedChapter': 'Planting chapter number',
+  'foreshadow.invalidRange': 'Resolution cannot be planned before planting',
+  'storyline.invalidRange': 'End chapter cannot precede the start',
+  'dialogue.generateFailed': 'Dialogue generation failed. Check the model service and retry',
 };
 
 export default enUS;

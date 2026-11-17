@@ -3,7 +3,7 @@
 // Inspired by PlotPilot's ForeshadowLedgerPanel.vue
 // ============================================================================
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Tag, Button, Space, Modal, Form, Input, Select, List, Typography, Tooltip, Empty, message } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, CheckCircleOutlined,
@@ -13,12 +13,17 @@ import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { panelHeader, statsRow, statItem } from './PanelStyles';
 import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
+import type { NovelMetadata } from '@/types';
+import { useProjectStore } from '@/stores/projectStore';
+import { getNovelChapters } from '@/services/novel/writing-context';
+import { getDueForeshadowing, lastWrittenChapter } from '@/services/novel/workbench-state';
 
 const { TextArea } = Input;
 const { Text } = Typography;
 
 interface ForeshadowLedgerPanelProps {
   novelId: string;
+  chapterIndex: number;
 }
 
 type FilterStatus = 'all' | 'planted' | 'resolved' | 'abandoned';
@@ -30,7 +35,7 @@ const URGENCY_COLOR: Record<string, string> = {
   low: '#6b7280',
 };
 
-const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }) => {
+const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, chapterIndex }) => {
   const { t } = useTranslation();
   const [repo] = useState(() => new NarrativeRepository(novelId));
 
@@ -39,6 +44,10 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Foreshadowing | null>(null);
   const [form] = Form.useForm();
+  const project = useProjectStore(s => s.projects.find(p => p.id === novelId));
+  const chapters = project?.type === 'novel' ? getNovelChapters(project.metadata as NovelMetadata) : [];
+  const writtenChapter = lastWrittenChapter(chapters);
+  const canResolve = !!chapters.find(c => c.order === chapterIndex)?.content.trim();
 
   const STATUS_TAG = useMemo<Record<ForeshadowingStatus, { color: string; label: string }>>(() => ({
     planted: { color: 'blue', label: t('foreshadow.status.planted') },
@@ -47,6 +56,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
   }), [t]);
 
   const refresh = useCallback(() => setItems(repo.loadForeshadowing()), [repo]);
+  useEffect(() => repo.subscribe(['foreshadowing'], refresh), [repo, refresh]);
 
   const filtered = useMemo(() => {
     if (filter === 'all') return items;
@@ -54,25 +64,21 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
   }, [items, filter]);
 
   const stats = useMemo(() => {
-    // Estimate current chapter from foreshadowing data
-    const allChapters = items.map((f) => Math.max(f.plantedInChapter, f.resolvedInChapter ?? 0));
-    const currentChapter = allChapters.length > 0 ? Math.max(...allChapters) : 0;
     return {
       total: items.length,
       planted: items.filter((f) => f.status === 'planted').length,
       resolved: items.filter((f) => f.status === 'resolved').length,
       abandoned: items.filter((f) => f.status === 'abandoned').length,
-      overdue: items.filter((f) =>
-        f.status === 'planted' && f.suggestedResolveChapter !== undefined && f.suggestedResolveChapter <= currentChapter,
-      ).length,
+      overdue: getDueForeshadowing(items, writtenChapter).length,
     };
-  }, [items]);
+  }, [items, writtenChapter]);
 
   const openModal = (item?: Foreshadowing) => {
     if (item) {
       setEditingItem(item);
       form.setFieldsValue({
         description: item.description,
+        plantedInChapter: item.plantedInChapter || 1,
         urgency: item.urgency,
         suggestedResolveChapter: item.suggestedResolveChapter,
         relatedCharacters: item.relatedCharacters.join(', '),
@@ -81,25 +87,27 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
     } else {
       setEditingItem(null);
       form.resetFields();
+      form.setFieldsValue({ plantedInChapter: chapterIndex + 1, urgency: 'medium', narrativeWeight: 5 });
     }
     setModalOpen(true);
   };
 
   const saveItem = async () => {
-    const values = await form.validateFields();
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
     const id = editingItem?.id ?? `fs_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
     const item: Foreshadowing = {
       id,
       novelId,
       description: values.description,
-      plantedInChapter: editingItem?.plantedInChapter ?? 0,
-      suggestedResolveChapter: values.suggestedResolveChapter || undefined,
+      plantedInChapter: Number(values.plantedInChapter),
+      suggestedResolveChapter: values.suggestedResolveChapter ? Number(values.suggestedResolveChapter) : undefined,
       resolvedInChapter: editingItem?.resolvedInChapter,
       status: editingItem?.status ?? 'planted',
       relatedCharacters: (values.relatedCharacters ?? '').split(/[,，、]/).map((s: string) => s.trim()).filter(Boolean),
       urgency: values.urgency,
-      narrativeWeight: values.narrativeWeight ?? 5,
+      narrativeWeight: Number(values.narrativeWeight ?? 5),
     };
 
     const all = repo.loadForeshadowing();
@@ -114,9 +122,9 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
   const markResolved = (itemId: string) => {
     const all = repo.loadForeshadowing();
     const item = all.find((f) => f.id === itemId);
-    if (item) {
+    if (item && canResolve && item.plantedInChapter <= chapterIndex + 1) {
       item.status = 'resolved';
-      item.resolvedInChapter = item.resolvedInChapter ?? 0;
+      item.resolvedInChapter = chapterIndex + 1;
       repo.saveForeshadowing(all);
       refresh();
       message.success(t('foreshadow.resolvedMsg'));
@@ -158,6 +166,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
         <span style={statItem('#3b82f6')}>● {stats.planted} {t('foreshadow.status.planted')}</span>
         <span style={statItem('#22c55e')}>● {stats.resolved} {t('foreshadow.status.resolved')}</span>
         <span style={statItem('#9ca3af')}>● {stats.abandoned} {t('foreshadow.status.abandoned')}</span>
+        <Tag>{t('workbench.ledger.dueCount', { count: stats.overdue })}</Tag>
         <span style={{ ...statItem(), marginLeft: 'auto', fontWeight: 600 }}>{t('foreshadow.total', { count: stats.total })}</span>
       </div>
 
@@ -202,8 +211,8 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
               }}
               actions={[
                 item.status === 'planted' && (
-                  <Tooltip title={t('foreshadow.markResolved')} key="resolve">
-                    <Button type="text" size="small" icon={<CheckCircleOutlined />} onClick={() => markResolved(item.id)} />
+                  <Tooltip title={t('foreshadow.resolveHere', { chapter: chapterIndex + 1 })} key="resolve">
+                    <Button type="text" size="small" disabled={!canResolve || item.plantedInChapter > chapterIndex + 1} icon={<CheckCircleOutlined />} onClick={() => markResolved(item.id)} />
                   </Tooltip>
                 ),
                 <Tooltip title={t('common.edit')} key="edit">
@@ -233,7 +242,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
                 }
                 description={
                   <div style={{ fontSize: 11, color: 'var(--text-tertiary, #999)' }}>
-                    {t('foreshadow.plantedIn', { chapter: item.plantedInChapter })}
+                    {item.plantedInChapter > 0 ? t('foreshadow.plantedIn', { chapter: item.plantedInChapter }) : t('foreshadow.unknownChapter')}
                     {item.suggestedResolveChapter && ` ${t('foreshadow.suggestResolve', { chapter: item.suggestedResolveChapter })}`}
                     {item.resolvedInChapter && ` ${t('foreshadow.resolvedAt', { chapter: item.resolvedInChapter })}`}
                     {item.relatedCharacters.length > 0 && ` ${t('foreshadow.relatedTo', { chars: item.relatedCharacters.join(', ') })}`}
@@ -259,6 +268,9 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
           <Form.Item name="description" label={t('foreshadow.description')} rules={[{ required: true, message: t('foreshadow.descriptionRequired') }]}>
             <TextArea rows={2} placeholder={t('foreshadow.descriptionPlaceholder')} />
           </Form.Item>
+          <Form.Item name="plantedInChapter" label={t('foreshadow.plantedChapter')} rules={[{ required: true }]}>
+            <Input type="number" min={1} />
+          </Form.Item>
           <div style={{ display: 'flex', gap: 12 }}>
             <Form.Item name="urgency" label={t('foreshadow.urgency')} style={{ flex: 1 }}>
               <Select options={[
@@ -272,8 +284,9 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId }
               <Input type="number" min={0} max={10} />
             </Form.Item>
           </div>
-          <Form.Item name="suggestedResolveChapter" label={t('foreshadow.suggestChapter')}>
-            <Input type="number" placeholder={t('foreshadow.suggestChapterPlaceholder')} />
+          <Form.Item name="suggestedResolveChapter" label={t('foreshadow.suggestChapter')} dependencies={['plantedInChapter']}
+            rules={[({ getFieldValue }) => ({ validator: (_, value) => !value || Number(value) >= Number(getFieldValue('plantedInChapter')) ? Promise.resolve() : Promise.reject(new Error(t('foreshadow.invalidRange'))) })]}>
+            <Input type="number" min={1} placeholder={t('foreshadow.suggestChapterPlaceholder')} />
           </Form.Item>
           <Form.Item name="relatedCharacters" label={t('foreshadow.relatedChars')}>
             <Input placeholder="..." />

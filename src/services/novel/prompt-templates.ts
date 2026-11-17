@@ -280,7 +280,7 @@ function getSensoryHint(beatIndex: number): string {
 const macroPlanning: PromptTemplate = {
   id: 'macro-planning',
   name: '宏观规划',
-  version: 3,
+  version: 4,
   variables: ['title', 'genre', 'style', 'prevChapters', 'phaseDirective', 'foreshadowingContext', 'chapterNumber'],
   buildSystem(vars) {
     return `你是一个资深小说策划师，擅长构思让人放不下的故事。你的任务是为下一章制定宏观方向。
@@ -294,11 +294,11 @@ ${vars.phaseDirective ?? ''}
 ${vars.foreshadowingContext ?? ''}
 
 规划原则：
-- 每章必须有至少一个核心冲突或转折
+- 本章围绕人物需要处理的处境展开，变化可以来自选择、关系、认识或行动，不强制反转
 - 结尾体现本章实际改变的处境或关系，悬念应来自已有事件
-- 不能连续两章没有实质性推进
+- 避免重复上一章已完成的行动，保留必要的铺垫、停顿与后果
 - 角色行动必须有动机，不能为了推进剧情而OOC
-- 伏笔和债务需要逐步解决
+- 伏笔依已发生的行动发展，不按章节比例或到期日期强行解决
 
 请输出JSON格式：
 {
@@ -395,12 +395,10 @@ const beatMagnify: PromptTemplate = {
 // Template 4: Beat Generation (CORE — single beat, PlotPilot storyteller approach)
 // ============================================================
 
-const CORE_WRITING_RULES = NOVEL_WRITING_PRINCIPLES;
-
 const beatGeneration: PromptTemplate = {
   id: 'beat-generation',
   name: '单Beat生成',
-  version: 3,
+  version: 4,
   variables: ['title', 'genre', 'style', 'phaseDirective', 'context', 'outline', 'beatDescription', 'beatFocus', 'targetWords', 'conductorSignal', 'beatIndex', 'totalBeats', 'sensoryHint'],
   buildSystem(vars) {
     const isFirst = vars.beatIndex === '0';
@@ -417,7 +415,7 @@ const beatGeneration: PromptTemplate = {
 
     return `你是一位小说作者。按照本书题材、人物和既有情节续写当前场景，保留作者已经形成的声音。
 
-${CORE_WRITING_RULES}
+写作前在内部核对本段与全部已写正文的事实、约定和因果；关键推断须检查观察范围与其他解释。大纲和节拍可据此调整，不能改动已发生事实。输出接续的作品正文，不输出核对过程或重复章标题。
 
 ${sceneProtocol}
 
@@ -761,7 +759,7 @@ ${vars.locations}
 const globalPlanning: PromptTemplate = {
   id: 'global-planning',
   name: '全局规划',
-  version: 1,
+  version: 2,
   variables: ['title', 'genre', 'style', 'targetWordCount', 'targetChapterCount', 'worldbuilding', 'characters', 'locations', 'plotOutlineStages'],
   buildSystem(vars) {
     return `你是一个资深小说总架构师。根据小说的全部设定，规划完整的卷章结构。
@@ -775,12 +773,12 @@ const globalPlanning: PromptTemplate = {
 ${vars.plotOutlineStages ? `已有剧情阶段参考：\n${vars.plotOutlineStages}\n` : ''}
 
 要求：
-1. 将全部 ${vars.targetChapterCount} 章分为 2-6 卷（根据总章节数决定）
-2. 每卷有独立主题和张力弧线
+1. 将全部 ${vars.targetChapterCount} 章分为 1-6 卷，短篇可只用一卷
+2. 每卷有清楚的主题与人物处境变化
 3. 每章有明确的大纲（2-3句话，说明本章核心事件和推进方向）
-4. 张力曲线要起伏有致，不能一路平铺
-5. 每卷结尾要有钩子（悬念或转折）
-6. 伏笔要埋设和回收
+4. 按题材和人物行动安排节奏，允许安静场景，不强制安排冲突与反转
+5. 每卷结尾体现已经发生的变化，悬念须来自情节自身
+6. 伏笔须有可信铺垫与发展，既有正文和作者资料优先于新规划；不能重新安排已经写完的事实
 
 输出严格 JSON 格式：
 {

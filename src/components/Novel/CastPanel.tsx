@@ -14,6 +14,8 @@ import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { BibleCharacter, ChapterCast } from '@/types/narrative';
+import type { NovelMetadata } from '@/types';
+import { getNovelChapters } from '@/services/novel/writing-context';
 
 interface CastPanelProps {
   novelId: string;
@@ -45,17 +47,15 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentCh
   }, [repo]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => repo.subscribe(['bible', 'casts'], refresh), [repo, refresh]);
+  useEffect(() => { setSelectedChapter(currentChapter); }, [currentChapter]);
 
   // Get all chapter contents for coverage analysis
   const chapterContents = useMemo(() => {
     const proj = projects.find((p) => p.id === novelId);
     if (!proj || proj.type !== 'novel') return [] as string[];
 
-    const nodes = getStoryNodes(novelId);
-    const chapterNodes = nodes
-      .filter((n) => n.nodeType === 'chapter')
-      .sort((a, b) => a.order - b.order);
-    return chapterNodes.map((n) => n.content ?? '');
+    return getNovelChapters(proj.metadata as NovelMetadata).map(n => n.content);
   }, [projects, novelId, getStoryNodes]);
 
   // Build a name→charId lookup (including aliases)
@@ -78,7 +78,7 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentCh
       if (!content) continue;
       const found = new Set<string>();
       for (const [name, charId] of nameLookup) {
-        if (content.includes(name)) {
+        if (name.trim() && content.includes(name)) {
           found.add(charId);
         }
       }
@@ -109,22 +109,14 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentCh
     message.success(t('common.saved'));
   };
 
-  // Coverage analysis: combine auto-detected + manually locked
+  // Name mentions are observable; a planned cast entry is not evidence of an appearance.
   const coverage = useMemo(() => {
     const map = new Map<string, number>();
-    const total = Math.max(totalChapters, chapterContents.length);
+    const total = chapterContents.filter(c => c.trim()).length;
 
     for (const [chapterIdx, presentChars] of autoDetectedPresence) {
       for (const charId of presentChars) {
         map.set(charId, (map.get(charId) ?? 0) + 1);
-      }
-    }
-    // Also count manually locked characters
-    for (const cast of casts) {
-      for (const charId of cast.lockedCharacters) {
-        if (!autoDetectedPresence.get(cast.chapterIndex)?.has(charId)) {
-          map.set(charId, (map.get(charId) ?? 0) + 1);
-        }
       }
     }
 
