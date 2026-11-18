@@ -31,10 +31,6 @@
 .video-studio-fields .ant-select, .video-studio-fields .ant-input-number { width: 100%; }
 .video-studio-fields .span-all { grid-column: 1 / -1; }
 .video-studio-muted { color: var(--text-tertiary); font-size: 12px; }
-.video-studio-shell.is-project .video-studio-nav { flex-basis: 56px; padding: 12px 6px; }
-.video-studio-shell.is-project .video-studio-nav > button { justify-content: center; padding: 11px 8px; }
-.video-studio-shell.is-project .video-studio-brand { justify-content: center; padding: 0; }
-.video-studio-shell.is-project .video-studio-nav button > span:not(.anticon), .video-studio-shell.is-project .video-studio-brand strong, .video-studio-shell.is-project .video-studio-nav small { display: none; }
 @media (max-width: 1250px) {
   .video-studio-nav { flex-basis: 56px; padding: 12px 6px; }
   .video-studio-nav > button { justify-content: center; padding: 11px 8px; }

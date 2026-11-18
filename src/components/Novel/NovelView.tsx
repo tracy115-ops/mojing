@@ -808,6 +808,7 @@ const NovelView: React.FC = () => {
           onSelect={handleSelectProject}
           onDelete={deleteProject}
           onToggleFavorite={toggleFavorite}
+          showCreateAction={false}
           onCreate={() => setCreateOpen(true)}
           onEditInfo={() => setInfoOpen(true)}
           onDuplicate={(id) => {
@@ -822,8 +823,12 @@ const NovelView: React.FC = () => {
       {/* Right: Workspace */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         {!activeProject ? (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 32, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+            <BookOutlined style={{ fontSize: 48, color: 'var(--accent-primary)' }} />
             <Text type="secondary">{t('novel.empty')}</Text>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              {t('novel.newProject')}
+            </Button>
           </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

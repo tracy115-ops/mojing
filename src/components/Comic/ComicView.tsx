@@ -59,14 +59,14 @@ const ComicView: React.FC = () => {
           <Text strong style={{ fontSize: 13 }}>
             {t('comic.title')}
           </Text>
-          <Button
+          {projects.length > 0 && <Button
             size="small"
             type="primary"
             icon={<PlusOutlined />}
             onClick={() => setCreateOpen(true)}
           >
             {t('comic.newProject')}
-          </Button>
+          </Button>}
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
           {projects.length === 0 ? (
@@ -128,11 +128,18 @@ const ComicView: React.FC = () => {
             style={{
               height: '100%',
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 14,
+              padding: 32,
+              textAlign: 'center',
             }}
           >
             <Text type="secondary">{t('comic.empty')}</Text>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              {t('comic.newProject')}
+            </Button>
           </div>
         )}
       </div>

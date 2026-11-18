@@ -251,6 +251,7 @@ const VideoView: React.FC = () => {
           onSelect={handleSelectProject}
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
+          showCreateAction={false}
           onCreate={() => {
             setEpisodeSeriesId(undefined);
             setCreateOpen(true);
@@ -373,28 +374,6 @@ const VideoView: React.FC = () => {
                 </Text>
               </div>
 
-              <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-                <Button
-                  type="primary"
-                  size="large"
-                  icon={<VideoCameraOutlined />}
-                  data-testid="video-new-video-empty"
-                  onClick={() => {
-                    setEpisodeSeriesId(undefined);
-                    setCreateOpen(true);
-                  }}
-                >
-                  {t('video.newProject')}
-                </Button>
-                <Button
-                  size="large"
-                  icon={<FolderAddOutlined />}
-                  data-testid="video-new-series-empty"
-                  onClick={() => setSeriesOpen(true)}
-                >
-                  {t('video.series.newSeries')}
-                </Button>
-              </div>
             </div>
           )}
         </div>

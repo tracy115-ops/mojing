@@ -47,6 +47,7 @@ interface ProjectListProps {
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onCreate: () => void;
+  showCreateAction?: boolean;
   onEditInfo?: (id: string) => void;
   onDuplicate?: (id: string) => void;
   onExport?: (id: string) => void;
@@ -66,6 +67,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
   onDelete,
   onToggleFavorite,
   onCreate,
+  showCreateAction = true,
   onEditInfo,
   onDuplicate,
   onExport,
@@ -148,9 +150,9 @@ const ProjectList: React.FC<ProjectListProps> = ({
         />
         <Empty description={emptyText} image={Empty.PRESENTED_IMAGE_SIMPLE}>
           <Space>
-            <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
+            {showCreateAction && <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
               {createLabel}
-            </Button>
+            </Button>}
             <Button icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()}>
               导入工程包
             </Button>
