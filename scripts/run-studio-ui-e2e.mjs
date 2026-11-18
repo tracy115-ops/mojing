@@ -354,7 +354,7 @@ try {
   await call('Emulation.clearDeviceMetricsOverride');
   console.log('World WebGL, actor pose, A/B keyframes, camera moves, reviewed AI direction, animated GLB import, depth render, recorder cleanup, 1280×720 exports and two themes passed.');
 
-  await click('[data-testid=studio-nav-commerce]'); await textButton('商品项目', '.video-studio-toolbar');
+  await click('[data-testid=studio-nav-commerce]'); await click('[data-testid=studio-commerce-new]');
   await textButton('使用三图方案', '.studio-commerce-production');
   assert.equal(await evaluate('studioTest.getState().commerceProjects[0].plan.length'), 3);
   await fill('.studio-commerce-brief label:nth-of-type(1) textarea','A blue ceramic cup');

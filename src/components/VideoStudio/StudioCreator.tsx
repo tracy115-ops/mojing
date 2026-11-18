@@ -95,7 +95,7 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
         </Space>}
         {!endpoint && <Alert type="info" message={t('studio.creator.noEndpoint')} action={<Button size="small" onClick={() => setPage('plugins')}>{t('studio.creator.configure')}</Button>} />}
         {input.kind === 'video' && capabilities?.modality === 'video' && !capabilities.references.supported && <Alert type="info" message={t('studio.creator.textOnlyContinuity')} />}
-        <Alert type="info" showIcon message={t('studio.creator.workflowHint')} />
+        <Alert type="info" showIcon message={t(home ? 'studio.creator.workflowHintHome' : 'studio.creator.workflowHint')} />
         <Space wrap>
           <Button size="large" type="primary" icon={<PlayCircleOutlined />} disabled={!input.prompt.trim() || !endpoint || (capabilities && 'adapterAvailable' in capabilities && capabilities.adapterAvailable === false)} onClick={generate} data-testid="studio-generate">{input.kind === 'video' ? t('studio.creator.generateVideo') : t('studio.creator.generate')}</Button>
           <Button type="link" data-testid="studio-view-tasks" onClick={() => setPage('tasks')}>{t('studio.creator.viewTasks')}</Button>

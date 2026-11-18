@@ -25,6 +25,12 @@ const navigation: Array<{ page: StudioPage; icon: React.ReactNode; group: number
   { page: 'skills', icon: <RobotOutlined />, group: 2 }, { page: 'plugins', icon: <SettingOutlined />, group: 2 },
 ];
 
+const navigationGroupLabels: Record<number, string> = {
+  0: '项目与场景',
+  1: '生成工具',
+  2: '素材与设置',
+};
+
 export default function StudioWorkspace() {
   const { t } = useTranslation();
   const hydrated = useVideoStudioStore((state) => state.hydrated);
@@ -56,7 +62,7 @@ export default function StudioWorkspace() {
     <nav className="video-studio-nav" aria-label={t('studio.title')}>
       <div className="video-studio-brand"><BorderOutlined /><strong>{t('studio.title')}</strong></div>
       {navigation.map((item, index) => <React.Fragment key={item.page}>
-        {index > 0 && item.group !== navigation[index - 1].group && <div className="video-studio-nav-divider" />}
+        {(index === 0 || item.group !== navigation[index - 1].group) && <>{index > 0 && <div className="video-studio-nav-divider" />}<div className="video-studio-nav-group-label">{navigationGroupLabels[item.group]}</div></>}
         <Tooltip title={t(`studio.page.${item.page}`)} placement="right">
           <button type="button" data-testid={`studio-nav-${item.page}`} aria-current={page === item.page ? 'page' : undefined} className={page === item.page ? 'is-active' : ''} onClick={() => setPage(item.page)}>
             {item.icon}<span>{t(`studio.page.${item.page}`)}</span>{item.page === 'tasks' && pending > 0 && <small>{pending}</small>}

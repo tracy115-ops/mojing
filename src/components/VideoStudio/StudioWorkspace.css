@@ -7,6 +7,7 @@
 .video-studio-nav > button.is-active { background: color-mix(in srgb, var(--accent-primary) 14%, transparent); color: var(--accent-primary); font-weight: 600; }
 .video-studio-nav small { margin-left: auto; padding: 1px 6px; border-radius: var(--radius-sm); background: var(--bg-tertiary); }
 .video-studio-nav-divider { border-top: 1px solid var(--border-secondary); margin: 10px 8px; }
+.video-studio-nav-group-label { padding: 0 14px 6px; color: var(--text-tertiary); font-size: 11px; line-height: 1.2; }
 .video-studio-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .video-studio-page-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 24px 28px 18px; flex: 0 0 auto; }
 .video-studio-page-heading h3 { margin: 0 0 6px; font-size: 22px; }
