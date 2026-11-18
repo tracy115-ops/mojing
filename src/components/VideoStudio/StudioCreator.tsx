@@ -73,6 +73,7 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
       if (snapshot.kind === 'video' && snapshot.controlMode === 'keyframe' && !snapshot.firstFrameAssetId) throw new Error(t('studio.creator.first'));
       submitStudioJob({ ...snapshot, endpointId: endpoint?.id, model: selectedModel });
       message.success(t('studio.creator.queued'));
+      if (home) setPage('tasks');
     } catch (error) { message.error(`${t('studio.failed')}: ${error instanceof Error ? error.message : String(error)}`); }
   };
   const imageOptions = imageAssets.map((asset) => ({ value: asset.id, label: asset.name }));
@@ -94,7 +95,11 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
         </Space>}
         {!endpoint && <Alert type="info" message={t('studio.creator.noEndpoint')} action={<Button size="small" onClick={() => setPage('plugins')}>{t('studio.creator.configure')}</Button>} />}
         {input.kind === 'video' && capabilities?.modality === 'video' && !capabilities.references.supported && <Alert type="info" message={t('studio.creator.textOnlyContinuity')} />}
-        <Button size="large" type="primary" icon={<PlayCircleOutlined />} disabled={!input.prompt.trim() || !endpoint || (capabilities && 'adapterAvailable' in capabilities && capabilities.adapterAvailable === false)} onClick={generate} data-testid="studio-generate">{t('studio.creator.generate')}</Button>
+        <Alert type="info" showIcon message={t('studio.creator.workflowHint')} />
+        <Space wrap>
+          <Button size="large" type="primary" icon={<PlayCircleOutlined />} disabled={!input.prompt.trim() || !endpoint || (capabilities && 'adapterAvailable' in capabilities && capabilities.adapterAvailable === false)} onClick={generate} data-testid="studio-generate">{input.kind === 'video' ? t('studio.creator.generateVideo') : t('studio.creator.generate')}</Button>
+          <Button type="link" data-testid="studio-view-tasks" onClick={() => setPage('tasks')}>{t('studio.creator.viewTasks')}</Button>
+        </Space>
       </div>
       <aside className="video-studio-card studio-creator-settings">
         <Typography.Text strong>{t('studio.creator.models')}</Typography.Text>

@@ -1,0 +1,5 @@
+.studio-task-progress-card { margin-bottom: 16px; }
+.studio-task-progress-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.studio-task-progress-heading .ant-typography { min-width: 0; flex: 1; }
+.studio-task-progress-meta { margin-top: 14px; }
+@media (max-width: 700px) { .studio-task-progress-card .ant-steps { overflow-x: auto; } .studio-task-progress-card .ant-steps-item { min-width: 120px; } }
