@@ -95,7 +95,8 @@ try {
     studioTest.getState().addAsset({id:'fixture-cast',name:'Cast reference',kind:'image',category:'character',createdAt:new Date().toISOString(),url:image});
     studioTest.getState().addAsset({id:'fixture-composition',name:'Composition reference',kind:'image',category:'reference',createdAt:new Date().toISOString(),url:composition});
     const seedanceId=add('doubao-video','video',['doubao-seedance-2-0-260128','doubao-seedance-2-5-260628','doubao-seedance-2-5-flash-261115']);
-    return {image,video,imageId,videoId,llmId,seedanceId};
+    const textVideoId=add('siliconflow-video','video',['MiniMaxAI/MiniMax-H3']);
+    return {image,video,imageId,videoId,llmId,seedanceId,textVideoId};
   })()`);
   imageURI = fixtures.image; videoURI = fixtures.video;
   console.log('Studio fixtures configured; all external requests are blocked.');
@@ -106,6 +107,21 @@ try {
     await waitFor(`Boolean(document.querySelector(${JSON.stringify(selector)}))`, name);
   }
   console.log('All 11 creative pages render.');
+
+  await click('[data-testid=studio-nav-video]');
+  await waitFor('Boolean(document.querySelector(".is-video [data-testid=studio-creator]"))', 'model transition workspace');
+  await evaluate(`studioTest.getState().setDraft({kind:'video',prompt:'Model transition regression',endpointId:${JSON.stringify(fixtures.videoId)},model:'agnes-video-2.5-flash',controlMode:'keyframe',firstFrameAssetId:'fixture-cast',lastFrameAssetId:'fixture-composition',referenceAssetIds:[],durationSeconds:10})`);
+  await waitFor('document.querySelector(".studio-creator-settings")?.textContent.includes("Cast reference")', 'first-frame controls populated');
+  await choose('模型渠道','Studio UI fixture siliconflow-video');
+  await waitFor('document.querySelector(".studio-creator-settings")?.textContent.includes("由模型决定")', 'unsupported duration control removed');
+  assert.equal(await evaluate(`Boolean(document.querySelector('.studio-creator-settings input[aria-label="时长（秒）"]'))`),false);
+  assert.ok(await evaluate('document.querySelector(".studio-creator")?.textContent.includes("无法通过参考图固定跨镜头人物")'));
+  await choose('模型渠道','Studio UI fixture agnes-video');
+  await waitFor(`Boolean(document.querySelector('.studio-creator-settings input[aria-label="时长（秒）"]'))`, 'supported duration control restored');
+  const frameState = await evaluate('document.querySelector(".studio-creator-settings").textContent');
+  assert.equal(frameState.includes('首帧Cast reference'),false,'incompatible hidden frames cannot reappear after switching back');
+  assert.ok(frameState.includes('参考方式纯文本'));
+  console.log('Real UI model switches remove unsupported frames and durations, and explain text-only continuity limits.');
 
   await click('[data-testid=studio-nav-image]');
   await waitFor('Boolean(document.querySelector(".is-image [data-testid=studio-creator]"))', 'image editor mount');

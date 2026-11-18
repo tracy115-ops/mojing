@@ -258,6 +258,8 @@ const messages: Record<string, [string, string]> = {
   'creator.configure': ['配置模型', 'Configure models'], 'creator.noEndpoint': ['请先配置此类模型的接口。', 'Configure a provider for this media type first.'],
   'creator.ratio': ['画幅', 'Aspect ratio'], 'creator.size': ['图像清晰度', 'Image size'],
   'creator.duration': ['时长（秒）', 'Duration (seconds)'], 'creator.resolution': ['视频分辨率', 'Video resolution'],
+  'creator.durationByModel': ['由模型决定', 'Determined by the model'],
+  'creator.textOnlyContinuity': ['此模型仅支持文字生成，无法通过参考图固定跨镜头人物。需要保持同一角色时，请选择支持首帧或主体参考的模型。', 'This model only supports text generation and cannot use images to keep characters consistent across shots. Choose a model with first-frame or subject references for recurring characters.'],
   'creator.mode': ['参考方式', 'Control mode'], 'creator.mode.text': ['纯文本', 'Text only'],
   'creator.mode.keyframe': ['首帧 / 首尾帧', 'First / first and last frames'], 'creator.mode.reference': ['主体参考', 'Subject references'],
   'creator.references': ['参考素材', 'References'], 'creator.first': ['首帧', 'First frame'], 'creator.last': ['尾帧（可选）', 'Last frame (optional)'],

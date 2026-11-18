@@ -252,11 +252,11 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
         ));
     }
     if valid_paths.len() < req.clip_paths.len() {
-        eprintln!(
-            "[compose] 过滤掉 {} 个无效 clip,剩 {} 个有效",
+        return Err(format!(
+            "合成失败:有 {} 个无效镜头,仅 {} 个有效。请修复缺失或损坏的镜头后重试。",
             req.clip_paths.len() - valid_paths.len(),
             valid_paths.len()
-        );
+        ));
     }
     // 用过滤后的列表替换原请求
     let filtered_req = ComposeRequest {
@@ -362,28 +362,9 @@ fn compose_blocking(req: &ComposeRequest) -> Result<ComposeResult, String> {
     }
 
     // Multi-clip + subtitle burn-in: re-encode each clip with drawtext, then concat.
-    match compose_multishot_with_subtitles(req, &out_path) {
-        Ok(r) => return Ok(attach_meta(r, &out_path)),
-        Err(e) => {
-            // 字幕路径失败,降级到无字幕 re-encode — 至少能拼出视频。
-            eprintln!(
-                "[compose] 字幕烧录路径失败,降级到 reencode-only(不带字幕): {}",
-                e
-            );
-            let reencode_req = ComposeRequest {
-                clip_paths: req.clip_paths.clone(),
-                subtitles: req.subtitles.clone(),
-                output_path: req.output_path.clone(),
-                hardcode_subtitles: false,
-                style: req.style.clone(),
-                trim_start_seconds: req.trim_start_seconds.clone(),
-                trim_end_seconds: req.trim_end_seconds.clone(),
-                audio_volume: req.audio_volume,
-            };
-            let r = compose_reencode_only(&reencode_req, &out_path)?;
-            return Ok(attach_meta(r, &out_path));
-        }
-    }
+    let result = compose_multishot_with_subtitles(req, &out_path)
+        .map_err(|error| format!("成片合成失败，未输出缺少镜头或字幕的视频: {}", error))?;
+    Ok(attach_meta(result, &out_path))
 }
 
 fn has_timeline_edits(req: &ComposeRequest) -> bool {
@@ -401,11 +382,9 @@ fn has_timeline_edits(req: &ComposeRequest) -> bool {
 
 /// Burn subtitle text into a single clip using drawtext.
 fn render_single_with_subtitle(src: &str, text: &str, out: &Path) -> Result<ComposeResult, String> {
-    let escaped = escape_drawtext_text(text);
-
     let filter = format!(
-        "scale=trunc(iw/2)*2:trunc(ih/2)*2,drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
-        escaped
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,{}",
+        subtitle_drawtext_filter(text)
     );
 
     let mut cmd = FfmpegCommand::new();
@@ -556,10 +535,9 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         // 编码命令统一加上 -err_detect ignore_err,容忍个别坏 packet。
         // 单个 clip 编码失败时跳过(不冒泡),让其余 clip 仍能拼出最终视频。
         let encode_result: Result<(), String> = if let Some(text) = sub {
-            let escaped = escape_drawtext_text(text);
             let filter = format!(
-                "{},drawtext=text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-50",
-                filter_chain, escaped
+                "{},{}",
+                filter_chain, subtitle_drawtext_filter(text)
             );
             let mut cmd = FfmpegCommand::new();
             cmd.arg("-y")
@@ -628,12 +606,12 @@ fn compose_multishot_with_subtitles(req: &ComposeRequest, out: &Path) -> Result<
         }
     }
 
-    if rendered_paths.is_empty() {
+    if rendered_paths.len() != req.clip_paths.len() {
         let _ = std::fs::remove_dir_all(&job_dir);
         let diag = first_failure_reason.unwrap_or_else(|| "未知原因".to_string());
         return Err(format!(
-            "合成失败:所有 {} 个 clip 编码后都无有效视频流。原因:{}。上游 video_generation 可能返回了图片或损坏文件,或 drawtext 滤镜失败(字体缺失/转义问题)。",
-            req.clip_paths.len(), diag
+            "合成失败: {} 个镜头中仅 {} 个成功编码。原因:{}。请修复视频或字幕后重试。",
+            req.clip_paths.len(), rendered_paths.len(), diag
         ));
     }
 
@@ -686,16 +664,34 @@ fn get_style_video_filter(style: Option<&str>) -> Option<String> {
     }
 }
 
-/// Escape text for ffmpeg drawtext filter. Order matters.
-/// Escape text for ffmpeg drawtext filter inside single-quoted `text='...'`.
-///
-/// drawtext 引号规则:
-///   - 外层是单引号字符串,所以文本里的单引号必须用 `'\''`(关引号 → 转义引号 → 开引号)
-///   - 反斜杠在引号内仍是转义符,先替成 `\\`
-///   - 冒号 `:` 是 filter 选项分隔符,需要转义成 `\:`
-///   - 百分号 `%` 用于 text expansion(如 `%{n}`),转义成 `\%`
-///
-/// 顺序很重要:先替换反斜杠(避免后续替换被它干扰)。
+/// Build a subtitle filter using an available system font.
+fn subtitle_drawtext_filter(text: &str) -> String {
+    let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
+        let fonts = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("C:/Windows"))
+            .join("Fonts");
+        ["msyh.ttc", "simhei.ttf", "simsun.ttc", "arialuni.ttf", "arial.ttf"]
+            .iter().map(|name| fonts.join(name)).collect()
+    } else {
+        [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ].iter().map(PathBuf::from).collect()
+    };
+    // Explicit fonts avoid relying on Fontconfig, which is often absent on Windows.
+    let font = candidates.into_iter().find(|path| path.is_file())
+        .map(|path| format!("fontfile='{}':", escape_drawtext_text(&path.to_string_lossy().replace('\\', "/"))))
+        .unwrap_or_default();
+    format!(
+        "drawtext={}text='{}':fontcolor=white:fontsize=36:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-24",
+        font, escape_drawtext_text(text)
+    )
+}
+
+/// Escape text inside the filter's single quotes; escape backslashes first.
 fn escape_drawtext_text(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace(':', "\\:")

@@ -36,6 +36,7 @@
     "test:application-desktop-e2e": "node scripts/run-application-desktop-e2e.mjs",
     "test:music": "node --experimental-strip-types scripts/test-music-generation.mjs",
     "test:studio": "node --experimental-strip-types scripts/test-video-studio.mjs",
+    "test:video-live-regressions": "node --experimental-strip-types scripts/test-video-live-regressions.mjs",
     "test:image-mask": "node --experimental-strip-types scripts/test-image-mask.mjs",
     "test:image-mask-ui-e2e": "node scripts/run-image-mask-ui-e2e.mjs",
     "test:world-sequence": "node --experimental-strip-types scripts/test-world-sequence.mjs",

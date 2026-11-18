@@ -28,6 +28,12 @@ const sha = data => createHash('sha256').update(data).digest('hex');
 const diskPath = url => /^https?:\/\/asset\.localhost\//.test(url) ? decodeURIComponent(new URL(url).pathname.slice(1)) : url;
 const probe = async path => JSON.parse((await run('ffprobe', ['-v', 'error', '-count_frames', '-show_entries', 'stream=codec_type,codec_name,width,height,nb_read_frames,avg_frame_rate:format=duration,size', '-of', 'json', path], { windowsHide: true })).stdout);
 const averageFrame = async (path, seconds) => [...(await run('ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', path, '-frames:v', '1', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], { windowsHide: true, encoding: 'buffer' })).stdout];
+const subtitlePixels = async (path, seconds) => {
+  const { stdout } = await run('ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', path, '-frames:v', '1', '-vf', 'crop=iw:80:0:ih-80', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], { windowsHide: true, encoding: 'buffer' });
+  let count = 0;
+  for (let i = 0; i < stdout.length; i += 3) if (stdout[i] > 200 && stdout[i + 1] > 200 && stdout[i + 2] > 200) count++;
+  return count;
+};
 const audible = async (path, seconds) => {
   const { stdout } = await run('ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', path, '-t', '0.4', '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'], { windowsHide: true, encoding: 'buffer' });
   let sum = 0; for (let i = 0; i < stdout.length; i += 2) sum += (stdout.readInt16LE(i) / 32768) ** 2;
@@ -92,7 +98,7 @@ const server = createServer(async (request, response) => {
         content = paragraphs.map((sourceText, index) => ({ index, sourceChapterId: chapter.id, sourceChapterNumber: chapter.number, sourceText, visibleCharacters: ['Ada'], offscreenCharacters: [], location: 'Studio', mood: 'calm', hasDialogue: true, hasAction: true }));
       } else if (system.includes('Return only a JSON array with exactly one object per input segment')) {
         const indices = [...user.matchAll(/source=(.*)/g)].map(match => /Goodbye/.test(match[1]) ? 1 : 0);
-        content = indices.map(index => ({ videoPrompt: paragraphs[index], imagePrompt: `Medium shot in the Studio. ${index ? 'Ada smiles with her right hand lowered. Goodbye.' : 'Ada holds her right hand up. Hello.'} Soft light, static camera.`, narration: index ? 'Goodbye.' : 'Hello.', dialogue: [{ speaker: 'Ada', text: index ? 'Goodbye.' : 'Hello.' }], visibleCharacters: ['Ada'], offscreenCharacters: [], characters: ['Ada'], location: 'Studio', mood: 'calm', cameraMovement: 'static', transition: 'cut', durationSeconds: 5, startState: index ? 'Hand raised.' : 'Hand lowered.', endState: index ? 'Hand lowered.' : 'Hand raised.' }));
+        content = indices.map(index => ({ videoPrompt: paragraphs[index], imagePrompt: `Medium shot in the Studio. ${index ? 'Ada smiles with her right hand lowered. Goodbye.' : 'Ada holds her right hand up. Hello.'} Soft light, static camera.`, narration: '', dialogue: [{ speaker: 'Ada', text: index ? 'Goodbye.' : 'Hello.' }], visibleCharacters: ['Ada'], offscreenCharacters: [], characters: ['Ada'], location: 'Studio', mood: 'calm', cameraMovement: 'static', transition: 'cut', durationSeconds: 5, startState: index ? 'Hand raised.' : 'Hand lowered.', endState: index ? 'Hand lowered.' : 'Hand raised.' }));
       } else if (system.includes('schema-constrained entity extraction')) content = { characters: [{ name: 'Ada', aliases: [], appearance: 'adult woman in a blue coat', entityType: 'human', gender: 'female', ageGroup: 'adult', firstAppearShotIndex: 0, seed: 12345 }], scenes: [{ name: 'Studio', description: 'Studio', firstAppearShotIndex: 0 }], props: [], characterIdMap: {}, sceneIdMap: {} };
       else if (system.includes('provider-aware image prompt planner') || system.includes('provider-aware video prompt planner')) {
         // Keep the application-built source/reference contract intact.
@@ -116,7 +122,7 @@ const config = {
 const endpoints = [['llm', 'openai', 'gpt-4o-mini'], ['image', 'agnes-image', 'agnes-image-2.1-flash'], ['video', 'agnes-video', 'agnes-video-2.5-flash'], ['tts', 'openai-tts', 'tts-1']].map(([category, provider, model]) => ({ id: `fixture-${category}`, name: `E2E ${category}`, category, provider, baseUrl: modelOrigin, apiKey: 'local-fixture-only', models: [model], enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
 const projectExpression = () => `JSON.parse(localStorage.getItem('mojing-video')).state.projects[${JSON.stringify(projectId)}]`;
 const project = () => desktop.evaluate(projectExpression());
-const start = () => desktopSession({ executable, profile: join(root, 'webview'), allowedOrigins: [modelOrigin] });
+const start = () => desktopSession({ executable, profile: join(root, 'webview'), allowedOrigins: [modelOrigin], softwareRendering: process.env.MOJING_E2E_HARDWARE_RENDERING !== '1' });
 const studioReader = `window.e2eReadStudio=async()=>{const db=await new Promise((ok,fail)=>{const r=indexedDB.open('mojing-video-studio',1);r.onsuccess=()=>ok(r.result);r.onerror=()=>fail(r.error);});try{return await new Promise((ok,fail)=>{const tx=db.transaction('workspace','readonly'),r=tx.objectStore('workspace').get('video-studio');tx.oncomplete=()=>ok(JSON.parse(r.result||'null'));tx.onerror=()=>fail(tx.error);});}finally{db.close();}}`;
 try {
   mark('launch isolated release desktop');
@@ -238,6 +244,24 @@ try {
   const originalColors = await Promise.all([averageFrame(finalPath, 1), averageFrame(finalPath, 6)]);
   assert.ok(originalColors[0][0] > originalColors[0][2] + 30, 'first shot is red');
   assert.ok(originalColors[1][2] > originalColors[1][0] + 30, 'second shot is blue');
+  assert.ok(state.sceneSpec.shots.every(shot => !shot.narration && shot.dialogue?.length), 'subtitle regression uses dialogue-only plans');
+  const whiteSubtitlePixels = await Promise.all([subtitlePixels(finalPath, 1), subtitlePixels(finalPath, 6)]);
+  assert.ok(whiteSubtitlePixels.every(count => count > 50), `structured dialogue appears in the rendered subtitles: ${whiteSubtitlePixels}`);
+  const incompleteOutput = join(output, 'must-not-compose-partial.mp4');
+  const incompleteRequest = { clipPaths: [diskPath(state.clips[0].videoUrl), join(output, 'missing-shot.mp4')], subtitles: [null, null], outputPath: incompleteOutput, hardcodeSubtitles: false };
+  const incompleteError = await desktop.evaluate(`(async()=>{try{await window.__TAURI__.core.invoke('ffmpeg_compose_clips',{req:${JSON.stringify(incompleteRequest)}});return '';}catch(error){return String(error);}})()`);
+  assert.match(incompleteError, /无效镜头|没有可用|不存在|missing/i, 'missing shots cannot silently disappear from the final movie');
+  await assert.rejects(access(incompleteOutput), 'a failed partial composition must not publish a movie');
+  const chineseSubtitleOutput = join(output, 'chinese-multiline-subtitles.mp4');
+  const chineseSubtitleRequest = { clipPaths: [diskPath(state.clips[0].videoUrl)], subtitles: ['你好，世界。\n同一个角色。'], outputPath: chineseSubtitleOutput, hardcodeSubtitles: true };
+  await desktop.evaluate(`window.__TAURI__.core.invoke('ffmpeg_compose_clips',{req:${JSON.stringify(chineseSubtitleRequest)}})`);
+  const { stdout: captionRGB } = await run('ffmpeg', ['-v', 'error', '-ss', '1', '-i', chineseSubtitleOutput, '-frames:v', '1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1'], { windowsHide: true, encoding: 'buffer', maxBuffer: 4 * 1024 * 1024 });
+  let captionTop = originalVideo.height, captionBottom = 0, captionWhite = 0;
+  for (let i = 0; i < captionRGB.length; i += 3) if (captionRGB[i] > 200 && captionRGB[i + 1] > 200 && captionRGB[i + 2] > 200) {
+    const y = Math.floor(i / 3 / originalVideo.width); captionTop = Math.min(captionTop, y); captionBottom = Math.max(captionBottom, y); captionWhite++;
+  }
+  assert.ok(captionWhite > 100 && captionTop > originalVideo.height - 200 && captionBottom < originalVideo.height - 10, 'Chinese multiline subtitles remain visible inside the picture');
+  await run('ffmpeg', ['-v', 'error', '-y', '-ss', '1', '-i', chineseSubtitleOutput, '-frames:v', '1', '-update', '1', join(output, 'chinese-multiline-subtitles.png')], { windowsHide: true });
   const audioRms = await Promise.all([audible(finalPath, .1), audible(finalPath, 5.1)]);
   await desktop.waitFor('document.querySelector(".video-timeline-workspace video")?.readyState>=1', 'final asset-protocol playback');
   await desktop.evaluate('(async()=>{const v=document.querySelector(".video-timeline-workspace video");v.muted=true;await v.play();})()');

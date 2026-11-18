@@ -7,6 +7,7 @@ import { resolveLocalPath, isRemoteUrl, toWebviewUrl, isValidVideoClip } from '.
 import { runAudioMerge } from './step-audio-merge';
 import { orderClipsByShots } from './clip-order';
 import { normalizeTimelineState } from './timeline-state';
+import { getShotSubtitleText } from './shot-subtitles';
 import { getAssemblyBlockers } from './shot-production-contract';
 import type { AssemblyQualityRequirements } from './quality-policy';
 import type { GeneratedClip, ShotSpec, VideoTimelineState } from '@/types/video';
@@ -102,7 +103,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     }
   }
 
-  const hasSubtitleBurnIn = opts.hardcodeSubtitles && shots.some((shot) => !!shot.narration?.trim());
+  const hasSubtitleBurnIn = opts.hardcodeSubtitles && shots.some((shot) => !!getShotSubtitleText(shot));
   const hasTimelineEdits = clips.some((clip) => {
     const trim = timelineState.trims[clip.shotId];
     return (trim?.startSeconds ?? 0) > 0 || (trim?.endSeconds ?? 0) > 0;
@@ -165,7 +166,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     }
     localPaths.push(resolvedPath);
     const shot = shots.find((s) => s.id === clip.shotId);
-    subtitles.push(shot?.narration ?? null);
+    subtitles.push(getShotSubtitleText(shot));
     trimStartSeconds.push(timelineState.trims[clip.shotId]?.startSeconds ?? 0);
     trimEndSeconds.push(timelineState.trims[clip.shotId]?.endSeconds ?? 0);
   }

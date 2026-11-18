@@ -6,7 +6,7 @@ import { useProviderStore } from '@/stores/providerStore';
 import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import { providerRouter } from '@/services/providers';
 import { importStudioFile, submitStudioJob } from '@/services/video-studio/generation';
-import { initialStudioInput } from '@/services/video-studio/input';
+import { initialStudioInput, normalizeStudioVideoInput } from '@/services/video-studio/input';
 import { getVideoParameter, normalizeNumberForParameter } from '@/services/video/core/video-capability-utils';
 import type { StudioGenerationInput } from '@/types/video-studio';
 import StudioMedia from './StudioMedia';
@@ -55,15 +55,9 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
   }, [capabilities, supportsNegative, supportsSeed]);
   useEffect(() => {
     if (input.kind !== 'video' || capabilities?.modality !== 'video') return;
-    setInput((current) => ({
-      ...current,
-      durationSeconds: normalizeNumberForParameter(current.durationSeconds, durationRule, 5),
-      resolution: capabilities.resolutionTiers?.some((tier) => tier.id === current.resolution) ? current.resolution : capabilities.resolutionTiers?.[0]?.id ?? '720p',
-      controlMode: current.controlMode === 'keyframe' && !capabilities.references.supportsFirstFrame ? 'text'
-        : current.controlMode === 'reference' && !capabilities.references.supportsSubjectReferences ? 'text' : current.controlMode,
-    }));
+    setInput((current) => normalizeStudioVideoInput(current, capabilities));
   }, [capabilities]);
-  const changeKind = (kind: StudioGenerationInput['kind']) => patch({ kind, endpointId: undefined, model: undefined, controlMode: 'text', audioReferenceAssetIds: [], videoReferenceAssetIds: [], firstFrameAssetId: undefined, lastFrameAssetId: undefined, generateAudio: undefined });
+  const changeKind = (kind: StudioGenerationInput['kind']) => patch({ kind, endpointId: undefined, model: undefined, controlMode: 'text', referenceAssetIds: [], audioReferenceAssetIds: [], videoReferenceAssetIds: [], firstFrameAssetId: undefined, lastFrameAssetId: undefined, generateAudio: undefined, imageEdit: undefined });
   const chooseReferences = (ids: string[]) => {
     if (input.kind !== 'video') { patch({ referenceAssetIds: ids }); return; }
     if (capabilities?.modality === 'video' && capabilities.references.supportsSubjectReferences && input.controlMode !== 'keyframe') {
@@ -75,8 +69,9 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
   };
   const generate = () => {
     try {
-      if (input.kind === 'video' && input.controlMode === 'keyframe' && !input.firstFrameAssetId) throw new Error(t('studio.creator.first'));
-      submitStudioJob({ ...input, endpointId: endpoint?.id, model: selectedModel });
+      const snapshot = input.kind === 'video' && capabilities?.modality === 'video' ? normalizeStudioVideoInput(input, capabilities) : input;
+      if (snapshot.kind === 'video' && snapshot.controlMode === 'keyframe' && !snapshot.firstFrameAssetId) throw new Error(t('studio.creator.first'));
+      submitStudioJob({ ...snapshot, endpointId: endpoint?.id, model: selectedModel });
       message.success(t('studio.creator.queued'));
     } catch (error) { message.error(`${t('studio.failed')}: ${error instanceof Error ? error.message : String(error)}`); }
   };
@@ -98,6 +93,7 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
           {input.controlMode !== 'keyframe' && <Select mode="multiple" maxTagCount={1} aria-label={t('studio.creator.references')} placeholder={t('studio.creator.references')} value={input.referenceAssetIds} onChange={chooseReferences} options={imageOptions} className="studio-creator-library-select" />}
         </Space>}
         {!endpoint && <Alert type="info" message={t('studio.creator.noEndpoint')} action={<Button size="small" onClick={() => setPage('plugins')}>{t('studio.creator.configure')}</Button>} />}
+        {input.kind === 'video' && capabilities?.modality === 'video' && !capabilities.references.supported && <Alert type="info" message={t('studio.creator.textOnlyContinuity')} />}
         <Button size="large" type="primary" icon={<PlayCircleOutlined />} disabled={!input.prompt.trim() || !endpoint || (capabilities && 'adapterAvailable' in capabilities && capabilities.adapterAvailable === false)} onClick={generate} data-testid="studio-generate">{t('studio.creator.generate')}</Button>
       </div>
       <aside className="video-studio-card studio-creator-settings">
@@ -108,7 +104,7 @@ export default function StudioCreator({ initialKind, home }: { initialKind: 'ima
           {input.kind !== 'text' && <label>{t('studio.creator.ratio')}<Select value={input.aspectRatio} onChange={(aspectRatio) => patch({ aspectRatio })} options={['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map((value) => ({ value, label: value }))} /></label>}
           {input.kind === 'image' && sizeOptions.length > 0 && <label>{t('studio.creator.size')}<Select value={input.imageSize} onChange={(imageSize) => patch({ imageSize })} options={sizeOptions.map((value) => ({ value, label: value }))} /></label>}
           {input.kind === 'video' && <>
-            <label>{t('studio.creator.duration')}{durationRule?.allowedValues?.length ? <Select value={input.durationSeconds} options={durationRule.allowedValues.map((value) => ({ value, label: `${value}s` }))} onChange={(durationSeconds) => patch({ durationSeconds })} /> : <InputNumber aria-label={t('studio.creator.duration')} value={input.durationSeconds} min={durationRule?.min ?? 1} max={durationRule?.max} step={durationRule?.type === 'integer' ? 1 : 0.5} onChange={(value) => patch({ durationSeconds: normalizeNumberForParameter(value ?? undefined, durationRule, 5) })} />}</label>
+            <label>{t('studio.creator.duration')}{!durationRule ? <Typography.Text type="secondary">{t('studio.creator.durationByModel')}</Typography.Text> : durationRule.allowedValues?.length ? <Select value={input.durationSeconds} options={durationRule.allowedValues.map((value) => ({ value, label: `${value}s` }))} onChange={(durationSeconds) => patch({ durationSeconds })} /> : <InputNumber aria-label={t('studio.creator.duration')} value={input.durationSeconds} min={durationRule.min ?? 1} max={durationRule.max} step={durationRule.type === 'integer' ? 1 : 0.5} onChange={(value) => patch({ durationSeconds: normalizeNumberForParameter(value ?? undefined, durationRule, 5) })} />}</label>
             <label>{t('studio.creator.resolution')}<Select value={input.resolution} onChange={(resolution) => patch({ resolution })} options={(capabilities?.modality === 'video' ? capabilities.resolutionTiers ?? [{ id: '720p' }] : [{ id: '720p' }]).map((tier) => ({ value: tier.id, label: tier.id }))} /></label>
             <label className="span-all">{t('studio.creator.mode')}<Select value={input.controlMode} onChange={(controlMode) => patch({ controlMode, referenceAssetIds: controlMode === 'reference' ? input.referenceAssetIds : [], audioReferenceAssetIds: controlMode === 'reference' ? input.audioReferenceAssetIds : [], videoReferenceAssetIds: controlMode === 'reference' ? input.videoReferenceAssetIds : [], firstFrameAssetId: controlMode === 'keyframe' ? input.firstFrameAssetId : undefined, lastFrameAssetId: controlMode === 'keyframe' ? input.lastFrameAssetId : undefined })} options={(['text', 'keyframe', 'reference'] as const).map((value) => ({ value, label: t(`studio.creator.mode.${value}`), disabled: value === 'keyframe' ? capabilities?.modality !== 'video' || !capabilities.references.supportsFirstFrame : value === 'reference' ? capabilities?.modality !== 'video' || !capabilities.references.supportsSubjectReferences : false }))} /></label>
             {input.controlMode === 'keyframe' && <><label className="span-all">{t('studio.creator.first')}<Select allowClear value={input.firstFrameAssetId} onChange={(firstFrameAssetId) => patch({ firstFrameAssetId })} options={imageOptions} /></label>{capabilities?.modality === 'video' && capabilities.references.supportsLastFrame && <label className="span-all">{t('studio.creator.last')}<Select allowClear value={input.lastFrameAssetId} onChange={(lastFrameAssetId) => patch({ lastFrameAssetId })} options={imageOptions} /></label>}</>}
