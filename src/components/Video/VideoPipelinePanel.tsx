@@ -589,6 +589,7 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
                 icon={<LoadingOutlined spin style={{ color: 'var(--accent-info)', fontSize: 16 }} />}
                 message="AI 正在深度切片原著章节、规划分镜时长并提取登场角色与场景..."
                 description={currentStageSummary || '正在执行剧本语义切词与分镜提示词工业级增强，分镜生成后将自动呈现于下方列表。'}
+                action={<Button size="small" onClick={handleWorkflowStop}>{t('video.workflow.stop')}</Button>}
                 style={{ background: 'color-mix(in srgb, var(--accent-info) 10%, var(--bg-container))', borderColor: 'var(--accent-info)' }}
               />
             )}

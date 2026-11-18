@@ -142,27 +142,37 @@ const TensionChartPanel: React.FC<TensionChartPanelProps> = ({ novelId }) => {
       return;
     }
     setScoring(true);
-    const prevScore = points.length > 0 ? points[points.length - 1].score : 5;
-    await service.scoreChapter(chapter.content, chapter.order, prevScore);
-    refresh();
-    setScoring(false);
-    message.success(t('tension.scoreSuccess', { chapter: selectedChapter }));
+    try {
+      const prevScore = points.length > 0 ? points[points.length - 1].score : 5;
+      await service.scoreChapter(chapter.content, chapter.order, prevScore);
+      refresh();
+      message.success(t('tension.scoreSuccess', { chapter: selectedChapter }));
+    } catch (error) {
+      message.error(`${t('common.failed')}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setScoring(false);
+    }
   };
 
   // Score all chapters
   const handleScoreAll = async () => {
     if (contentChapters.length === 0) return;
     setScoring(true);
-    let prevScore = 5;
-    for (const ch of contentChapters) {
-      if (!scoredChapters.has(ch.order)) {
-        await service.scoreChapter(ch.content, ch.order, prevScore);
+    try {
+      let prevScore = 5;
+      for (const ch of contentChapters) {
+        if (!scoredChapters.has(ch.order)) {
+          await service.scoreChapter(ch.content, ch.order, prevScore);
+        }
+        prevScore = points.find((p) => p.chapter === ch.order)?.score ?? prevScore;
+        refresh();
       }
-      prevScore = points.find((p) => p.chapter === ch.order)?.score ?? prevScore;
-      refresh();
+      message.success(t('tension.scoreAllSuccess'));
+    } catch (error) {
+      message.error(`${t('common.failed')}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setScoring(false);
     }
-    setScoring(false);
-    message.success(t('tension.scoreAllSuccess'));
   };
 
   // i18n-aware tension label

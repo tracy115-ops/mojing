@@ -19,6 +19,23 @@ import './VideoView.css';
 
 const { Text, Title } = Typography;
 
+function videoProjectStatus(
+  current: 'planning' | 'in_progress' | 'paused' | 'completed' | 'archived',
+  pipeline: ReturnType<typeof useVideoStore.getState>['projects'][string] | undefined,
+): 'planning' | 'in_progress' | 'paused' | 'completed' | 'archived' {
+  if (!pipeline || current === 'archived') return current;
+  if (pipeline.finalVideoUrl || pipeline.currentStage === 'complete') return 'completed';
+  const hasPipelineWork = !!pipeline.sceneSpec
+    || Object.values(pipeline.stages).some((stage) => (
+      stage.status === 'running'
+      || stage.status === 'awaiting_review'
+      || stage.status === 'completed'
+      || stage.status === 'error'
+      || (stage.invocations?.length ?? 0) > 0
+    ));
+  return hasPipelineWork ? 'in_progress' : 'planning';
+}
+
 const VideoView: React.FC = () => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
@@ -26,8 +43,19 @@ const VideoView: React.FC = () => {
   const setActiveProject = useProjectStore((s) => s.setActiveProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const toggleFavorite = useProjectStore((s) => s.toggleFavorite);
+  const updateProject = useProjectStore((s) => s.updateProject);
 
   const activePipelineId = useVideoStore((s) => s.activePipelineId);
+  const videoPipelineProjects = useVideoStore((s) => s.projects);
+
+  useEffect(() => {
+    projects
+      .filter((project) => project.type === 'video')
+      .forEach((project) => {
+        const status = videoProjectStatus(project.status, videoPipelineProjects[project.id]);
+        if (status !== project.status) updateProject(project.id, { status });
+      });
+  }, [projects, updateProject, videoPipelineProjects]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const createRequested = useVideoStudioStore((state) => state.createProjectRequested);

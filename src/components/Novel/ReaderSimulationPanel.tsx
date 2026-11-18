@@ -3,7 +3,7 @@
 // ============================================================================
 
 import React, { useMemo, useState } from 'react';
-import { Typography, Card, Tag, Space, Empty, Button, Progress, List } from 'antd';
+import { Typography, Card, Tag, Space, Empty, Button, Progress, List, message } from 'antd';
 import {
   UserOutlined, SmileOutlined, FireOutlined, BugOutlined,
 } from '@ant-design/icons';
@@ -41,10 +41,15 @@ const ReaderSimulationPanel: React.FC<ReaderSimulationPanelProps> = ({ novelId }
   const handleSimulate = async () => {
     if (contentChapters.length === 0) return;
     setLoading(true);
-    const lastChapter = contentChapters[contentChapters.length - 1];
-    const result = await simulator.simulate(lastChapter.order, lastChapter.content);
-    if (result) setLatestResult(result);
-    setLoading(false);
+    try {
+      const lastChapter = contentChapters[contentChapters.length - 1];
+      const result = await simulator.simulate(lastChapter.order, lastChapter.content);
+      if (result) setLatestResult(result);
+    } catch (error) {
+      message.error(`${t('common.failed')}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderScoreCard = (score: ReaderScore) => {
