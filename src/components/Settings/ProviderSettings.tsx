@@ -16,6 +16,7 @@ import {
   Divider,
   Alert,
   AutoComplete,
+  InputNumber,
   Switch,
   Collapse,
   Row,
@@ -224,6 +225,7 @@ const ProviderSettings: React.FC = () => {
   const setLLMModel = useProviderStore((s) => s.setLLMModel);
   const setImageModel = useProviderStore((s) => s.setImageModel);
   const setVideoModel = useProviderStore((s) => s.setVideoModel);
+  const setVideoRetrySettings = useProviderStore((s) => s.setVideoRetrySettings);
   const checkHealth = useProviderStore((s) => s.checkHealth);
 
   const [discoveringOllama, setDiscoveringOllama] = useState(false);
@@ -1012,6 +1014,21 @@ const ProviderSettings: React.FC = () => {
                       />
                     </div>
                   ))}
+                </Card>
+                <Card size="small" title="视频服务重试" style={{ marginTop: 12 }}>
+                  <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                    Agnes Video 2.5 Flash 队列满时自动等待并重试。额度不足、鉴权失败和参数错误不会重试。
+                  </Typography.Paragraph>
+                  <Space wrap>
+                    <span>队列满最大重试次数</span>
+                    <InputNumber min={0} max={20} precision={0}
+                      value={config.video.queueRetryCount ?? 6}
+                      onChange={(value) => setVideoRetrySettings({ queueRetryCount: value ?? 6 })} />
+                    <span>首次等待（秒）</span>
+                    <InputNumber min={1} max={1800} precision={0}
+                      value={Math.round((config.video.queueRetryBackoffMs ?? 30000) / 1000)}
+                      onChange={(value) => setVideoRetrySettings({ queueRetryBackoffMs: (value ?? 30) * 1000 })} />
+                  </Space>
                 </Card>
               </div>
             ),

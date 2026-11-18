@@ -405,6 +405,10 @@ export interface VideoProviderConfig {
   defaultModel: string;
   defaultResolution: string;
   defaultFps: number;
+  /** Additional attempts when Agnes Flash reports a temporary full queue. */
+  queueRetryCount?: number;
+  /** Initial delay before retrying a full Agnes queue, in milliseconds. */
+  queueRetryBackoffMs?: number;
 }
 
 // --- TTS Provider Config ---

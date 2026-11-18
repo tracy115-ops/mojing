@@ -116,6 +116,8 @@ const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
     defaultModel: '',
     defaultResolution: '1920x1080',
     defaultFps: 24,
+    queueRetryCount: 6,
+    queueRetryBackoffMs: 30000,
   },
   tts: {
     primary: 'openai-tts',
@@ -143,6 +145,7 @@ interface ProviderState {
   setLLMModel: (taskType: string, model: string) => void;
   setImageModel: (taskType: string, model: string) => void;
   setVideoModel: (taskType: string, model: string) => void;
+  setVideoRetrySettings: (settings: { queueRetryCount?: number; queueRetryBackoffMs?: number }) => void;
   setLLMFallback: (provider: LLMProviderId, endpointId?: string) => void;
   setImageFallback: (provider: ImageProviderId, endpointId?: string) => void;
   setVideoFallback: (provider: VideoProviderId, endpointId?: string) => void;
@@ -302,6 +305,12 @@ export const useProviderStore = create<ProviderState>()(
               models: { ...s.config.video.models, [taskType]: model },
             },
           },
+        }));
+      },
+
+      setVideoRetrySettings: (settings) => {
+        set((s) => ({
+          config: { ...s.config, video: { ...s.config.video, ...settings } },
         }));
       },
 

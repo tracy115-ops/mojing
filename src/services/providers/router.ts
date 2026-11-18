@@ -145,24 +145,35 @@ function isTransientNetworkError(err: unknown): boolean {
   return false;
 }
 
+function isVideoQueueFull(err: unknown): boolean {
+  return err instanceof Error && /video_queue_full|queue[_ ]full/i.test(err.message);
+}
+
 /** 对瞬时网络错误及 429 限流自动重试(最多 retries 次,指数退避)。
  *  非瞬时错误(如 content_policy / 400 参数错误 / 401 鉴权失败)直接抛,不重试。 */
 async function callWithTimeoutRetry<T>(
   fn: () => Promise<T>,
   retries = 3,
+  options: { queueRetries?: number; queueBackoffMs?: number } = {},
 ): Promise<T> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  const queueRetries = Math.max(0, Math.min(20, Math.floor(options.queueRetries ?? retries)));
+  const queueBackoffMs = Math.max(1000, Math.min(30 * 60 * 1000, Math.floor(options.queueBackoffMs ?? 30000)));
+  for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastErr = err;
-      if (attempt === retries || !isTransientNetworkError(err)) throw err;
+      const queueFull = isVideoQueueFull(err);
+      const maxRetries = queueFull ? queueRetries : retries;
+      if (attempt >= maxRetries || !isTransientNetworkError(err)) throw err;
       const isRateLimit = err instanceof Error && /429|rate limit|limit reached/i.test(err.message);
-      // 限流退避:6s, 12s, 24s;普通网络抖动:3s, 9s, 27s
-      const delayMs = isRateLimit ? 6000 * Math.pow(2, attempt) : 3000 * Math.pow(3, attempt);
+      // 队列满使用可配置退避；限流/网络抖动沿用较短的原策略。
+      const delayMs = queueFull
+        ? queueBackoffMs * Math.pow(2, attempt)
+        : isRateLimit ? 6000 * Math.pow(2, attempt) : 3000 * Math.pow(3, attempt);
       void logger.warn(
-        `[router] 瞬时错误/限流,${delayMs}ms 后重试 (${attempt + 1}/${retries}): ${
+        `[router] ${queueFull ? '视频队列已满' : '瞬时错误/限流'},${delayMs}ms 后重试 (${attempt + 1}/${maxRetries}): ${
           err instanceof Error ? err.message : String(err)
         }`,
         'router',
@@ -1249,6 +1260,13 @@ class ProviderRouter {
                 throw new Error(`Primary video provider failed: ${primaryMessage}; fallback failed: ${fallbackMessage}`);
               }
             }
+          }, 3, {
+            queueRetries: endpointProvider === 'agnes-video'
+              ? config.queueRetryCount ?? 6
+              : 3,
+            queueBackoffMs: endpointProvider === 'agnes-video'
+              ? config.queueRetryBackoffMs ?? 30000
+              : 30000,
           });
         });
       },
