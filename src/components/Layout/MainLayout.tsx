@@ -134,6 +134,7 @@ const MainLayout: React.FC = () => {
   const handleTitlebarMouseDown = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
+    if (!e.currentTarget.contains(target)) return;
     if (target.closest('button') || target.closest('.ant-btn') || target.closest('.ant-tooltip')) return;
     try {
       await tauriWin().startDragging();

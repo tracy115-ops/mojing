@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { desktopSession } from './lib/desktop-session.mjs';
+import { desktopSession, delay } from './lib/desktop-session.mjs';
 
 const executable = resolve(process.argv[2] || 'src-tauri/target/release/mojing.exe');
 const version = JSON.parse(await readFile('package.json', 'utf8')).version;
@@ -51,6 +51,7 @@ try {
   await newProject('小说引擎', '.ant-modal #title');
   await desktop.fill('.ant-modal #title', 'Desktop acceptance novel');
   for (let index = 1; index < 5; index++) {
+    await delay(200);
     await desktop.nativeTextButton('下一步', '.ant-modal');
     await desktop.waitFor(`[...document.querySelectorAll('.ant-steps-item')].findIndex(el=>el.classList.contains('ant-steps-item-process'))===${index}`, 'wizard step');
   }
