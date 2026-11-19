@@ -259,7 +259,7 @@ const StoryTreeNodeRow: React.FC<{
   );
 };
 
-const NovelView: React.FC = () => {
+const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => void }> = ({ createRequested, onCreateHandled }) => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
@@ -369,15 +369,11 @@ const NovelView: React.FC = () => {
     }
   }, [activeProjectId]);
 
-  // Listen for global "new project" event from titlebar
   useEffect(() => {
-    const handler = (e: Event) => {
-      const { type } = (e as CustomEvent).detail;
-      if (type === 'novel') setCreateOpen(true);
-    };
-    window.addEventListener('mojing:create-project', handler);
-    return () => window.removeEventListener('mojing:create-project', handler);
-  }, []);
+    if (!createRequested) return;
+    setCreateOpen(true);
+    onCreateHandled?.();
+  }, [createRequested, onCreateHandled]);
 
   const handleWizardComplete = (result: {
     values: { title: string; description: string; genre: string; targetWordCount: number; style: string; language: string };

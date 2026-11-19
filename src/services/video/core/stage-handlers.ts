@@ -361,7 +361,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
   const spec = { ...workingSpec, characters: result.characters };
   store.setSceneSpec(pid, spec);
   if (result.failed.length > 0) {
-    const msg = `角色立绘生成失败：${result.failed.join('、')}。已保留成功结果，请重试当前步骤。`;
+    const msg = `角色参考图生成失败：${result.failed.join('、')}。已保留成功结果，请重试当前步骤。`;
     store.setStageStatus(pid, 'character_anchor', 'error', { error: msg });
     callbacks?.onError?.(msg);
     return null;
@@ -432,6 +432,12 @@ export async function executeSceneImage(ctx: StageContext): Promise<StageResult 
   if (!result || !isStageRunActive(ctx)) return null;
   const spec = { ...workingSpec, scenes: result.scenes };
   store.setSceneSpec(pid, spec);
+  if (result.failed.length > 0) {
+    const msg = `场景图生成失败：${result.failed.join('、')}。已保留成功结果，请重试当前步骤。`;
+    store.setStageStatus(pid, 'scene_image', 'error', { error: msg });
+    callbacks?.onError?.(msg);
+    return null;
+  }
   store.setStageStatus(pid, 'scene_image', 'completed', { progress: 1 });
   return { spec };
 }

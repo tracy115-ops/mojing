@@ -50,6 +50,10 @@ export interface ShotPlanContractOptions {
   requireAssetBindings?: boolean;
 }
 
+export function getShotStillPrompt(shot: ShotPlanLike): string {
+  return shot.imagePrompt?.trim() || shot.startState?.trim() || shot.sourceText?.trim() || shot.videoPrompt?.trim() || '';
+}
+
 export function validateShotPlanContract(
   shots: ShotPlanLike[],
   options: ShotPlanContractOptions = {},

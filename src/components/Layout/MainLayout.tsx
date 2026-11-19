@@ -29,6 +29,7 @@ const MusicView = lazy(() => import('@/components/Music/MusicView'));
 const SettingsPanel = lazy(() => import('@/components/Settings/SettingsPanel'));
 
 type ViewKey = 'novels' | 'comics' | 'videos' | 'music';
+type ProjectKind = 'novel' | 'comic' | 'video';
 
 interface NavTab {
   key: ViewKey | 'settings';
@@ -40,13 +41,19 @@ interface NavTab {
 const MainLayout: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewKey>('novels');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<string>();
+  const [createRequest, setCreateRequest] = useState<ProjectKind>();
+  const clearCreateRequest = useCallback(() => setCreateRequest(undefined), []);
   const { t } = useTranslation();
   const currentTheme = useSettingsStore((s) => s.currentTheme);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const settings = useSettingsStore((s) => s.settings);
 
   useEffect(() => {
-    const handler = () => setSettingsOpen(true);
+    const handler = (event: Event) => {
+      setSettingsTab((event as CustomEvent<{ tab?: string }>).detail?.tab);
+      setSettingsOpen(true);
+    };
     window.addEventListener('mojing:open-settings', handler);
     return () => window.removeEventListener('mojing:open-settings', handler);
   }, []);
@@ -104,21 +111,24 @@ const MainLayout: React.FC = () => {
 
   const renderContent = () => {
     switch (activeView) {
-      case 'novels': return <NovelView />;
-      case 'comics': return <ComicView />;
+      case 'novels': return <NovelView createRequested={createRequest === 'novel'} onCreateHandled={clearCreateRequest} />;
+      case 'comics': return <ComicView createRequested={createRequest === 'comic'} onCreateHandled={clearCreateRequest} />;
       case 'videos': return <VideoView />;
       case 'music': return <MusicView />;
       default: return <NovelView />;
     }
   };
 
-  const dispatchCreate = useCallback((type: string) => {
-    // Switch to the corresponding view and dispatch a custom event
-    if (type === 'novel') setActiveView('novels');
-    else if (type === 'comic') setActiveView('comics');
-    else if (type === 'video') { useVideoStudioStore.getState().requestCreateProject(); setActiveView('videos'); }
+  const dispatchCreate = useCallback((type: ProjectKind) => {
+    if (type === 'video') {
+      useVideoStudioStore.getState().requestCreateProject();
+      setCreateRequest(undefined);
+      setActiveView('videos');
+    } else {
+      setCreateRequest(type);
+      setActiveView(type === 'novel' ? 'novels' : 'comics');
+    }
     setSettingsOpen(false);
-    window.dispatchEvent(new CustomEvent('mojing:create-project', { detail: { type } }));
   }, []);
 
   const handleTitlebarMouseDown = useCallback(async (e: React.MouseEvent) => {
@@ -148,6 +158,7 @@ const MainLayout: React.FC = () => {
                 onClick={(e) => {
                   e.stopPropagation();
                   if (tab.key === 'settings') {
+                    setSettingsTab(undefined);
                     setSettingsOpen(true);
                   } else {
                     setSettingsOpen(false);
@@ -195,6 +206,7 @@ const MainLayout: React.FC = () => {
             <Tooltip title={t('project.new')}>
               <button
                 className="ws-titlebar-btn"
+                aria-label={t('project.new')}
                 onClick={(e) => e.stopPropagation()}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
@@ -247,7 +259,7 @@ const MainLayout: React.FC = () => {
           body: { maxHeight: 'calc(100vh - 200px)', overflow: 'auto' },
         }}
       >
-        <Suspense fallback={loadingView}><SettingsPanel /></Suspense>
+        <Suspense fallback={loadingView}><SettingsPanel key={settingsTab} defaultTab={settingsTab} /></Suspense>
       </Modal>
 
       {/* StatusBar */}

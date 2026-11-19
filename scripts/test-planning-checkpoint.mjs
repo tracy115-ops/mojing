@@ -87,4 +87,16 @@ assert.notEqual(approved.action, 'review_plan');
 const direct = getProductionReadiness(makeProject('awaiting_review', 'direct'), { sourceText: 'A source story.' });
 assert.equal(direct.planningReviewRequired, false, 'direct projects do not need the novel planning checkpoint');
 
-console.log('planning checkpoint tests passed (12 assertions)');
+const saved = makeProject('completed');
+saved.sceneSpec.characters.push({ id: 'cat', name: 'Cat' });
+const originalShot = saved.sceneSpec.shots[0];
+delete originalShot.sourceText;
+originalShot.characterIds = ['cat'];
+const legacy = getProductionReadiness(saved, { sourceText: 'A source story.' });
+assert.equal(legacy.planningApproved, true);
+assert.equal(legacy.action, 'prepare_assets', 'legacy authored shots with only a video prompt can proceed to references');
+assert.equal(originalShot.imagePrompt, undefined, 'readiness does not overwrite the original plan');
+saved.options = { qualityProfile: 'quality' };
+assert.equal(getProductionReadiness(saved, { sourceText: 'A source story.' }).planningReady, false, 'new authored plans still require explicit source and still prompts');
+
+console.log('planning checkpoint tests passed');

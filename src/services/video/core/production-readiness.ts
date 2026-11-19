@@ -6,9 +6,8 @@ import type {
   VideoProjectState,
   VideoStage,
 } from '@/types/video';
-import {
-  findMatchingCharacters,
-} from './character-dna.ts';
+import { isReusableEnvironmentReference } from './asset-reference-contract.ts';
+import { needsTurnaroundGeneration } from './character-asset-binding.ts';
 import {
   getShotProductionReadiness,
   isShotAssemblyReady,
@@ -17,7 +16,7 @@ import {
 } from './shot-production-contract.ts';
 import { resolveAssemblyQualityRequirements } from './quality-policy.ts';
 import { getContinuityHandoffIssue } from './shot-continuity.ts';
-import { validateShotPlanContract, type ShotPlanIssue } from './shot-plan-contract.ts';
+import { getShotStillPrompt, validateShotPlanContract, type ShotPlanIssue } from './shot-plan-contract.ts';
 
 export type ProductionPhase = 'script' | 'assets' | 'shots' | 'timeline';
 
@@ -51,6 +50,7 @@ export interface ProductionReadiness {
   phase: ProductionPhase;
   action: ProductionAction;
   activeStage?: VideoStage;
+  failedStage?: VideoStage;
   sourceReady: boolean;
   planningReady: boolean;
   planningApproved: boolean;
@@ -107,7 +107,8 @@ export function getProductionReadiness(
   const planningIssues = validateShotPlanContract(isLegacyPlan
     ? shots.map((shot) => ({
         ...shot,
-        imagePrompt: shot.imagePrompt ?? shot.startState ?? shot.sourceText,
+        sourceText: shot.sourceText?.trim() || shot.videoPrompt,
+        imagePrompt: getShotStillPrompt(shot),
       }))
     : shots, {
     characters,
@@ -123,19 +124,22 @@ export function getProductionReadiness(
   // extraction checkpoint until the user confirms it.
   const planningReviewRequired = planningReady
     && sceneSpec?.meta.channel !== 'direct'
-    && project.stages.extraction?.status === 'awaiting_review';
+    && project.stages.extraction?.status !== 'completed';
   const extractionReady = sceneSpec?.meta.channel === 'direct'
     || project.stages.extraction?.status === 'completed';
   const planningApproved = planningReady && !planningReviewRequired && extractionReady;
 
-  const requiredCharacterIds = collectRequiredCharacterIds(shots, characters);
-  const requiredSceneIds = new Set(
-    shots.map((shot) => shot.sceneId).filter((id): id is string => !!id?.trim()),
+  const requiredCharacters = project.options?.enableCharacterAnchor === false ? [] : characters;
+  const requiredScenes = project.options?.enableSceneImage === false ? [] : scenes;
+  const anchorLimit = project.options?.characterAnchorLimit ?? 5;
+  const singleView = project.stages.character_anchor?.input?.anchorMode === 'single';
+  const characterReady = (character: CharacterAnchor, index: number) => (
+    singleView || index >= anchorLimit
+      ? !!(character.portraitImage || character.turnaroundImage)
+      : !needsTurnaroundGeneration(character)
   );
-  const requiredCharacters = characters.filter((character) => requiredCharacterIds.has(character.id));
-  const requiredScenes = scenes.filter((scene) => requiredSceneIds.has(scene.id));
-  const readyCharacters = requiredCharacters.filter(hasCharacterReference);
-  const readyScenes = requiredScenes.filter((scene) => !!scene.backgroundImage);
+  const readyCharacters = requiredCharacters.filter(characterReady);
+  const readyScenes = requiredScenes.filter(isReusableEnvironmentReference);
   const assetsRequired = requiredCharacters.length + requiredScenes.length;
   const assetsReady = readyCharacters.length + readyScenes.length;
 
@@ -170,10 +174,10 @@ export function getProductionReadiness(
     blockers.push({ code: `planning:${issue.code}`, phase: 'script', shotId: issue.shotId });
   }
   if (planningReviewRequired) blockers.push({ code: 'planning_review_required', phase: 'script' });
-  for (const character of requiredCharacters.filter((item) => !hasCharacterReference(item))) {
+  for (const character of requiredCharacters.filter((item, index) => !characterReady(item, index))) {
     blockers.push({ code: 'character_reference_required', phase: 'assets', subjectId: character.id });
   }
-  for (const scene of requiredScenes.filter((item) => !item.backgroundImage)) {
+  for (const scene of requiredScenes.filter((item) => !isReusableEnvironmentReference(item))) {
     blockers.push({ code: 'scene_reference_required', phase: 'assets', subjectId: scene.id });
   }
   for (const shot of shots.filter((item) => item.unresolvedCharacterRefs?.some((reference) => reference.trim()))) {
@@ -195,7 +199,7 @@ export function getProductionReadiness(
   else if (!planningReady) action = 'plan';
   else if (planningReviewRequired) action = 'review_plan';
   else if (assetsRequired > assetsReady) action = 'prepare_assets';
-  else if (isAwaitingReview || approved < shots.length || keyframes < shots.length || videoCandidates < shots.length) {
+  else if (approved < shots.length) {
     action = 'review_shots';
   } else if (shots.length > 0 && !project.finalVideoUrl) action = 'assemble';
   else if (project.finalVideoUrl) action = 'complete';
@@ -216,6 +220,7 @@ export function getProductionReadiness(
     phase: phaseForAction(action),
     action,
     activeStage: project.currentStage,
+    failedStage: stageError,
     sourceReady,
     planningReady,
     planningApproved,
@@ -261,18 +266,6 @@ export function phaseForAction(action: ProductionAction): ProductionPhase {
     case 'configure':
       return 'shots';
   }
-}
-
-function collectRequiredCharacterIds(shots: ShotSpec[], characters: CharacterAnchor[]): Set<string> {
-  const required = new Set<string>();
-  for (const shot of shots) {
-    for (const character of findMatchingCharacters(shot, characters)) required.add(character.id);
-  }
-  return required;
-}
-
-function hasCharacterReference(character: CharacterAnchor): boolean {
-  return !!(character.portraitImage || character.turnaroundImage);
 }
 
 function findStageError(project: VideoProjectState): VideoStage | undefined {

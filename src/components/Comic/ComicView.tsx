@@ -8,7 +8,7 @@ import ComicPipelinePanel from './ComicPipelinePanel';
 
 const { Text } = Typography;
 
-const ComicView: React.FC = () => {
+const ComicView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => void }> = ({ createRequested, onCreateHandled }) => {
   const { t } = useTranslation();
   const projectsMap = useComicStore((s) => s.projects);
   const activeProjectId = useComicStore((s) => s.activeProjectId);
@@ -18,13 +18,10 @@ const ComicView: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const { type } = (e as CustomEvent).detail;
-      if (type === 'comic') setCreateOpen(true);
-    };
-    window.addEventListener('mojing:create-project', handler);
-    return () => window.removeEventListener('mojing:create-project', handler);
-  }, []);
+    if (!createRequested) return;
+    setCreateOpen(true);
+    onCreateHandled?.();
+  }, [createRequested, onCreateHandled]);
 
   const projects = useMemo(
     () =>

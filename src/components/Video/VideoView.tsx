@@ -76,19 +76,6 @@ const VideoView: React.FC = () => {
   const [generatorSeriesContinuityContext, setGeneratorSeriesContinuityContext] = useState<string | undefined>();
   const [seriesForm] = Form.useForm<{ title: string; description?: string }>();
 
-  // Listen for global "new project" event from titlebar
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { type } = (e as CustomEvent).detail;
-      if (type === 'video') {
-        setEpisodeSeriesId(undefined);
-        setCreateOpen(true);
-      }
-    };
-    window.addEventListener('mojing:create-project', handler);
-    return () => window.removeEventListener('mojing:create-project', handler);
-  }, []);
-
   const videoProjects = useMemo(
     () => projects.filter((p) => p.type === 'video' && (p.metadata as VideoMetadata).seriesRole !== 'episode'),
     [projects],
@@ -314,9 +301,6 @@ const VideoView: React.FC = () => {
               {t('video.series.backToSeries', { title: activeEpisodeSeries.title })}
             </Button>
           )}
-          <Text type="secondary" style={{ fontSize: 12, marginLeft: 'auto' }}>
-            {t('video.series.consistencyHint')}
-          </Text>
         </div>
         <div className="video-view-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           {activeSeries ? (

@@ -77,16 +77,20 @@ export async function desktopSession({ executable, profile, allowedOrigins = [],
   const click = selector => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e||e.disabled)throw new Error('Button unavailable: '+${JSON.stringify(selector)});e.click();})()`);
   const textButton = (label, parent = 'body') => evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(parent + ' button')})].find(e=>e.textContent.replace(/\\s/g,'')===${JSON.stringify(label.replace(/\s/g, ''))});if(!e||e.disabled)throw new Error('Button unavailable: '+${JSON.stringify(label)});e.click();})()`);
   const fill = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Input unavailable');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-  const nativeClick = async selector => {
-    const target = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.closest('.ant-select-selector')||e;})()`;
+  const clickTarget = async (target, label) => {
     await evaluate(`(()=>{const e=${target};if(!e)throw new Error('Click target unavailable');e.scrollIntoView({block:'nearest',behavior:'instant'});})()`);
     // A preceding dropdown can still cover the next control while its close
     // animation runs. Wait for the real mouse hit target before sending input.
-    await waitFor(`(()=>{const e=${target};if(!e)return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.width>0&&r.height>0&&!!hit&&e.contains(hit);})()`, 'unobstructed click target ' + selector);
+    await waitFor(`(()=>{const e=${target};if(!e||e.disabled)return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.width>0&&r.height>0&&!!hit&&e.contains(hit);})()`, 'unobstructed click target ' + label);
     const point = await evaluate(`(()=>{const r=(${target}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   };
+  const nativeClick = selector => clickTarget(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.closest('.ant-select-selector')||e;})()`, selector);
+  const nativeTextButton = (label, parent = 'body') => clickTarget(
+    `[...document.querySelectorAll(${JSON.stringify(parent + ' button')})].find(e=>e.getClientRects().length&&e.textContent.replace(/\\s/g,'')===${JSON.stringify(label.replace(/\s/g, ''))})`,
+    label,
+  );
   const choose = async (selector, label) => {
     await nativeClick(selector);
     const input = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.matches('input')?e:e?.querySelector('input');})()`;
@@ -98,7 +102,7 @@ export async function desktopSession({ executable, profile, allowedOrigins = [],
   const screenshot = async path => { const result = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(path, Buffer.from(result.data, 'base64')); };
   await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
   await waitFor('!!window.__TAURI__?.core?.invoke', 'real Tauri API');
-  return { child, call, evaluate, waitFor, click, textButton, fill, nativeClick, choose, screenshot, errors, blocked, consoleMessages,
+  return { child, call, evaluate, waitFor, click, textButton, fill, nativeClick, nativeTextButton, choose, screenshot, errors, blocked, consoleMessages,
     close: async () => {
       socket.close();
       if (child.exitCode === null) {

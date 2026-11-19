@@ -64,7 +64,7 @@ export default function StudioWorkspace() {
       {navigation.map((item, index) => <React.Fragment key={item.page}>
         {(index === 0 || item.group !== navigation[index - 1].group) && <>{index > 0 && <div className="video-studio-nav-divider" />}<div className="video-studio-nav-group-label">{navigationGroupLabels[item.group]}</div></>}
         <Tooltip title={t(`studio.page.${item.page}`)} placement="right">
-          <button type="button" data-testid={`studio-nav-${item.page}`} aria-current={page === item.page ? 'page' : undefined} className={page === item.page ? 'is-active' : ''} onClick={() => setPage(item.page)}>
+          <button type="button" data-testid={`studio-nav-${item.page}`} aria-label={t(`studio.page.${item.page}`)} aria-current={page === item.page ? 'page' : undefined} className={page === item.page ? 'is-active' : ''} onClick={() => setPage(item.page)}>
             {item.icon}<span>{t(`studio.page.${item.page}`)}</span>{item.page === 'tasks' && pending > 0 && <small>{pending}</small>}
           </button>
         </Tooltip>

@@ -282,7 +282,7 @@ try {
   if (!traceContract?.trace || !traceContract.overviewStillVisible) throw new Error('Technical trace drawer contract is missing');
   if (!await clickTestId('video-flow-trace-close')) throw new Error('Technical trace close action was not found');
   await waitFor('!Boolean(document.querySelector(".video-flow-trace-drawer-root.ant-drawer-open"))', 'technical trace drawer close');
-  if (!await clickButtonByText('打开模型设置')) throw new Error('Configuration gate action was not found');
+  if (!await clickButtonByText('配置模型')) throw new Error('Configuration gate action was not found');
   await waitFor('Boolean(document.querySelector(".ant-modal-wrap"))', 'configuration settings modal');
   await evaluate(`(() => {
     const wrap = [...document.querySelectorAll('.ant-modal-wrap')].find((item) => getComputedStyle(item).display !== 'none');

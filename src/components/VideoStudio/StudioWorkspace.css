@@ -32,12 +32,19 @@
 .video-studio-fields .span-all { grid-column: 1 / -1; }
 .video-studio-muted { color: var(--text-tertiary); font-size: 12px; }
 @media (max-width: 1250px) {
+  .video-studio-nav { flex-basis: 136px; padding: 12px 6px; }
+  .video-studio-nav > button { gap: 7px; padding: 8px; }
+  .video-studio-brand { padding: 0 6px; gap: 5px; }
+  .video-studio-brand strong { font-size: 12px; }
+  .video-studio-nav-group-label { padding-left: 8px; }
+  .video-studio-page-heading { padding: 18px 18px 14px; }
+  .video-studio-content { padding: 0 18px 20px; }
+}
+@media (max-width: 760px) {
   .video-studio-nav { flex-basis: 56px; padding: 12px 6px; }
   .video-studio-nav > button { justify-content: center; padding: 11px 8px; }
   .video-studio-brand { justify-content: center; padding: 0; }
-  .video-studio-nav button > span:not(.anticon), .video-studio-brand strong, .video-studio-nav small { display: none; }
-  .video-studio-page-heading { padding: 18px 18px 14px; }
-  .video-studio-content { padding: 0 18px 20px; }
+  .video-studio-nav button > span:not(.anticon), .video-studio-brand strong, .video-studio-nav-group-label, .video-studio-nav small { display: none; }
 }
 @media (max-width: 700px) {
   .video-studio-page-heading { align-items: flex-start; }

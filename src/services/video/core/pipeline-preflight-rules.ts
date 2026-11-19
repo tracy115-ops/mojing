@@ -58,6 +58,7 @@ export interface PipelinePreflightRulesInput {
   sourceMode?: DirectSourceMode;
   options: PipelineOptions;
   startStage?: VideoStage;
+  endStage?: VideoStage;
   /** True when the caller is about to run the text planning stages. */
   planningRequired?: boolean;
   sceneSpec?: Pick<SceneSpec, 'characters' | 'scenes' | 'shots'>;
@@ -92,12 +93,13 @@ const RUNTIME_STAGES: VideoStage[] = [
 ];
 
 export function getPipelineRequiredCategories(
-  input: Pick<PipelinePreflightRulesInput, 'channel' | 'sourceMode' | 'options' | 'startStage' | 'planningRequired' | 'sceneSpec' | 'hasCharacterReferences' | 'hasSpeech'>,
+  input: Pick<PipelinePreflightRulesInput, 'channel' | 'sourceMode' | 'options' | 'startStage' | 'endStage' | 'planningRequired' | 'sceneSpec' | 'hasCharacterReferences' | 'hasSpeech'>,
 ): ProviderPreflightCategory[] {
   const startIndex = stageIndex(input.startStage);
+  const endIndex = input.endStage ? stageIndex(input.endStage) : RUNTIME_STAGES.length - 1;
   const includes = (stage: VideoStage): boolean => {
     const targetIndex = RUNTIME_STAGES.indexOf(stage);
-    return targetIndex >= startIndex;
+    return targetIndex >= startIndex && targetIndex <= endIndex;
   };
   const categories = new Set<ProviderPreflightCategory>();
   const planningRequired = input.planningRequired
@@ -180,6 +182,7 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
     ?? (input.sceneSpec?.characters?.length ?? 0) > 0;
   const keyframeWillRun = requiredCategories.includes('image')
     && stageIndex(input.startStage) <= RUNTIME_STAGES.indexOf('keyframe_image')
+    && (!input.endStage || stageIndex(input.endStage) >= RUNTIME_STAGES.indexOf('keyframe_image'))
     && input.options.enableKeyframe;
 
   if (keyframeWillRun && characterRefsExpected && image && image.references.supported === false) {
@@ -280,6 +283,7 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
   }
 
   if (requiredCategories.includes('llm')
+    && (!input.endStage || stageIndex(input.endStage) >= RUNTIME_STAGES.indexOf('video_review'))
     && resolveVideoQualityPolicy(input.options).visualReviewRequired
     && (reviewLLM !== undefined && (!reviewLLM.supportsImageInputs || reviewLLM.maxImageInputs <= 0))) {
     blocking.push({

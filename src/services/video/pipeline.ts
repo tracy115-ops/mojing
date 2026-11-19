@@ -156,6 +156,7 @@ export class VideoPipeline {
     const existing = store.initProject(novelProjectId, chapters.map((c) => c.id), spec, this.input.novelTitle);
     store.setError(novelProjectId, undefined);
     const inputDigest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(this.input)));
+    if (this.aborted) return null;
     const inputFingerprint = Array.from(new Uint8Array(inputDigest), (byte) => byte.toString(16).padStart(2, '0')).join('');
     const canReusePlanning = existing.stages.script_slicing?.inputFingerprint === inputFingerprint;
 
@@ -170,6 +171,7 @@ export class VideoPipeline {
       sourceMode: 'multishot',
       options: pipelineOptions,
       startStage: 'script_slicing',
+      endStage: 'extraction',
       planningRequired: true,
       // Character references are unknown until extraction finishes. The
       // downstream preflight rechecks them once the SceneSpec is available.
@@ -202,14 +204,17 @@ export class VideoPipeline {
             hasAction: false,
           }))
         : await this.runScriptSlicing(inputFingerprint);
+      if (this.aborted) return null;
 
       // --- 步 2+5:LLM 改写 + 分镜 ---
       const storyboardShots = canReusePlanning && existing.stages.storyboard_prompt?.status === 'completed' && existing.shots.length > 0
         ? existing.shots
         : await this.runStoryboardPrompt(rawShots, videoGenSelection);
+      if (this.aborted) return null;
 
       // --- 步 3:提取角色/场景/道具 ---
       const sceneSpec = await this.runExtraction(rawShots, storyboardShots);
+      if (this.aborted) return null;
 
       // Planning is a user-owned artifact. Persist it and stop before any
       // image, voice, keyframe, or video call. This is the same boundary the
@@ -233,6 +238,7 @@ export class VideoPipeline {
       });
       return store.getProject(novelProjectId) ?? null;
     } catch (err) {
+      if (this.aborted) return null;
       const msg = err instanceof Error ? err.message : String(err);
       const failedStage = store.getProject(novelProjectId)?.currentStage;
       if (failedStage && ['script_slicing', 'storyboard_prompt', 'extraction'].includes(failedStage)) {
@@ -401,7 +407,7 @@ export class VideoPipeline {
       },
       createdAt: new Date().toISOString(),
     };
-    useVideoStore.getState().setExecutionBinding(novelProjectId, binding);
+    if (binding.video.endpointId) useVideoStore.getState().setExecutionBinding(novelProjectId, binding);
 
     return {
       spec: {
@@ -458,8 +464,10 @@ export class VideoPipeline {
         },
       );
 
-      store.setShots(this.input.novelProjectId, rawShots.map(toPlaceholderShot));
-      store.setStageStatus(this.input.novelProjectId, stage, 'completed', { progress: 1, inputFingerprint });
+      if (!this.aborted) {
+        store.setShots(this.input.novelProjectId, rawShots.map(toPlaceholderShot));
+        store.setStageStatus(this.input.novelProjectId, stage, 'completed', { progress: 1, inputFingerprint });
+      }
       return rawShots;
     } finally {
       popStageContext();
@@ -515,12 +523,15 @@ export class VideoPipeline {
     pushStageContext({ novelProjectId, stage });
     try {
       const shots = await buildStoryboard(rawShots, ctx, (done, total) => {
+        if (this.aborted) return;
         store.setStageStatus(novelProjectId, stage, 'running', { progress: done / total });
         this.cb.onShotProgress?.(done, total);
       });
 
-      store.setShots(novelProjectId, shots);
-      store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+      if (!this.aborted) {
+        store.setShots(novelProjectId, shots);
+        store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+      }
       return shots;
     } finally {
       popStageContext();
@@ -675,7 +686,7 @@ export class VideoPipeline {
       upstreamArtifacts: `storyboard ${storyboardShots.length} 镜 / 系列资产已绑定`,
     });
 
-    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+    if (!this.aborted) store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
     return boundSpec;
   }
 }

@@ -29,6 +29,7 @@ export interface VideoPipelinePreflightInput {
   sourceMode?: DirectSourceMode;
   options: PipelineOptions;
   startStage?: VideoStage;
+  endStage?: VideoStage;
   planningRequired?: boolean;
   sceneSpec?: Pick<SceneSpec, 'characters' | 'scenes' | 'shots'>;
   hasCharacterReferences?: boolean;
@@ -115,31 +116,14 @@ export function collectVideoPipelinePreflight(
   }
 
   const rulesInput: PipelinePreflightRulesInput = {
-    channel: input.channel,
-    sourceMode: input.sourceMode,
-    options: input.options,
-    startStage: input.startStage,
-    planningRequired: input.planningRequired,
-    sceneSpec: input.sceneSpec,
-    hasCharacterReferences: input.hasCharacterReferences,
-    hasSpeech: input.hasSpeech,
+    ...input,
     providers,
   };
   return evaluatePipelinePreflight(rulesInput);
 }
 
 function getRequiredCategories(input: VideoPipelinePreflightInput): ProviderPreflightCategory[] {
-  return evaluatePipelinePreflight({
-    channel: input.channel,
-    sourceMode: input.sourceMode,
-    options: input.options,
-    startStage: input.startStage,
-    planningRequired: input.planningRequired,
-    sceneSpec: input.sceneSpec,
-    hasCharacterReferences: input.hasCharacterReferences,
-    hasSpeech: input.hasSpeech,
-    providers: {},
-  }).requiredCategories;
+  return evaluatePipelinePreflight({ ...input, providers: {} }).requiredCategories;
 }
 
 function endpointIdFor(input: VideoPipelinePreflightInput, category: ProviderCategory): string | undefined {

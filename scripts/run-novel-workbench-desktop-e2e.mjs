@@ -12,6 +12,7 @@ import { desktopSession } from './lib/desktop-session.mjs';
 
 const run = promisify(execFile);
 const executable = resolve(process.argv[2]);
+const version = JSON.parse(await readFile('package.json', 'utf8')).version;
 const input = JSON.parse(await readFile(process.argv[3], 'utf8'));
 const output = resolve('artifacts', 'novel-workbench-native-' + new Date().toISOString().replace(/[:.]/g, '-'));
 await mkdir(output, { recursive: true });
@@ -20,7 +21,7 @@ const chapters = input.project.metadata.storyNodes.filter(n => n.nodeType === 'c
 const manuscript = chapters.filter(c => c.content.trim());
 const narrative = input.narrative;
 const steps = [], exported = [], pages = [];
-let app, report = { result: 'running', version: '0.3.4', executable, profile, mode: 'native-restoration', boundary: 'Exact release executable and real IPC. Restore documented live-service prose as input; no model providers, generated-output replacement, application-module imports or IPC stubs. Native export uses the OS save dialog.' };
+let app, report = { result: 'running', version, executable, profile, mode: 'native-restoration', boundary: 'Exact release executable and real IPC. Restore documented live-service prose as input; no model providers, generated-output replacement, application-module imports or IPC stubs. Native export uses the OS save dialog.' };
 const start = () => desktopSession({ executable, profile, softwareRendering: false });
 const keypress = async key => { await app.call('Input.dispatchKeyEvent', { type: 'keyDown', key }); await app.call('Input.dispatchKeyEvent', { type: 'keyUp', key }); };
 const snapshot = () => app.evaluate(`(()=>{const project=JSON.parse(localStorage.getItem('mojing-projects')).state.projects.find(p=>p.id===${JSON.stringify(input.project.id)});const narrative=Object.fromEntries(Object.keys(localStorage).filter(k=>k.startsWith('mojing-narrative:'+project.id+':')).sort().map(k=>[k,localStorage.getItem(k)]));return{project,narrative,providerConfigurationPresent:!!localStorage.getItem('mojing-providers')}})()`);
@@ -36,16 +37,18 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   await app.waitFor(`!!document.querySelector('button[aria-label="小说引擎"]')`, 'restored app');
-  await app.click('button[aria-label="小说引擎"]');
+  await app.nativeClick('button[aria-label="小说引擎"]');
   await app.waitFor('!!document.querySelector("[data-testid=narrative-dashboard]")', 'workbench');
-  assert.equal(await app.evaluate('window.__TAURI__.app.getVersion()'), '0.3.4');
+  assert.equal(await app.evaluate('window.__TAURI__.app.getVersion()'), version);
   const pane = '.narrative-workbench-tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane-active';
   for (const category of ['overview', 'characters', 'plot', 'quality', 'tools']) {
-    await app.click(`[data-workbench-category="${category}"]`);
+    await app.nativeClick(`[data-workbench-category="${category}"]`);
     const tabs = await app.evaluate(`[...document.querySelectorAll('.narrative-workbench-tabs > .ant-tabs-nav [role=tab]')].map(e=>({id:e.id,label:e.innerText}))`);
     for (const tab of tabs) {
-      await app.click('[id=' + JSON.stringify(tab.id) + ']');
+      await app.nativeClick('[id=' + JSON.stringify(tab.id) + ']');
+      await app.waitFor(`document.querySelector(${JSON.stringify(pane)})?.id===${JSON.stringify(tab.id.replace('-tab-', '-panel-'))}`, 'selected workbench data panel');
       const text = await app.evaluate(`document.querySelector(${JSON.stringify(pane)}).innerText`);
+      assert.ok(text.trim(), 'selected workbench panel has content or its own empty-state message');
       const name = category + '-' + tab.id.split('-tab-').at(-1);
       await writeFile(join(output, name + '.txt'), text);
       await app.screenshot(join(output, name + '.png'));
@@ -53,7 +56,7 @@ try {
     }
   }
   assert.equal(pages.length, 14); steps.push('All 14 retained workbench pages render in the actual executable with real saved novel data.');
-  await app.textButton('阅读模式');
+  await app.nativeTextButton('阅读模式');
   await app.waitFor('!!document.querySelector("h2")', 'reader');
   for (let i = 0; i < manuscript.length; i++) await keypress('ArrowLeft');
   for (let i = 0; i < manuscript.length; i++) {
@@ -66,10 +69,10 @@ try {
   steps.push('Every reader paragraph and chapter transition matches the saved manuscript, including the final chapter.');
   await keypress('Escape');
   for (const [format, extension] of [['markdown', 'md'], ['html', 'html'], ['txt', 'txt']]) {
-    await app.textButton('导出');
+    await app.nativeTextButton('导出');
     await app.waitFor(`!!document.querySelector('input[type=radio][value="${format}"]')`, 'export form');
-    await app.click(`input[type=radio][value="${format}"]`);
-    await app.click('button.ant-btn-primary:has(.anticon-download)');
+    await app.nativeClick(`label:has(input[type=radio][value="${format}"])`);
+    await app.nativeClick('button.ant-btn-primary:has(.anticon-download)');
     const path = join(output, 'reading-sample.' + extension);
     const dialog = await run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolve('scripts/lib/save-desktop-dialog.ps1'), '-AppProcessId', String(app.child.pid), '-OutputPath', path], { windowsHide: true, timeout: 60000 });
     await app.waitFor('!document.querySelector("input[type=radio][value=markdown]")', 'export complete');
@@ -92,7 +95,7 @@ try {
   await app.close(); app = undefined;
   app = await start();
   await app.waitFor(`!!document.querySelector('button[aria-label="小说引擎"]')`, 'restart ready');
-  await app.click('button[aria-label="小说引擎"]');
+  await app.nativeClick('button[aria-label="小说引擎"]');
   await app.waitFor(`!!document.querySelector('textarea[placeholder="章节正文..."]')`, 'restored prose editor');
   const after = await snapshot();
   assert.deepEqual(after, before); assert.equal(after.providerConfigurationPresent, false); assert.notEqual(app.child.pid, firstPid);

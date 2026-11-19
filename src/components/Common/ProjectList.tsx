@@ -187,7 +187,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
 
       {/* Tab bar */}
       <div style={{
-        display: 'flex', gap: 2, padding: '6px 12px 0',
+        display: 'flex', gap: 2, padding: '6px 12px 0', overflowX: 'auto',
       }}>
         {TAB_META.map((tab) => {
           const isActive = activeTab === tab.key;
@@ -196,8 +196,8 @@ const ProjectList: React.FC<ProjectListProps> = ({
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '3px 8px', fontSize: 11, fontWeight: isActive ? 600 : 400,
+                display: 'flex', alignItems: 'center', flexShrink: 0, gap: 3, whiteSpace: 'nowrap',
+                padding: '3px 4px', fontSize: 11, fontWeight: isActive ? 600 : 400,
                 color: isActive ? tab.color : 'var(--text-tertiary)',
                 background: 'transparent',
                 border: 'none', borderBottom: isActive ? `2px solid ${tab.color}` : '2px solid transparent',
@@ -219,9 +219,9 @@ const ProjectList: React.FC<ProjectListProps> = ({
         <Tooltip title="导入 .mojing 工程备份包">
           <Button size="small" type="text" icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()} style={{ fontSize: 12, padding: '0 4px' }} />
         </Tooltip>
-        <Tooltip title={createLabel}>
+        {showCreateAction && <Tooltip title={createLabel}>
           <Button size="small" type="text" icon={<PlusOutlined />} onClick={onCreate} style={{ fontSize: 12, padding: '0 4px' }} />
-        </Tooltip>
+        </Tooltip>}
       </div>
 
       {/* Project list */}

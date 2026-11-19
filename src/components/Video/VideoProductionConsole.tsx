@@ -15,10 +15,8 @@ import {
   ArrowRightOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
-  FileTextOutlined,
   InfoCircleOutlined,
   PictureOutlined,
-  PlayCircleOutlined,
   ProfileOutlined,
   RocketOutlined,
   SettingOutlined,
@@ -30,14 +28,13 @@ import {
 import type { PipelinePreflightResult } from '@/services/video/core/pipeline-preflight-rules';
 import {
   getProductionReadiness,
-  type ProductionAction,
   type ProductionPhase,
   type ProductionReadiness,
 } from '@/services/video/core/production-readiness';
 import type { VideoProjectState, VideoStage, VideoStageState } from '@/types/video';
 import { resolveLocalPath, toWebviewUrl } from '@/services/video/asset-store';
 import { resolveVideoQualityPolicy } from '@/services/video/core/quality-policy';
-import { allShotsHaveApprovedKeyframes } from '@/services/video/core/shot-production-contract';
+import { isShotKeyframeApproved, isShotKeyframeCurrent } from '@/services/video/core/shot-production-contract';
 import { formatPipelinePreflightIssue } from './PipelinePreflightAlert';
 import './VideoProductionConsole.css';
 
@@ -55,21 +52,23 @@ interface Props {
   activePhase: ConsolePhase;
   overall: ConsoleOverall;
   statusLabel: string;
-  visibleStages: VideoStage[];
   stages?: Record<VideoStage, VideoStageState>;
+  currentStage?: VideoStage;
   progressPercent: number;
-  preflight: PipelinePreflightResult;
+  checkPreflight: (stage: VideoStage, endStage?: VideoStage) => PipelinePreflightResult;
   onPhaseChange: (phase: ConsolePhase) => void;
-  onRunFromStage: (stage: VideoStage) => void;
-  onContinueReview: () => void;
+  onRunFromStage: (stage: VideoStage, endStage?: VideoStage) => void;
+  onApprovePlan: () => void;
+  onAssemble: () => void;
   onStop: () => void;
   onOpenSettings: () => void;
   onOpenPromptSettings: () => void;
   onOpenLogs: () => void;
   onOpenTrace: () => void;
   onVisualReviewChange: (automatic: boolean) => void;
-  onOpenShot?: (shotId: string) => void;
-  continuingReview: boolean;
+  onOpenShot: (shotId: string, review?: 'image' | 'video') => void;
+  starting: boolean;
+  editingAsset: boolean;
   t: Translate;
   children?: React.ReactNode;
 }
@@ -77,27 +76,20 @@ interface Props {
 const phaseDefinitions: Array<{
   id: Exclude<ConsolePhase, 'flow'>;
   readiness: ProductionPhase;
-  icon: React.ReactNode;
   labelKey: string;
   hintKey: string;
 }> = [
-  { id: 'script', readiness: 'script', icon: <FileTextOutlined />, labelKey: 'video.workflow.phase.script', hintKey: 'video.workflow.phase.scriptHint' },
-  { id: 'assets', readiness: 'assets', icon: <PictureOutlined />, labelKey: 'video.workflow.phase.assets', hintKey: 'video.workflow.phase.assetsHint' },
-  { id: 'studio', readiness: 'shots', icon: <VideoCameraOutlined />, labelKey: 'video.workflow.phase.studio', hintKey: 'video.workflow.phase.studioHint' },
-  { id: 'timeline', readiness: 'timeline', icon: <SoundOutlined />, labelKey: 'video.workflow.phase.timeline', hintKey: 'video.workflow.phase.timelineHint' },
+  { id: 'script', readiness: 'script', labelKey: 'video.workflow.phase.script', hintKey: 'video.workflow.phase.scriptHint' },
+  { id: 'assets', readiness: 'assets', labelKey: 'video.workflow.phase.assets', hintKey: 'video.workflow.phase.assetsHint' },
+  { id: 'studio', readiness: 'shots', labelKey: 'video.workflow.phase.studio', hintKey: 'video.workflow.phase.studioHint' },
+  { id: 'timeline', readiness: 'timeline', labelKey: 'video.workflow.phase.timeline', hintKey: 'video.workflow.phase.timelineHint' },
 ];
 
-function isDone(state?: VideoStageState): boolean {
-  return state?.status === 'completed' || state?.status === 'skipped';
-}
-
-function nextStage(
-  visibleStages: VideoStage[],
-  stages: Record<VideoStage, VideoStageState> | undefined,
-): VideoStage | undefined {
-  return visibleStages.find((stage) => stages?.[stage]?.status === 'error')
-    ?? visibleStages.find((stage) => stages?.[stage]?.status === 'running' || stages?.[stage]?.status === 'awaiting_review')
-    ?? visibleStages.find((stage) => !isDone(stages?.[stage]));
+export function phaseForStage(stage: VideoStage): Exclude<ConsolePhase, 'flow'> {
+  if (stage === 'script_slicing' || stage === 'storyboard_prompt' || stage === 'extraction') return 'script';
+  if (stage === 'character_anchor' || stage === 'scene_image') return 'assets';
+  if (stage === 'audio_merge' || stage === 'composing' || stage === 'complete') return 'timeline';
+  return 'studio';
 }
 
 function statusColor(status: ConsoleOverall | PhaseStatus): string {
@@ -139,7 +131,7 @@ function phaseStatus(readiness: ProductionReadiness, phase: ProductionPhase): Ph
     if (readiness.counts.shots > 0 && readiness.counts.approved === readiness.counts.shots) return 'done';
     return readiness.counts.shots > 0 ? 'ready' : 'blocked';
   }
-  if (readiness.overall === 'complete' || readiness.action === 'complete') return 'done';
+  if (readiness.action === 'complete') return 'done';
   return readiness.counts.approved === readiness.counts.shots && readiness.counts.shots > 0 ? 'ready' : 'blocked';
 }
 
@@ -148,34 +140,12 @@ function productProgress(readiness: ProductionReadiness): number {
   return Math.round((states.filter((status) => status === 'done').length / phaseDefinitions.length) * 100);
 }
 
-function actionIcon(action: ProductionAction): React.ReactNode {
-  switch (action) {
-    case 'configure': return <SettingOutlined />;
-    case 'write_source': return <FileTextOutlined />;
-    case 'prepare_assets': return <PictureOutlined />;
-    case 'review_shots': return <VideoCameraOutlined />;
-    case 'assemble': return <SoundOutlined />;
-    case 'monitor': return <PlayCircleOutlined />;
-    case 'repair': return <WarningOutlined />;
-    case 'complete': return <CheckCircleOutlined />;
-    case 'plan': return <RocketOutlined />;
-    case 'review_plan': return <FileTextOutlined />;
-  }
-}
-
-function actionLabel(action: ProductionAction, t: Translate): string {
-  switch (action) {
-    case 'configure': return t('video.workflow.configureModels');
-    case 'write_source': return t('video.overview.openScript');
-    case 'plan': return t('video.overview.startPlanning');
-    case 'review_plan': return t('video.overview.reviewPlan');
-    case 'prepare_assets': return t('video.overview.openAssets');
-    case 'review_shots': return t('video.overview.openShots');
-    case 'assemble': return t('video.timeline.compose');
-    case 'monitor': return t('video.workflow.viewProgress');
-    case 'repair': return t('video.workflow.fixStage');
-    case 'complete': return t('video.workflow.openFinal');
-  }
+interface NextAction {
+  label: string;
+  detail: string;
+  onClick?: () => void;
+  testId?: string;
+  preflight?: PipelinePreflightResult;
 }
 
 const VideoProductionConsole: React.FC<Props> = ({
@@ -185,13 +155,14 @@ const VideoProductionConsole: React.FC<Props> = ({
   activePhase,
   overall,
   statusLabel,
-  visibleStages,
   stages,
+  currentStage,
   progressPercent,
-  preflight,
+  checkPreflight,
   onPhaseChange,
   onRunFromStage,
-  onContinueReview,
+  onApprovePlan,
+  onAssemble,
   onStop,
   onOpenSettings,
   onOpenPromptSettings,
@@ -199,61 +170,125 @@ const VideoProductionConsole: React.FC<Props> = ({
   onOpenTrace,
   onVisualReviewChange,
   onOpenShot,
-  continuingReview,
+  starting,
+  editingAsset,
   t,
   children,
 }) => {
   const readiness = useMemo(
-    () => getProductionReadiness(project, { sourceText, preflight }),
-    [preflight, project, sourceText],
+    () => getProductionReadiness(project, { sourceText }),
+    [project, sourceText],
   );
   const qualityPolicy = useMemo(() => resolveVideoQualityPolicy(project.options), [project.options]);
-  const pendingStage = nextStage(visibleStages, stages);
   const effectiveProgress = Math.max(progressPercent, productProgress(readiness));
-
-  const primaryAction = () => {
-    // The overview owns the safe automation boundary. A user should not have
-    // to understand runtime stage ids to move a project forward; only stop at
-    // a human decision (keyframe or video review) or a missing input.
-    const automaticStage = (() => {
-      switch (readiness.action) {
-        case 'plan':
-          return readiness.sourceReady && readiness.shots.length === 0 ? 'script_slicing' as VideoStage : undefined;
-        case 'review_plan':
-          return undefined;
-        case 'prepare_assets':
-          return 'character_anchor' as VideoStage;
-        case 'review_shots':
-          if (readiness.counts.keyframes < readiness.counts.shots) return 'keyframe_image' as VideoStage;
-          if (allShotsHaveApprovedKeyframes(readiness.shots) && readiness.counts.videoCandidates < readiness.counts.shots) {
-            return 'video_generation' as VideoStage;
-          }
-          return undefined;
-        case 'repair':
-          return pendingStage;
-        default:
-          return undefined;
-      }
-    })();
-
-    if (automaticStage) {
-      onRunFromStage(automaticStage);
-      return;
+  const { counts } = readiness;
+  const productionBusy = overall === 'running' || starting;
+  const waitingForKeyframes = project.options?.enableKeyframe !== false;
+  const assetDetail = t('video.workflow.assetProgress', {
+    charactersReady: counts.charactersReady, charactersTotal: counts.charactersRequired,
+    scenesReady: counts.scenesReady, scenesTotal: counts.scenesRequired,
+  });
+  const runAction = (stage: VideoStage, label: string, detail: string, endStage?: VideoStage): NextAction => ({
+    label, detail, preflight: checkPreflight(stage, endStage),
+    onClick: () => onRunFromStage(stage, endStage),
+  });
+  const navigate = (phase: ConsolePhase, label: string, detail: string): NextAction => ({
+    label, detail, onClick: () => onPhaseChange(phase),
+  });
+  const failedStage = readiness.failedStage;
+  const nextAction = (): NextAction => {
+    if (productionBusy) {
+      const stage = currentStage ?? project.currentStage;
+      const state = stages?.[stage];
+      const phase = phaseForStage(stage);
+      return {
+        label: state?.status === 'running' ? t(`video.gen.stage.${stage}`) : t('video.workflow.starting'),
+        detail: state?.status === 'running' && state.progress > 0
+          ? t('video.overview.progress', { percent: Math.round(state.progress * 100) })
+          : t('video.workflow.awaitingResult'),
+        onClick: state?.status === 'running' && activePhase !== phase ? () => onPhaseChange(phase) : undefined,
+      };
     }
-
-    switch (readiness.action) {
-      case 'configure': onOpenSettings(); break;
-      case 'write_source':
-      case 'plan': onPhaseChange('script'); break;
-      case 'review_plan': onPhaseChange('script'); break;
-      case 'prepare_assets': onPhaseChange('assets'); break;
-      case 'review_shots':
-      case 'monitor':
-      case 'repair': onPhaseChange('studio'); break;
-      case 'assemble': onRunFromStage('composing'); break;
-      case 'complete': onPhaseChange('timeline'); break;
+    if (failedStage) {
+      const phase = phaseForStage(failedStage);
+      const endStage = phase === 'assets' ? 'scene_image'
+        : phase === 'script' ? 'extraction'
+        : failedStage === 'keyframe_image' ? 'keyframe_image'
+        : phase === 'studio' ? 'video_review' : 'composing';
+      return runAction(failedStage, t('video.workflow.fixStage'), stages?.[failedStage]?.error || t(`video.gen.stage.${failedStage}`), endStage);
     }
+    if (!readiness.sourceReady && !counts.shots) {
+      return activePhase === 'script'
+        ? { label: t('video.overview.openScript'), detail: t('video.overview.inputRequired') }
+        : navigate('script', t('video.overview.openScript'), t('video.overview.inputRequired'));
+    }
+    if (!readiness.planningReady) {
+      const detail = counts.shots > 0 ? t('video.workflow.planNeedsAttention') : t('video.overview.planningDescription');
+      if (counts.shots > 0 && activePhase !== 'script') return navigate('script', t('video.overview.reviewPlan'), detail);
+      return runAction('script_slicing', t(counts.shots > 0 ? 'video.workflow.replan' : 'video.overview.startPlanning'), detail, 'extraction');
+    }
+    if (readiness.planningReviewRequired) {
+      return activePhase === 'script'
+        ? { label: t('video.workflow.approvePlan'), detail: t('video.workflow.planReviewDescription'), onClick: onApprovePlan, testId: 'video-approve-planning' }
+        : navigate('script', t('video.overview.reviewPlan'), t('video.overview.planReviewRequired'));
+    }
+    if (counts.assetsReady < counts.assetsRequired) {
+      return runAction(
+        counts.charactersReady < counts.charactersRequired ? 'character_anchor' : 'scene_image',
+        t('video.workflow.generateAssets'), assetDetail, 'scene_image',
+      );
+    }
+    if (counts.approved === counts.shots) {
+      return project.finalVideoUrl
+        ? activePhase === 'timeline'
+          ? { label: t('video.overview.finalReady'), detail: t('video.workflow.exportHint') }
+          : navigate('timeline', t('video.workflow.openFinal'), t('video.workflow.exportHint'))
+        : { label: t('video.timeline.compose'), detail: t('video.overview.timelineInput', { count: counts.approved }), onClick: onAssemble };
+    }
+    if (waitingForKeyframes && counts.keyframes < counts.shots) {
+      return runAction('keyframe_image', t('video.workflow.generateKeyframes'), t('video.overview.keyframeCount', { ready: counts.keyframes, total: counts.shots }), 'keyframe_image');
+    }
+    const unapprovedKeyframe = waitingForKeyframes && project.options?.enableI2V !== false
+      ? readiness.shots.find((shot) => isShotKeyframeCurrent(shot) && !isShotKeyframeApproved(shot))
+      : undefined;
+    if (unapprovedKeyframe && counts.videoCandidates < counts.shots) {
+      return { label: t('video.workflow.reviewKeyframes'), detail: t('video.workflow.keyframeReviewHint'), onClick: () => onOpenShot(unapprovedKeyframe.id, 'image') };
+    }
+    if (counts.videoCandidates < counts.shots) {
+      return runAction('video_generation', t(project.options?.enableTTS === false ? 'video.production.generateVideo' : 'video.workflow.generateClips'), t('video.workflow.clipGenerationHint'), 'video_review');
+    }
+    const unlocked = readiness.shots.find((shot) => readiness.shotStates[shot.id] !== 'approved');
+    return {
+      label: t('video.workflow.reviewClips'),
+      detail: t('video.overview.shotsDescription', { approved: counts.approved, total: counts.shots }),
+      onClick: unlocked ? () => onOpenShot(unlocked.id, 'video') : () => onPhaseChange('studio'),
+    };
   };
+
+  const next = nextAction();
+  const preflight = next.preflight;
+  const blocking = preflight?.blocking ?? [];
+  const configure = blocking.length > 0;
+  const actionButton = next.onClick && (
+    <Button
+      type={productionBusy ? 'default' : 'primary'}
+      icon={configure ? <SettingOutlined /> : productionBusy ? <ArrowRightOutlined /> : <RocketOutlined />}
+      disabled={editingAsset}
+      data-testid={next.testId || (activePhase === 'flow' ? 'video-overview-next-action-button' : 'video-phase-next-action-button')}
+      onClick={configure ? onOpenSettings : next.onClick}
+    >
+      {configure ? t('video.workflow.configureModels') : productionBusy ? t('video.workflow.viewProgress') : next.label}
+    </Button>
+  );
+  const actionDetails = configure
+    ? blocking.map((issue) => formatPipelinePreflightIssue(issue, t)).join(' ')
+    : project.error && !productionBusy && !failedStage ? project.error : next.detail;
+  const actionTitle = productionBusy || !next.onClick
+    ? next.label
+    : t('video.workflow.nextLabel');
+  const visualReviewIssue = activePhase === 'flow' && qualityPolicy.visualReviewRequired
+    ? checkPreflight('video_review', 'video_review').blocking[0]
+    : undefined;
 
   const phases = phaseDefinitions.map((phase) => ({
     ...phase,
@@ -271,18 +306,15 @@ const VideoProductionConsole: React.FC<Props> = ({
     <div className={`video-production-console is-${activePhase} is-${overall}`}>
       <header className="video-production-console-header">
         <div className="video-production-console-project">
-          <Text className="video-production-console-eyebrow">{t('video.production.eyebrow')}</Text>
-          <Title level={4}>{headerLabel || project.title || t('video.workflow.overview')}</Title>
+          <Title level={4} title={headerLabel || project.title}>{headerLabel || project.title || t('video.workflow.overview')}</Title>
           <div className="video-production-console-status">
             <Tag color={statusColor(overall)}>{statusLabel}</Tag>
-            <Text type="secondary">{readiness.counts.approved}/{Math.max(readiness.counts.shots, 1)} {t('video.production.locked')}</Text>
+            {counts.shots > 0 && <Text type="secondary">{t('video.production.approvedProgress', { approved: counts.approved, total: counts.shots })}</Text>}
             <Progress percent={effectiveProgress} showInfo={false} size="small" />
           </div>
         </div>
         <Space className="video-production-console-tools" size={4} wrap>
-          <Tooltip title={t('video.workflow.overview')}>
-            <Button type={activePhase === 'flow' ? 'default' : 'text'} size="small" icon={<AppstoreOutlined />} aria-label={t('video.workflow.overview')} onClick={() => onPhaseChange('flow')} />
-          </Tooltip>
+          <Button type={activePhase === 'flow' ? 'default' : 'text'} size="small" icon={<AppstoreOutlined />} aria-label={t('video.workflow.overview')} onClick={() => onPhaseChange('flow')}>{t('video.workflow.projectOverview')}</Button>
           {overall === 'running' && <Button size="small" danger icon={<StopOutlined />} onClick={onStop}>{t('video.workflow.stop')}</Button>}
           <Tooltip title={t('video.workflow.openLogs')}>
             <Button type="text" size="small" icon={<ProfileOutlined />} aria-label={t('video.workflow.openLogs')} onClick={onOpenLogs} />
@@ -295,9 +327,8 @@ const VideoProductionConsole: React.FC<Props> = ({
 
       <nav className="video-production-console-steps" aria-label={t('video.workflow.phaseNavigation')}>
         {phases.map((phase, index) => (
-          <button type="button" key={phase.id} className={`video-production-console-step is-${phase.status} ${activePhase === phase.id ? 'is-active' : ''}`} data-phase={phase.id} onClick={() => onPhaseChange(phase.id)}>
-            <span className="video-production-console-step-number">{String(index + 1).padStart(2, '0')}</span>
-            <span className="video-production-console-step-icon">{phase.icon}</span>
+          <button type="button" key={phase.id} className={`video-production-console-step is-${phase.status} ${activePhase === phase.id ? 'is-active' : ''}`} data-phase={phase.id} aria-current={activePhase === phase.id ? 'step' : undefined} onClick={() => onPhaseChange(phase.id)}>
+            <span className="video-production-console-step-number">{index + 1}</span>
             <span className="video-production-console-step-copy"><strong>{t(phase.labelKey)}</strong><small>{t(phase.hintKey)}</small></span>
             <span className="video-production-console-step-status">{phase.status === 'done' ? <CheckCircleOutlined /> : phase.status === 'blocked' ? <WarningOutlined /> : <ArrowRightOutlined />}</span>
           </button>
@@ -320,17 +351,16 @@ const VideoProductionConsole: React.FC<Props> = ({
                 <span>{project.spec.aspectRatio}</span>
                 <span>{project.spec.resolution}</span>
                 <span>{readiness.counts.shots} {t('video.production.shotQueue')}</span>
-                <span>{readiness.counts.approved}/{Math.max(readiness.counts.shots, 1)} {t('video.production.locked')}</span>
+                {counts.shots > 0 && <span>{t('video.production.approvedProgress', { approved: counts.approved, total: counts.shots })}</span>}
               </div>
             </div>
             <div className="video-command-center-hero-action">
-              <Text type="secondary">{t('video.overview.nextLabel')}</Text>
-              <strong>{actionLabel(readiness.action, t)}</strong>
-              <Button type="primary" icon={actionIcon(readiness.action)} data-testid="video-overview-next-action-button" loading={continuingReview || overall === 'running'} onClick={readiness.action === 'review_shots' && overall === 'review' ? onContinueReview : primaryAction}>{actionLabel(readiness.action, t)}</Button>
+              <strong>{actionTitle}</strong>
+              <Text type="secondary">{actionDetails}</Text>
+              {actionButton}
             </div>
           </section>
 
-          {preflight.blocking.length > 0 && <Alert type="warning" showIcon icon={<WarningOutlined />} message={t('video.overview.configurationRequired', { count: preflight.blocking.length })} description={<ul className="video-command-center-preflight-issues">{preflight.blocking.map((issue, index) => <li key={`${issue.code}-${index}`}>{formatPipelinePreflightIssue(issue, t)}</li>)}</ul>} action={<Button size="small" icon={<SettingOutlined />} onClick={onOpenSettings}>{t('video.overview.openSettings')}</Button>} />}
           {readiness.continuityRisks.length > 0 && <Alert type="info" showIcon icon={<InfoCircleOutlined />} message={t('video.production.continuityRisk', { count: readiness.continuityRisks.length })} description={t('video.production.continuityRiskDescription')} action={<Button size="small" onClick={() => onPhaseChange('studio')}>{t('video.overview.openShots')}</Button>} />}
           {readiness.blockers.some((blocker) => blocker.code === 'unresolved_character_binding') && <Alert type="warning" showIcon icon={<WarningOutlined />} message={t('video.overview.shotBindingsRequired')} description={t('video.overview.shotBindingsRequiredDescription')} action={<Button size="small" onClick={() => onPhaseChange('studio')}>{t('video.overview.openShots')}</Button>} />}
 
@@ -373,7 +403,7 @@ const VideoProductionConsole: React.FC<Props> = ({
                       ?? shot.versionHistory?.find((version) => version.type === 'video');
                     const videoCandidateCount = shot.versionHistory?.filter((version) => version.type === 'video').length ?? 0;
                     return (
-                      <button type="button" className={`video-command-center-shot-row is-${state}`} key={shot.id} onClick={() => onOpenShot ? onOpenShot(shot.id) : onPhaseChange('studio')}>
+                      <button type="button" className={`video-command-center-shot-row is-${state}`} key={shot.id} onClick={() => onOpenShot(shot.id)}>
                         <span className="video-command-center-shot-index">{String(shot.index + 1).padStart(2, '0')}</span>
                         <span className="video-command-center-shot-visual">{image ? <img src={toWebviewUrl(resolveLocalPath(image))} alt="" /> : <PictureOutlined />}</span>
                         <span className="video-command-center-shot-story">
@@ -404,8 +434,9 @@ const VideoProductionConsole: React.FC<Props> = ({
                 <div className="video-command-center-panel-head"><Title level={5}>{t('video.overview.qualityTitle')}</Title><Tag color={project.options?.enableVisualQualityGate === false ? 'default' : 'green'}>{project.options?.enableVisualQualityGate === false ? t('video.overview.qualityVisualOff') : t('video.overview.qualityVisualOn')}</Tag></div>
                 <div className="video-command-center-review-mode">
                   <label htmlFor="video-visual-review-mode">{t('video.overview.reviewMode')}</label>
-                  <Select id="video-visual-review-mode" aria-label={t('video.overview.reviewMode')} data-testid="video-visual-review-mode" value={qualityPolicy.visualReviewRequired ? 'automatic' : 'manual'} disabled={overall === 'running' || continuingReview} onChange={(value) => onVisualReviewChange(value === 'automatic')} options={[{ value: 'automatic', label: t('video.overview.reviewAutomatic') }, { value: 'manual', label: t('video.overview.reviewManual') }]} />
+                  <Select id="video-visual-review-mode" aria-label={t('video.overview.reviewMode')} data-testid="video-visual-review-mode" value={qualityPolicy.visualReviewRequired ? 'automatic' : 'manual'} disabled={productionBusy} onChange={(value) => onVisualReviewChange(value === 'automatic')} options={[{ value: 'automatic', label: t('video.overview.reviewAutomatic') }, { value: 'manual', label: t('video.overview.reviewManual') }]} />
                   <Text type="secondary">{t(qualityPolicy.visualReviewRequired ? 'video.overview.reviewAutomaticHint' : 'video.overview.reviewManualHint')}</Text>
+                  {visualReviewIssue && <Alert className="video-command-center-preflight-issues" type="warning" message={formatPipelinePreflightIssue(visualReviewIssue, t)} />}
                 </div>
                 <div className="video-command-center-policy" data-testid="video-quality-policy">
                   <div><span>{t('video.overview.qualityProfile')}</span><strong>{t(`video.overview.qualityProfile.${qualityPolicy.profile}`)}</strong></div>
@@ -424,7 +455,17 @@ const VideoProductionConsole: React.FC<Props> = ({
           </div>
         </main>
       ) : (
-        <main className="video-production-console-workspace">{children}</main>
+        <>
+          <section className="video-production-actionbar" data-testid="video-phase-action" aria-busy={productionBusy}>
+            <div role="status">
+              <strong>{actionTitle}</strong>
+              <Text type={configure || overall === 'error' ? 'danger' : 'secondary'}>{actionDetails}</Text>
+              {activePhase === 'assets' && actionDetails !== assetDetail && <Text type="secondary">{assetDetail}</Text>}
+            </div>
+            {actionButton}
+          </section>
+          <main className="video-production-console-workspace">{children}</main>
+        </>
       )}
     </div>
   );

@@ -187,6 +187,7 @@ export async function runCharacterAnchor(
       } catch (err) {
         console.warn(`character_anchor: turnaround failed for ${character.name}`, err);
         lastErr = err;
+        failed.push(character.name);
       }
       done++;
       onProgress?.(done, total);

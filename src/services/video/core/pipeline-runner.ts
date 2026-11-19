@@ -62,6 +62,7 @@ export interface RunPipelineArgs {
 export interface RunStageOptions {
   /** Explicit UI reruns must invalidate the stage output before execution. */
   force?: boolean;
+  endStage?: VideoStage;
 }
 
 const activeRuns = new Map<string, symbol>();
@@ -163,8 +164,9 @@ export function abortPipeline(pid: string): void {
   const proj = store.getProject(pid);
   if (proj) {
     store.setError(pid, '已被用户强行终止生成');
-    if (proj.currentStage && proj.currentStage !== 'complete' && proj.currentStage !== 'idle') {
-      store.setStageStatus(pid, proj.currentStage, 'error', { error: '已被用户强行终止生成', progress: 0 });
+    const runningStage = Object.values(proj.stages).find((stage) => stage.status === 'running');
+    if (runningStage) {
+      store.setStageStatus(pid, runningStage.stage, 'error', { error: '已被用户强行终止生成', progress: 0 });
       store.advanceToStage(pid, 'idle');
     }
   }
@@ -182,7 +184,7 @@ export function approvePlanning(pid: string): boolean {
   if (!project?.sceneSpec?.shots.length) return false;
 
   const planningStage = project.stages.extraction;
-  if (planningStage?.status === 'awaiting_review') {
+  if (planningStage?.status === 'awaiting_review' || planningStage?.status === 'pending') {
     store.setStageStatus(pid, 'extraction', 'completed', {
       progress: 1,
       error: undefined,
@@ -441,7 +443,7 @@ function applyPersistedSeriesLibrary(pid: string, sceneSpec: SceneSpec): SceneSp
 /** 从 store 重建 StageContext(单步重跑用)。
  *  和 runPipeline 的初始化不同:这里完全信任 store 里的 sceneSpec,
  *  因为单步重跑的前提是「前面步骤都已经跑过,产物在 store 里」。 */
-function buildContextFromStore(pid: string, imageRequired = true): {
+function buildContextFromStore(pid: string, imageRequired = true, videoRequired = true): {
   ctx: import('./stage-handlers').StageContext;
   proj: VideoProjectState;
 } | null {
@@ -555,7 +557,7 @@ function buildContextFromStore(pid: string, imageRequired = true): {
     if (!proj || !proj.sceneSpec) return null;
   }
 
-  const videoGen = ensureExecutionBinding(pid, {
+  const requested: VideoGenOptions = {
     spec: {
       resolution: proj.spec.resolution,
       fps: proj.spec.fps,
@@ -570,7 +572,10 @@ function buildContextFromStore(pid: string, imageRequired = true): {
     scenes: proj.sceneSpec.scenes,
     allShots: proj.sceneSpec.shots,
     requireKeyframeForI2V: true,
-  }, imageRequired);
+    imageEndpointId: proj.executionBinding?.image?.endpointId,
+    imageModel: proj.executionBinding?.image?.model,
+  };
+  const videoGen = videoRequired ? ensureExecutionBinding(pid, requested, imageRequired) : requested;
 
   return {
     proj,
@@ -674,8 +679,10 @@ export async function runFromStage(
   stageOptions: RunStageOptions = {},
 ): Promise<boolean> {
   void logger.info(`[pipeline] runFromStage pid=${pid} stage=${stage}`, 'pipeline');
+  if (activeRuns.has(pid)) return false;
   const runToken = beginPipelineRun(pid);
   const preflightProject = useVideoStore.getState().getProject(pid);
+  let videoRequired = true;
   if (preflightProject?.sceneSpec) {
     const options = preflightProject.options ?? defaultPipelineOptions();
     const effectiveStart: VideoStage = stage === 'video_generation'
@@ -683,16 +690,17 @@ export async function runFromStage(
       && preflightProject.stages.tts?.status !== 'completed'
       ? 'voice_assignment'
       : stage;
-    const preflight = preflightStoredProject(preflightProject, effectiveStart);
+    const preflight = preflightStoredProject(preflightProject, effectiveStart, stageOptions.endStage);
     if (!preflight.ok) {
       markPipelineBoundaryFailure(pid, stage, new Error(describePreflightFailure(preflight)));
       finishPipelineRun(pid, runToken);
       return false;
     }
+    videoRequired = preflight.requiredCategories.includes('video');
   }
   let built: ReturnType<typeof buildContextFromStore>;
   try {
-    built = buildContextFromStore(pid, requiresImageFromStage(preflightProject, stage));
+    built = buildContextFromStore(pid, requiresImageFromStage(preflightProject, stage), videoRequired);
   } catch (err) {
     markPipelineBoundaryFailure(pid, stage, err);
     finishPipelineRun(pid, runToken);
@@ -717,6 +725,7 @@ export async function runFromStage(
   useVideoStore.getState().ensureShotVersionHistory(pid);
 
   const store = useVideoStore.getState();
+  store.setError(pid, undefined);
   const effectiveStage: VideoStage = stage === 'video_generation'
     && built.ctx.options.enableTTS
     && built.proj.stages.tts?.status !== 'completed'
@@ -741,7 +750,10 @@ export async function runFromStage(
   let clips = [...freshProj.clips];
 
   const startIdx = RUNTIME_STAGE_ORDER.indexOf(effectiveStage);
-  if (startIdx < 0) {
+  const endIdx = stageOptions.endStage
+    ? RUNTIME_STAGE_ORDER.indexOf(stageOptions.endStage)
+    : RUNTIME_STAGE_ORDER.length - 1;
+  if (startIdx < 0 || endIdx < startIdx) {
     void logger.warn(`[pipeline] runFromStage: stage ${stage} 不在 RUNTIME_STAGE_ORDER`, 'pipeline');
     finishPipelineRun(pid, runToken);
     return false;
@@ -750,7 +762,7 @@ export async function runFromStage(
   const checkAbort = () => !isPipelineRunActive(pid, runToken);
 
   let allOk = true;
-  for (let i = startIdx; i < RUNTIME_STAGE_ORDER.length; i++) {
+  for (let i = startIdx; i <= endIdx; i++) {
     if (checkAbort()) {
       allOk = false;
       break;
@@ -875,6 +887,7 @@ function markPipelineBoundaryFailure(pid: string, stage: VideoStage, err: unknow
 function preflightStoredProject(
   project: VideoProjectState,
   startStage: VideoStage,
+  endStage?: VideoStage,
 ): PipelinePreflightResult {
   const sceneSpec = project.sceneSpec;
   if (!sceneSpec) {
@@ -892,6 +905,7 @@ function preflightStoredProject(
     sourceMode: sceneSpec.meta.sourceMode,
     options,
     startStage,
+    endStage,
     planningRequired: false,
     sceneSpec,
     hasCharacterReferences: options.enableCharacterAnchor && (sceneSpec.characters?.length ?? 0) > 0,

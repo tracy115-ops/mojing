@@ -64,6 +64,33 @@
   overflow-y: auto;
 }
 
+.video-character-grid,
+.video-scene-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+}
+
+.video-scene-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+
+.video-character-visuals,
+.video-character-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.video-character-visuals > :last-child {
+  flex-basis: 130px !important;
+}
+
+.video-character-actions {
+  border-top: 1px solid var(--border-secondary);
+  padding-top: 8px;
+}
+
 .video-workflow-content.is-flow {
   overflow-y: auto;
 }

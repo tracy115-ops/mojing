@@ -17,6 +17,7 @@ import type { GenerationReferenceInput, ImageReferenceCapability } from '@/types
 import { saveAsset, readAsDataUri } from '../asset-store';
 import { getEffectiveShotSeed, getSubjectContinuityShot, shotsShareScene } from './shot-continuity';
 import { ENVIRONMENT_REFERENCE_VERSION } from './step-scene-image';
+import { getShotStillPrompt } from './shot-plan-contract';
 import { logger } from '@/services/log';
 import {
   buildExactSubjectConstraint,
@@ -912,13 +913,13 @@ function buildKeyframeInput(
   continuityReferenceAuthoritative = false,
 ): string {
   const hasCharacterReference = references.some((reference) => reference.kind === 'character');
-  const stillPrompt = shot.imagePrompt?.trim() || shot.startState?.trim() || shot.sourceText?.trim();
+  const stillPrompt = getShotStillPrompt(shot);
   if (!stillPrompt) {
     throw new Error(`Shot ${shot.index + 1} has no dedicated keyframe prompt or still-state source`);
   }
   return [
     // A keyframe is a still-state input. Legacy shots may not have imagePrompt;
-    // sourceText is a safer static fallback than a motion timeline.
+    // use the saved still state or the authored shot description.
     stillPrompt,
     shot.startState?.trim() ? `[First-frame state] ${shot.startState.trim()}` : '',
     '[Shot composition scope] Treat the shot description as composition, pose, action, camera, lighting, and environment guidance. It is not authoritative for a subject\'s identity or wardrobe.',

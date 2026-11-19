@@ -53,7 +53,7 @@ const audioPath = join(root, 'voice.mp3');
 await run('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=44100:duration=1', '-c:a', 'libmp3lame', audioPath], { windowsHide: true });
 const audio = await readFile(audioPath);
 const png = await sharp({ create: { width: 2048, height: 1152, channels: 3, background: '#467aa8' } }).composite([{ input: Buffer.from('<svg width="2048" height="1152"><circle cx="1024" cy="420" r="150" fill="#f0d0b0"/><rect x="820" y="570" width="408" height="480" rx="80" fill="#123c78"/><path d="M0 1100H2048M100 0V1152M1948 0V1152" stroke="#ddd" stroke-width="30"/></svg>') }]).png().toBuffer();
-let videoCounter = 0;
+let videoCounter = 0, failSceneOnce = true, firstImage = true;
 const tasks = new Map();
 const server = createServer(async (request, response) => {
   try {
@@ -80,6 +80,12 @@ const server = createServer(async (request, response) => {
       response.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(audio); return;
     } else if (url.pathname.endsWith('/images/generations')) {
       assert.ok(body.seed === undefined || Number.isInteger(body.seed) && body.seed >= -1 && body.seed <= 999, 'Agnes Image accepts only seeds from -1 to 999');
+      if (firstImage) { firstImage = false; await delay(1600); }
+      if (failSceneOnce && /scene_background/.test(body.prompt)) {
+        failSceneOnce = false;
+        response.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: { message: 'E2E scene generation failed once' } }));
+        return;
+      }
       data = { data: [{ b64_json: png.toString('base64') }] };
     }
     else if (request.method === 'POST' && url.pathname.endsWith('/v1/videos')) {
@@ -134,36 +140,79 @@ try {
   await desktop.evaluate(`localStorage.setItem('mojing-providers',${JSON.stringify(JSON.stringify({ state: { config, endpoints }, version: 0 }))})`);
   await desktop.call('Page.reload');
   await desktop.waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'video navigation');
-  await desktop.click('button[aria-label="视频工坊"]');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
   await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'studio navigation');
-  await desktop.click('[data-testid=studio-nav-projects]');
+  await desktop.nativeClick('[data-testid=studio-nav-projects]');
   await desktop.waitFor('!!document.querySelector("[data-testid=video-new-video]")', 'projects page');
-  await desktop.click('[data-testid=video-new-video]');
+  await desktop.nativeClick('[data-testid=video-new-video]');
   await desktop.waitFor('!!document.querySelector(".video-create-episode-modal #title")', 'new project form');
   await desktop.fill('.video-create-episode-modal #title', 'Release E2E - Ada');
   await desktop.fill('.video-create-episode-modal #scriptText', paragraphs.join('\n\n'));
-  await desktop.click('.video-create-episode-modal .ant-modal-footer .ant-btn-primary');
+  await desktop.nativeClick('.video-create-episode-modal .ant-modal-footer .ant-btn-primary');
   await desktop.waitFor('!!document.querySelector("[data-testid=video-overview-next-action-button]")', 'draft overview');
   projectId = await desktop.evaluate("JSON.parse(localStorage.getItem('mojing-video')).state.activePipelineId");
   assert.match(projectId, /^[a-zA-Z0-9_-]+$/);
   assert.equal(requests.length, 0, 'new project is local and makes no model call');
 
   mark('plan script and stop for human approval');
-  await desktop.click('[data-testid=video-overview-next-action-button]');
+  await desktop.nativeClick('[data-testid=video-overview-next-action-button]');
   await desktop.waitFor(`${projectExpression()}.stages.extraction?.status==='awaiting_review'`, 'planning review checkpoint', 45000);
   assert.equal((await project()).sceneSpec.shots.length, 2);
   assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 0, 'planning approval blocks paid image calls');
   await desktop.screenshot(join(output, '01-planning.png'));
 
-  mark('approve planning and generate character, scene and keyframes');
-  await desktop.click('[data-testid=video-approve-planning]');
+  mark('confirm storyboard, reopen the project directly on Assets, then start and retry reference generation');
+  await desktop.nativeClick('[data-phase=assets]');
+  await desktop.waitFor('document.querySelector("[data-testid=video-phase-next-action-button]")?.textContent.includes("审核分镜")', 'asset page explains pending storyboard review');
+  await desktop.nativeClick('[data-testid=video-phase-next-action-button]');
+  await desktop.nativeClick('[data-testid=video-approve-planning]');
+  await desktop.waitFor('document.querySelector("[data-phase=assets]").getAttribute("aria-current")==="step"', 'asset page after approval');
+  assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 0, 'confirming the plan does not start a model call');
+  const planned = (await project()).sceneSpec;
+  await desktop.call('Page.reload');
+  await desktop.waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'video navigation after reopening');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'short drama navigation after reopening');
+  await desktop.nativeClick('[data-testid=studio-nav-projects]');
+  await desktop.waitFor('!!document.querySelector("[data-phase=assets]")', 'saved project steps');
+  await desktop.nativeClick('[data-phase=assets]');
+  const assetAction = '[data-testid=video-phase-next-action-button]';
+  await desktop.waitFor(`document.querySelector(${JSON.stringify(assetAction)})?.textContent.includes("生成缺少的角色和场景图")`, 'visible asset generation action');
+  await desktop.nativeClick('.ws-titlebar-window-controls .ant-btn');
+  await desktop.waitFor('document.documentElement.dataset.theme==="light"', 'asset view in light theme');
+  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(900,600))');
+  await desktop.waitFor('innerWidth===900&&innerHeight===600', 'minimum desktop window for assets');
+  assert.equal(await desktop.evaluate('document.querySelector(".video-production-console-steps").scrollWidth<=document.querySelector(".video-production-console-steps").clientWidth'), true, 'all four project steps remain visible');
+  await desktop.screenshot(join(output, '01-assets-ready-to-start.png'));
+  await desktop.nativeClick(assetAction);
+  await desktop.waitFor('document.querySelector(".video-production-console.is-running") && document.querySelector("[data-testid=video-phase-action]").getAttribute("aria-busy")==="true"', 'asset generation visible in place');
+  await desktop.screenshot(join(output, '01-assets-running.png'));
+  await desktop.waitFor(`${projectExpression()}.stages.scene_image?.status==='error'`, 'failed scene graph state', 90000);
+  const partial = (await project()).sceneSpec;
+  assert.ok(partial.characters[0].portraitImage && partial.characters[0].turnaroundImage);
+  assert.deepEqual(partial.shots, planned.shots);
+  await desktop.waitFor(`document.querySelector(${JSON.stringify(assetAction)})?.textContent.includes("重试")`, 'retry action after provider failure');
+  await desktop.nativeClick(assetAction);
+  await desktop.waitFor(`${projectExpression()}.stages.scene_image?.status==='completed'`, 'asset retry success', 30000);
+  const prepared = (await project()).sceneSpec;
+  assert.deepEqual(prepared.characters, partial.characters, 'retry retains the completed references');
+  assert.deepEqual(prepared.shots, planned.shots, 'asset work retains the original storyboard and bindings');
+  assert.ok(prepared.scenes[0].backgroundImage && prepared.scenes[0].backgroundReferenceRole === 'environment_only');
+  assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 4, 'portrait, turnaround, failed scene and successful scene are the only image requests');
+  await desktop.waitFor('document.querySelector("[data-testid=video-phase-action]")?.textContent.includes("角色参考图 1/1 · 场景图 1/1")', 'asset view shows saved reference counts');
+  await desktop.screenshot(join(output, '01-assets-finished.png'));
+  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(1280,800))');
+  await desktop.waitFor('innerWidth===1280&&innerHeight===800', 'desktop restored after asset checks');
+  for (let i = 0; i < 3; i++) await desktop.nativeClick('.ws-titlebar-window-controls .ant-btn');
+  await desktop.waitFor('document.documentElement.dataset.theme==="dark"', 'dark theme restored');
+  await desktop.nativeClick(assetAction);
   await desktop.waitFor(`${projectExpression()}.stages.video_generation?.status==='awaiting_review'`, 'keyframe checkpoint', 90000);
   let state = await project();
   assert.equal(state.stages.keyframe_image.status, 'completed');
   assert.ok(state.sceneSpec.characters[0].portraitImage && state.sceneSpec.scenes[0].backgroundImage);
   assert.ok(state.sceneSpec.shots.every(s => s.keyframeImage && s.versionHistory.filter(v => v.type === 'image').length === 2));
   assert.equal(videoCounter, 0, 'unreviewed keyframes block video calls');
-  await desktop.click('[data-phase=studio]');
+  await desktop.nativeClick('[data-testid=video-phase-next-action-button]');
   await desktop.waitFor('document.querySelectorAll(".shot-production-shot-item").length===2', 'shot queue');
   for (let index = 0; index < 2; index++) {
     await desktop.evaluate(`document.querySelectorAll('.shot-production-shot-item')[${index}].click()`);
@@ -203,8 +252,8 @@ try {
   assert.equal(await desktop.evaluate('document.querySelector(".video-production-console")?.classList.contains("is-idle")'), true, 'reloaded project is idle before the user resumes production');
 
   mark('resume voice assignment, TTS and video candidates through UI');
-  await desktop.click('button[aria-label="生产链路"]');
-  await desktop.click('[data-testid=video-overview-next-action-button]');
+  await desktop.nativeClick('[data-phase=studio]');
+  await desktop.nativeClick('[data-testid=video-phase-next-action-button]');
   await desktop.waitFor(`${projectExpression()}.stages.video_review?.status==='awaiting_review'`, 'video candidate review checkpoint', 150000);
   state = await project();
   assert.equal(state.stages.tts.status, 'completed');

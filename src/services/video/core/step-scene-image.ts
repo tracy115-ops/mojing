@@ -5,7 +5,7 @@ import { providerRouter } from '@/services/providers';
 import type { CharacterAnchor, SceneAnchor, AspectRatio, ModelTier } from '@/types/video';
 import { saveAsset } from '../asset-store';
 import { planImagePrompt } from './prompt-enricher';
-import { ENVIRONMENT_REFERENCE_VERSION } from './asset-reference-contract';
+import { ENVIRONMENT_REFERENCE_VERSION, isReusableEnvironmentReference } from './asset-reference-contract';
 
 export { ENVIRONMENT_REFERENCE_VERSION } from './asset-reference-contract';
 
@@ -148,12 +148,6 @@ function collectEntityReferences(characters?: CharacterAnchor[]): string[] {
     character.name,
     ...(character.aliases ?? []),
   ]).map((value) => value.trim()).filter(Boolean))];
-}
-
-function isReusableEnvironmentReference(scene: SceneAnchor): boolean {
-  return !!scene.backgroundImage
-    && scene.backgroundReferenceRole === 'environment_only'
-    && scene.backgroundReferenceVersion === ENVIRONMENT_REFERENCE_VERSION;
 }
 
 function sanitizeFileName(s: string): string {

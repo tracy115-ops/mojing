@@ -41,6 +41,7 @@ import { useVideoStore } from '@/stores/videoStore';
 import { useProviderStore } from '@/stores/providerStore';
 import { providerRouter } from '@/services/providers';
 import { saveAsset, resolveLocalPath, toWebviewUrl, isAssetAvailable } from '@/services/video/asset-store';
+import { getShotStillPrompt } from '@/services/video/core/shot-plan-contract';
 import { generateSingleKeyframe } from '@/services/video/core/step-keyframe';
 import { generateSingleVideoClip } from '@/services/video/core/step-video-gen';
 import { evaluateVideoClipQuality } from '@/services/video/core/video-quality-gate';
@@ -81,7 +82,8 @@ const { TextArea } = Input;
 
 export interface ShotProductionBoardProps {
   pipelineId: string;
-  initialShotId?: string;
+  focus?: { shotId: string; review?: 'image' | 'video' };
+  productionBusy?: boolean;
   onOpenScript?: () => void;
   onOpenAssets?: () => void;
   onOpenTimeline?: () => void;
@@ -185,7 +187,8 @@ function findInvocationForSnapshot(
 
 const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
   pipelineId,
-  initialShotId,
+  focus,
+  productionBusy = false,
   onOpenScript,
   onOpenAssets,
   onOpenTimeline,
@@ -209,7 +212,7 @@ const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
   const shots = useMemo(() => getEffectiveShots(project), [project]);
   const characters = useMemo(() => project?.sceneSpec?.characters ?? [], [project?.sceneSpec?.characters]);
   const scenes = useMemo(() => project?.sceneSpec?.scenes ?? [], [project?.sceneSpec?.scenes]);
-  const [selectedShotId, setSelectedShotId] = useState<string | undefined>(initialShotId);
+  const [selectedShotId, setSelectedShotId] = useState<string | undefined>(focus?.shotId);
   const [previewTab, setPreviewTab] = useState<PreviewTab>('keyframe');
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('contract');
   const [videoMode, setVideoMode] = useState<VideoMode>('keyframe');
@@ -232,11 +235,19 @@ const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
 
   useEffect(() => {
     setSelectedShotId((current) => {
-      if (initialShotId && shots.some((shot) => shot.id === initialShotId)) return initialShotId;
       if (current && shots.some((shot) => shot.id === current)) return current;
       return shots[0]?.id;
     });
-  }, [initialShotId, shots]);
+  }, [shots]);
+
+  useEffect(() => {
+    if (!focus) return;
+    setSelectedShotId(focus.shotId);
+    if (focus.review) {
+      setPreviewTab(focus.review === 'image' ? 'keyframe' : 'video');
+      setInspectorTab('review');
+    }
+  }, [focus]);
 
   const activeShot = useMemo(
     () => shots.find((shot) => shot.id === selectedShotId) ?? shots[0],
@@ -318,8 +329,8 @@ const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
 
   useEffect(() => {
     if (!activeShot) return;
-    setSourceDraft(activeShot.sourceText ?? '');
-    setImagePromptDraft(activeShot.imagePrompt ?? '');
+    setSourceDraft(activeShot.sourceText || activeShot.videoPrompt || '');
+    setImagePromptDraft(getShotStillPrompt(activeShot));
     setVideoPromptDraft(activeShot.videoPrompt ?? activeShot.sourceText ?? '');
     setDurationSeconds(normalizeNumberForParameter(activeShot.durationSeconds, durationParameter, durationOptions[0] ?? 5));
     setSeed(activeShot.seed);
@@ -842,7 +853,7 @@ const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
         <div className="shot-production-toolbar-actions">
           <Button size="small" icon={<FileSearchOutlined />} onClick={onOpenFlow}>{t('video.production.trace')}</Button>
           <Button size="small" data-testid="shot-production-open-timeline" icon={<SoundOutlined />} onClick={onOpenTimeline}>{t('video.production.timeline')}</Button>
-          <Button size="small" type="primary" icon={<CheckOutlined />} disabled={!canAssemble} onClick={onAssemble}>
+          <Button size="small" type="primary" icon={<CheckOutlined />} disabled={!canAssemble || productionBusy || !!generating} onClick={onAssemble}>
             {t('video.production.assemble')}
           </Button>
         </div>
@@ -1141,10 +1152,10 @@ const ShotProductionBoard: React.FC<ShotProductionBoardProps> = ({
                   <Text type="secondary">{t('video.production.candidateSeed', { seed: getCandidateSeed(activeShot, seed, videoCandidateCount + 1) })}</Text>
                 </div>
                 <div className="shot-production-generate-actions">
-                  <Button icon={<PictureOutlined />} loading={generating === 'keyframe'} disabled={!!generating || !imageGenerationReady || visibleSubjectRisk || bindingRisk || !imagePromptDraft.trim()} onClick={() => void handleGenerateKeyframe()}>
+                  <Button icon={<PictureOutlined />} loading={generating === 'keyframe'} disabled={productionBusy || !!generating || !imageGenerationReady || visibleSubjectRisk || bindingRisk || !imagePromptDraft.trim()} onClick={() => void handleGenerateKeyframe()}>
                     {t('video.production.generateKeyframe')}
                   </Button>
-                  <Button type="primary" icon={<PlayCircleOutlined />} loading={generating === 'video'} disabled={!!generating || !videoGenerationReady || bindingRisk || (videoMode === 'keyframe' && (!activeShot.keyframeImage || !keyframeApproved))} onClick={() => void handleGenerateVideo()}>
+                  <Button type="primary" icon={<PlayCircleOutlined />} loading={generating === 'video'} disabled={productionBusy || !!generating || !videoGenerationReady || bindingRisk || (videoMode === 'keyframe' && (!activeShot.keyframeImage || !keyframeApproved))} onClick={() => void handleGenerateVideo()}>
                     {videoCandidateCount > 0 ? t('video.production.generateAnotherVideo') : t('video.production.generateVideo')}
                   </Button>
                 </div>

@@ -155,7 +155,9 @@ try {
   assert.equal(await evaluate(`${videoProject}.anchorImages.length+${videoProject}.clips.length`), 0, 'planning retry makes no paid asset generation');
   const requestsBeforeReplan = planningRequests.length;
   truncateStoryboard = true;
-  await textButton('AI 重新切片');
+  await textButton('重新生成分镜');
+  await waitFor('!!document.querySelector(".ant-modal-confirm .ant-btn-primary")', 'replan confirmation');
+  await click('.ant-modal-confirm .ant-btn-primary');
   await waitFor(`${videoProject}.stages.storyboard_prompt.status==='error'`, 'truncated replan is rejected');
   assert.match(await evaluate(`${videoProject}.error`), /truncated.*8192/);
   assert.equal(await evaluate(`${videoProject}.sceneSpec.shots.length`), 1, 'failed replan retains the previous plan for review');

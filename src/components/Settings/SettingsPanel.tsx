@@ -16,7 +16,7 @@ import type { AppSettings } from '@/types';
 
 const ProviderSettings = React.lazy(() => import('./ProviderSettings'));
 
-const SettingsPanel: React.FC = () => {
+const SettingsPanel: React.FC<{ defaultTab?: string }> = ({ defaultTab }) => {
   const { t } = useTranslation();
   const settings = useSettingsStore((s) => s.settings);
   const updateSettings = useSettingsStore((s) => s.updateSettings);
@@ -544,7 +544,7 @@ const SettingsPanel: React.FC = () => {
         </Space>
       </div>
       <Card size="small" style={{ background: 'var(--bg-container)', border: '1px solid var(--border-secondary)' }}>
-        <Tabs items={tabItems.filter((item) => item.key !== 'promptTemplates')} />
+        <Tabs defaultActiveKey={defaultTab} items={tabItems.filter((item) => item.key !== 'promptTemplates')} />
       </Card>
     </div>
   );

@@ -1,5 +1,6 @@
 .video-production-console {
   display: flex;
+  container-type: inline-size;
   min-width: 0;
   min-height: 100%;
   flex-direction: column;
@@ -9,7 +10,7 @@
 
 .video-production-console-header {
   display: flex;
-  min-height: 74px;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -48,9 +49,13 @@
   margin: 0;
 }
 
+.video-production-console-status .ant-typography {
+  white-space: nowrap;
+}
+
 .video-production-console-status .ant-progress {
-  width: min(260px, 32vw);
-  min-width: 100px;
+  flex: 0 1 260px;
+  min-width: 28px;
   margin: 0;
 }
 
@@ -62,7 +67,6 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
-  min-height: 70px;
   border-bottom: 1px solid var(--border-secondary);
   background: var(--border-secondary);
 }
@@ -70,10 +74,10 @@
 .video-production-console-step {
   display: grid;
   min-width: 0;
-  grid-template-columns: 26px 21px minmax(0, 1fr) 16px;
+  grid-template-columns: 16px minmax(0, 1fr) 14px;
   align-items: center;
   gap: 8px;
-  padding: 10px 13px;
+  padding: 8px 12px;
   border: 0;
   background: var(--bg-container);
   color: var(--text-secondary);
@@ -134,6 +138,48 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.video-production-actionbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-secondary);
+  background: var(--bg-container);
+}
+
+.video-production-actionbar > div {
+  display: grid;
+  flex: 1 1 220px;
+  min-width: 0;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+
+.video-production-actionbar .ant-typography {
+  font-size: 12px;
+}
+
+@container (max-width: 650px) {
+  .video-production-console-step {
+    padding: 8px;
+    gap: 4px;
+    grid-template-columns: 11px minmax(0, 1fr);
+  }
+
+  .video-production-console-step-status,
+  .video-production-console-step-copy small {
+    display: none;
+  }
+
+  .video-production-console-step-copy strong {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 .video-production-console-step-copy strong {
@@ -584,11 +630,6 @@
 }
 
 @media (max-width: 1100px) {
-  .video-production-console-steps {
-    grid-template-columns: repeat(4, minmax(145px, 1fr));
-    overflow-x: auto;
-  }
-
   .video-production-console-home-grid {
     grid-template-columns: 1fr;
   }
@@ -610,15 +651,6 @@
 
   .video-production-console-status .ant-progress {
     width: 100px;
-  }
-
-  .video-production-console-steps {
-    grid-template-columns: repeat(4, 170px);
-    min-height: 64px;
-  }
-
-  .video-production-console-step {
-    min-height: 64px;
   }
 
   .video-production-console-home {
