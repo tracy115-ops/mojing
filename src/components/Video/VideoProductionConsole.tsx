@@ -38,6 +38,7 @@ import { resolveVideoQualityPolicy } from '@/services/video/core/quality-policy'
 import { isShotKeyframeApproved, isShotKeyframeCurrent } from '@/services/video/core/shot-production-contract';
 import { formatPipelinePreflightIssue } from './PipelinePreflightAlert';
 import { formatVideoQueueRetry } from './VideoProjectProgress';
+import { isVideoQueueFull } from '@/services/providers/router';
 import './VideoProductionConsole.css';
 
 const { Text, Title } = Typography;
@@ -97,7 +98,7 @@ export function phaseForStage(stage: VideoStage): Exclude<ConsolePhase, 'flow'> 
 function statusColor(status: VideoPipelineStatus | PhaseStatus): string {
   if (status === 'complete' || status === 'done') return 'success';
   if (status === 'running' || status === 'ready') return 'processing';
-  if (status === 'review' || status === 'stopped') return 'warning';
+  if (status === 'review' || status === 'stopped' || status === 'interrupted') return 'warning';
   if (status === 'error' || status === 'blocked') return 'error';
   return 'default';
 }
@@ -215,17 +216,25 @@ const VideoProductionConsole: React.FC<Props> = ({
       };
     }
     if (failedStage) {
+      if (failedStage === 'error' || failedStage === 'idle') {
+        return { label: statusLabel, detail: project.error || t('video.workflow.resumeAutomaticHint') };
+      }
       const phase = phaseForStage(failedStage);
       const endStage = phase === 'assets' ? 'scene_image'
         : phase === 'script' ? 'extraction'
         : failedStage === 'keyframe_image' ? 'keyframe_image'
         : phase === 'studio' ? 'video_review' : 'composing';
-      if (overall === 'stopped') {
-        return runAction(failedStage, t('video.workflow.resume'), t('video.workflow.resumeDescription', {
+      if (overall === 'stopped' || overall === 'interrupted') {
+        const detailKey = overall === 'interrupted' ? 'video.workflow.interruptedDescription' : 'video.workflow.resumeDescription';
+        return runAction(failedStage, t('video.workflow.resume'), t(detailKey, {
           stage: t(`video.gen.stage.${failedStage}`),
         }), endStage);
       }
-      return runAction(failedStage, t('video.workflow.fixStage'), stages?.[failedStage]?.error || t(`video.gen.stage.${failedStage}`), endStage);
+      const error = stages?.[failedStage]?.error ?? project.error;
+      if (failedStage === 'video_generation' && isVideoQueueFull(error)) {
+        return runAction(failedStage, t('video.workflow.retryStep'), t('video.workflow.queueFullRecovery'), endStage);
+      }
+      return runAction(failedStage, t('video.workflow.fixStage'), error || t(`video.gen.stage.${failedStage}`), endStage);
     }
     if (!readiness.sourceReady && !counts.shots) {
       return activePhase === 'script'
@@ -288,7 +297,7 @@ const VideoProductionConsole: React.FC<Props> = ({
       data-testid="video-automatic-production"
       onClick={onRunAutomatic}
     >
-      {t('video.workflow.automaticProduction')}
+      {t(failedStage ? 'video.workflow.resumeAutomatic' : 'video.workflow.automaticProduction')}
     </Button>
   );
   const actionButton = next.onClick && (

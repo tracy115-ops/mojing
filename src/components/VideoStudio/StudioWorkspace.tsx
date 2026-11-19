@@ -4,6 +4,7 @@ import { AppstoreOutlined, ApartmentOutlined, BorderOutlined, BuildOutlined, Fil
 import { useTranslation } from '@/i18n';
 import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import type { StudioPage } from '@/types/video-studio';
+import { useShortDramaTasks } from './useShortDramaTasks';
 import './StudioWorkspace.css';
 
 const Projects = lazy(() => import('@/components/Video/VideoView'));
@@ -43,7 +44,9 @@ export default function StudioWorkspace() {
   }, []);
   const page = useVideoStudioStore((state) => state.page);
   const setPage = useVideoStudioStore((state) => state.setPage);
-  const pending = useVideoStudioStore((state) => state.jobs.filter((job) => job.status === 'running' || job.status === 'queued').length);
+  const pendingJobs = useVideoStudioStore((state) => state.jobs.filter((job) => job.status === 'running' || job.status === 'queued').length);
+  const dramaTasks = useShortDramaTasks();
+  const pending = pendingJobs + dramaTasks.filter((task) => task.status === 'running').length;
   if (!hydrated) return <div className="video-studio-loading"><Spin /></div>;
   const renderPage = () => {
     switch (page) {
@@ -64,7 +67,7 @@ export default function StudioWorkspace() {
       {navigation.map((item, index) => <React.Fragment key={item.page}>
         {(index === 0 || item.group !== navigation[index - 1].group) && <>{index > 0 && <div className="video-studio-nav-divider" />}<div className="video-studio-nav-group-label">{navigationGroupLabels[item.group]}</div></>}
         <Tooltip title={t(`studio.page.${item.page}`)} placement="right">
-          <button type="button" data-testid={`studio-nav-${item.page}`} aria-label={t(`studio.page.${item.page}`)} aria-current={page === item.page ? 'page' : undefined} className={page === item.page ? 'is-active' : ''} onClick={() => setPage(item.page)}>
+          <button type="button" data-testid={`studio-nav-${item.page}`} aria-label={t(`studio.page.${item.page}`)} aria-description={item.page === 'tasks' && pending > 0 ? t('studio.task.activeCount', { count: pending }) : undefined} aria-current={page === item.page ? 'page' : undefined} className={page === item.page ? 'is-active' : ''} onClick={() => setPage(item.page)}>
             {item.icon}<span>{t(`studio.page.${item.page}`)}</span>{item.page === 'tasks' && pending > 0 && <small>{pending}</small>}
           </button>
         </Tooltip>

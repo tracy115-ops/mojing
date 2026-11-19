@@ -20,7 +20,7 @@ import type {
   VideoExecutionBinding,
 } from '@/types/video';
 import type { PipelineCallbacks } from './types';
-import { isAssetAvailable, isValidVideoClip } from '../asset-store';
+import { isAssetAvailable, isValidVideoClip, resolveLocalPath } from '../asset-store';
 import { parseStructuredPromptShots } from '../direct-scene-builder';
 import {
   RUNTIME_STAGE_ORDER,
@@ -46,7 +46,7 @@ import {
 } from './shot-production-contract';
 import { updateShotGenerationPlan } from './shot-generation-plan';
 import { collectVideoPipelinePreflight } from './pipeline-preflight';
-import type { PipelinePreflightResult } from './pipeline-preflight-rules';
+import { AUTOMATIC_PRODUCTION_STAGES, type PipelinePreflightResult } from './pipeline-preflight-rules';
 import { resolveAssemblyQualityRequirements, resolveVideoQualityPolicy } from './quality-policy';
 import { restoreLegacyShotInputs } from './automatic-shot-production';
 import { assertShotPlanContract } from './shot-plan-contract';
@@ -131,7 +131,7 @@ function ensureExecutionBinding(
         model: imageCapabilities.model,
         endpointId: imageCapabilities.endpointId,
       },
-    } : {}),
+    } : !imageRequired && existing?.image ? { image: existing.image } : {}),
     video: {
       provider: videoCapabilities.provider,
       model: videoCapabilities.model,
@@ -413,6 +413,7 @@ export async function isStageLiveCompleted(proj: VideoProjectState, stage: Video
     isAssetAvailable,
     isValidVideoClip,
     environmentReferenceVersion: ENVIRONMENT_REFERENCE_VERSION,
+    resolveAssetPath: resolveLocalPath,
   });
 }
 
@@ -692,7 +693,7 @@ export async function runFromStage(
   const runToken = beginPipelineRun(pid);
   const preflightProject = useVideoStore.getState().getProject(pid);
   let videoRequired = true;
-  if (preflightProject?.sceneSpec) {
+  if (!stageOptions.automatic && preflightProject?.sceneSpec) {
     const options = preflightProject.options ?? defaultPipelineOptions();
     const effectiveStart: VideoStage = stage === 'video_generation'
       && options.enableTTS
@@ -709,7 +710,11 @@ export async function runFromStage(
   }
   let built: ReturnType<typeof buildContextFromStore>;
   try {
-    built = buildContextFromStore(pid, requiresImageFromStage(preflightProject, stage), videoRequired);
+    built = buildContextFromStore(
+      pid,
+      requiresImageFromStage(preflightProject, stage),
+      !stageOptions.automatic && videoRequired,
+    );
   } catch (err) {
     markPipelineBoundaryFailure(pid, stage, err);
     finishPipelineRun(pid, runToken);
@@ -724,8 +729,12 @@ export async function runFromStage(
   // Repair historical shot bindings before reset/re-running a later stage. Old
   // projects may contain generated IDs that no longer point at the series assets.
   try {
-    built.ctx.workingSpec = applyPersistedSeriesLibrary(pid, built.ctx.workingSpec);
+    const previousSpec = built.ctx.workingSpec;
+    built.ctx.workingSpec = applyPersistedSeriesLibrary(pid, previousSpec);
     if (stageOptions.automatic) {
+      if (built.ctx.workingSpec !== previousSpec) {
+        built.ctx.workingSpec = mergePersistedSceneSpecArtifacts(previousSpec, built.ctx.workingSpec);
+      }
       built.ctx.workingSpec = restoreLegacyShotInputs(built.ctx.workingSpec);
       assertShotPlanContract(built.ctx.workingSpec.shots, {
         characters: built.ctx.workingSpec.characters,
@@ -770,9 +779,9 @@ export async function runFromStage(
   // Voice duration is part of the keyframe receipt. Resolve it before
   // reviewing stills during a continuous automatic run.
   const stageOrder: readonly VideoStage[] = stageOptions.automatic
-    ? ['character_anchor', 'scene_image', 'voice_assignment', 'tts', 'keyframe_image', 'video_generation', 'video_review', 'audio_merge', 'composing']
+    ? AUTOMATIC_PRODUCTION_STAGES
     : RUNTIME_STAGE_ORDER;
-  const startIdx = stageOrder.indexOf(effectiveStage);
+  let startIdx = stageOrder.indexOf(effectiveStage);
   const endIdx = stageOptions.endStage
     ? stageOrder.indexOf(stageOptions.endStage)
     : stageOrder.length - 1;
@@ -783,6 +792,45 @@ export async function runFromStage(
   }
 
   const checkAbort = () => !isPipelineRunActive(pid, runToken);
+
+  if (stageOptions.automatic) {
+    try {
+      // Verify the saved prefix before asking for a provider. Reapplying the
+      // series library above can invalidate downstream work when inputs changed.
+      while (startIdx <= endIdx) {
+        const candidate = stageOrder[startIdx];
+        const enabled = isStageEnabled(candidate, built.ctx.options, workingSpec);
+        if (enabled && !await canReuseAutomaticStage(freshProj, candidate, built.ctx.options)) break;
+        if (checkAbort()) return false;
+        startIdx++;
+      }
+      if (checkAbort()) return false;
+      if (startIdx > endIdx) {
+        finishPipelineRun(pid, runToken);
+        return true;
+      }
+
+      const resumeStage = stageOrder[startIdx];
+      const preflight = preflightStoredProject(freshProj, resumeStage, stageOptions.endStage, true);
+      if (!preflight.ok) {
+        markPipelineBoundaryFailure(pid, resumeStage, new Error(describePreflightFailure(preflight)));
+        finishPipelineRun(pid, runToken);
+        return false;
+      }
+      if (preflight.requiredCategories.includes('video')) {
+        built.ctx.videoGen = ensureExecutionBinding(
+          pid,
+          built.ctx.videoGen,
+          preflight.requiredCategories.includes('image'),
+        );
+      }
+    } catch (error) {
+      if (checkAbort()) return false;
+      markPipelineBoundaryFailure(pid, stageOrder[startIdx] ?? stage, error);
+      finishPipelineRun(pid, runToken);
+      return false;
+    }
+  }
 
   let allOk = true;
   for (let i = startIdx; i <= endIdx; i++) {
@@ -909,9 +957,23 @@ export async function runFromStage(
 function markPipelineBoundaryFailure(pid: string, stage: VideoStage, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   const store = useVideoStore.getState();
-  store.setStageStatus(pid, stage, 'error', { error: message, progress: 1 });
+  store.setStageStatus(pid, stage, 'error', { error: message });
   store.setError(pid, message);
   void logger.error(`[pipeline] ${stage} preflight FAIL: ${message}`, 'pipeline');
+}
+
+async function canReuseAutomaticStage(
+  project: VideoProjectState,
+  stage: VideoStage,
+  options: PipelineOptions,
+): Promise<boolean> {
+  const shots = project.sceneSpec?.shots ?? [];
+  if (stage === 'keyframe_image' && !allShotsHaveApprovedKeyframes(shots)) return false;
+  if (stage === 'video_generation' || stage === 'video_review') {
+    const requirements = resolveAssemblyQualityRequirements(options);
+    if (getAssemblyBlockers(shots, project.clips, requirements).length > 0) return false;
+  }
+  return isStageLiveCompleted(project, stage);
 }
 
 function preflightStoredProject(

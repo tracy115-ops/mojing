@@ -20,13 +20,16 @@ import { getContinuityHandoffIssue } from './shot-continuity.ts';
 import { getShotStillPrompt, validateShotPlanContract, type ShotPlanIssue } from './shot-plan-contract.ts';
 
 export type ProductionPhase = 'script' | 'assets' | 'shots' | 'timeline';
-export type VideoPipelineStatus = 'idle' | 'running' | 'review' | 'complete' | 'error' | 'stopped';
+export type VideoPipelineStatus = 'idle' | 'running' | 'review' | 'complete' | 'error' | 'stopped' | 'interrupted';
 
 export function getVideoPipelineStatus(project: VideoProjectState): { status: VideoPipelineStatus; stage: VideoStage } {
   const stage = project.currentStage;
   const stageState = project.stages[stage];
   if (stageState?.status === 'running') return { status: 'running', stage };
+  const running = Object.values(project.stages).find((step) => step.status === 'running');
+  if (running) return { status: 'running', stage: running.stage };
   if (stage === 'complete') return { status: 'complete', stage };
+  if (stageState?.status === 'interrupted') return { status: 'interrupted', stage };
   const failed = findStageError(project);
   if (failed) {
     const status = project.stages[failed]?.error === VIDEO_GENERATION_STOPPED ? 'stopped' : 'error';
@@ -34,6 +37,10 @@ export function getVideoPipelineStatus(project: VideoProjectState): { status: Vi
   }
   if (project.error || stage === 'error') return { status: 'error', stage };
   if (stageState?.status === 'awaiting_review') return { status: 'review', stage };
+  const interrupted = Object.values(project.stages).find((step) => step.status === 'interrupted');
+  if (interrupted) return { status: 'interrupted', stage: interrupted.stage };
+  const review = Object.values(project.stages).find((step) => step.status === 'awaiting_review');
+  if (review) return { status: 'review', stage: review.stage };
   if (project.finalVideoUrl) return { status: 'complete', stage: 'complete' };
   return { status: 'idle', stage };
 }
@@ -201,13 +208,12 @@ export function getProductionReadiness(
   for (const shot of shots.filter((item) => item.unresolvedCharacterRefs?.some((reference) => reference.trim()))) {
     blockers.push({ code: 'unresolved_character_binding', phase: 'shots', shotId: shot.id });
   }
-  const stageError = findStageError(project);
-  const isRunning = !!project.currentStage
-    && project.currentStage !== 'idle'
-    && project.currentStage !== 'complete'
-    && project.stages[project.currentStage]?.status === 'running';
-  const isAwaitingReview = project.stages.video_generation?.status === 'awaiting_review'
-    || project.stages.video_review?.status === 'awaiting_review';
+  const pipeline = getVideoPipelineStatus(project);
+  const stageError = pipeline.status === 'error' || pipeline.status === 'stopped' || pipeline.status === 'interrupted'
+    ? pipeline.stage
+    : undefined;
+  const isRunning = pipeline.status === 'running';
+  const isAwaitingReview = pipeline.status === 'review';
 
   let action: ProductionAction;
   if (stageError) action = 'repair';
@@ -237,7 +243,7 @@ export function getProductionReadiness(
     overall,
     phase: phaseForAction(action),
     action,
-    activeStage: project.currentStage,
+    activeStage: pipeline.stage,
     failedStage: stageError,
     sourceReady,
     planningReady,

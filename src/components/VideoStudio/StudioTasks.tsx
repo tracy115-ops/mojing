@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Button, Card, Empty, Input, Modal, Select, Space, Steps, Table, Tag, Typography, message } from 'antd';
+import { Button, Card, Empty, Input, List, Modal, Select, Space, Steps, Table, Tag, Typography, message } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import { useVideoStore } from '@/stores/videoStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { retryStudioImageComposition, submitStudioJob } from '@/services/video-studio/generation';
 import type { StudioAsset, StudioJob } from '@/types/video-studio';
+import VideoProjectProgress from '@/components/Video/VideoProjectProgress';
 import StudioMedia from './StudioMedia';
 import StudioImageEditor from './StudioImageEditor';
 import StudioUploadTasks from './StudioUploadTasks';
+import { useShortDramaTasks } from './useShortDramaTasks';
 import './StudioTasks.css';
 
 function elapsedSeconds(startedAt?: string, now = Date.now()): number | undefined {
@@ -29,6 +31,7 @@ export default function StudioTasks() {
   const { t } = useTranslation();
   const store = useVideoStudioStore();
   const projects = useVideoStore((state) => state.projects);
+  const dramaTasks = useShortDramaTasks();
   const [filter, setFilter] = useState('all'), [search, setSearch] = useState(''), [detailId, setDetailId] = useState<string>();
   const [now, setNow] = useState(() => Date.now());
   const [editing, setEditing] = useState<StudioAsset>();
@@ -53,6 +56,11 @@ export default function StudioTasks() {
       setDetailId(undefined); setEditing(source);
     } else { store.setDraft(job.input); store.setPage(job.input.kind === 'image' ? 'image' : job.input.kind === 'video' ? 'video' : 'home'); }
   };
+  const openProject = (projectId: string) => {
+    useProjectStore.getState().setActiveProject(projectId);
+    useVideoStore.getState().setActivePipelineId(projectId);
+    store.setPage('projects');
+  };
   const projectRecords = Object.values(projects).flatMap((project) =>
     Object.values(project.stages).flatMap((stage) =>
       (stage.invocations ?? []).map((invocation, index) => ({
@@ -62,10 +70,37 @@ export default function StudioTasks() {
     ),
   );
   return <div className="video-studio-content" data-testid="studio-tasks">
+    {dramaTasks.length > 0 && (
+      <Card size="small" className="studio-task-progress-card" data-testid="studio-short-drama-tasks" title={t('studio.task.shortDramas')}>
+        <List
+          dataSource={dramaTasks}
+          rowKey="projectId"
+          pagination={dramaTasks.length > 6 ? { pageSize: 6, size: 'small' } : false}
+          renderItem={(task) => (
+            <List.Item className="studio-short-drama-task" data-project-id={task.projectId}>
+              <div className="studio-short-drama-task-copy">
+                <Typography.Text strong>{task.title}</Typography.Text>
+                {task.series && <Typography.Text type="secondary">{task.series}</Typography.Text>}
+                <VideoProjectProgress project={task.pipeline} />
+              </div>
+              <Button size="small" data-testid="studio-short-drama-open" onClick={() => openProject(task.projectId)}>
+                {t('studio.asset.openProject')}
+              </Button>
+            </List.Item>
+          )}
+        />
+      </Card>
+    )}
+    {(latestJob || dramaTasks.length === 0) && <>
     <Card size="small" className="studio-task-progress-card" data-testid="studio-task-progress-panel" title={t('studio.task.progressTitle')}>
       {latestJob && latestProgress ? <>
         <div className="studio-task-progress-heading"><Typography.Text strong ellipsis>{latestJob.name}</Typography.Text><Tag color={latestJob.status === 'completed' ? 'success' : latestJob.status === 'failed' ? 'error' : 'processing'}>{t(`studio.task.${latestJob.status}`)}</Tag></div>
-        <Steps size="small" current={latestProgress.current} status={latestProgress.stepStatus} items={[{ title: t('studio.task.stepSubmitted') }, { title: t('studio.task.stepWaiting') }, { title: t('studio.task.stepGenerating') }, { title: t(latestJob.status === 'failed' || latestJob.status === 'cancelled' || latestJob.status === 'interrupted' ? 'studio.task.stepFailure' : 'studio.task.stepResult') }]} />
+        <Steps size="small" current={latestProgress.current} status={latestProgress.stepStatus} items={[
+          { title: t('studio.task.stepSubmitted') },
+          { title: t('studio.task.stepWaiting') },
+          { title: t(latestJob.input.kind === 'image' ? 'studio.task.stepGeneratingImage' : 'studio.task.stepGenerating') },
+          { title: t(latestJob.status === 'failed' || latestJob.status === 'cancelled' || latestJob.status === 'interrupted' ? 'studio.task.stepFailure' : 'studio.task.stepResult') },
+        ]} />
         <Space wrap className="studio-task-progress-meta"><Typography.Text type="secondary">{latestJob.input.model}</Typography.Text>{latestJob.status === 'running' && elapsedSeconds(latestJob.startedAt, now) !== undefined && <Typography.Text type="secondary">{t('studio.task.runningFor', { seconds: elapsedSeconds(latestJob.startedAt, now)! })}</Typography.Text>}{latestJob.status === 'queued' && <Typography.Text type="secondary">{t('studio.task.waiting')}</Typography.Text>}{latestJob.error && <Typography.Text type="danger">{latestJob.error}</Typography.Text>}{latestJob.status === 'completed' && <Button size="small" type="primary" data-testid="studio-progress-view-result" onClick={() => setDetailId(latestJob.id)}>{t('studio.task.viewResult')}</Button>}{['failed', 'cancelled', 'interrupted'].includes(latestJob.status) && <Button size="small" data-testid="studio-progress-retry" onClick={() => retry(latestJob)}>{t('studio.task.retry')}</Button>}</Space>
       </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('studio.task.noActive')} />}
     </Card>
@@ -77,12 +112,13 @@ export default function StudioTasks() {
       { title: t('studio.task.time'), render: (_, job) => new Date(job.createdAt).toLocaleString(), width: 180 },
       { title: t('studio.open'), width: 240, render: (_, job) => <Space wrap><Button size="small" data-testid={job.status === 'completed' ? 'studio-view-result' : 'studio-view-details'} onClick={() => setDetailId(job.id)}>{job.status === 'completed' ? t('studio.task.viewResult') : t('studio.task.details')}</Button>{job.status === 'queued' ? <Button size="small" onClick={() => store.updateJob(job.id, { status: 'cancelled' })}>{t('studio.cancel')}</Button> : job.status !== 'running' && !(job.input.imageEdit && job.status === 'completed') && <Button size="small" data-testid={localRetry(job) ? 'studio-retry-composition' : undefined} onClick={() => retry(job)}>{t(localRetry(job) ? 'studio.edit.mask.localRetry' : job.input.imageEdit ? 'studio.edit.mask.regenerate' : 'studio.task.retry')}</Button>}</Space> },
     ]} />
+    </>}
     <StudioUploadTasks />
     <Typography.Title level={4}>{t('studio.task.project')}</Typography.Title>
     {projectRecords.length ? <Table size="small" rowKey="key" pagination={{ pageSize: 10 }} dataSource={projectRecords.reverse()} scroll={{ x: 650 }} columns={[
       { title: t('studio.page.projects'), dataIndex: 'projectTitle' }, { title: t('studio.creator.models'), dataIndex: 'model' },
       { title: t('studio.creator.result'), render: (_, record) => `${record.stage} · ${record.executionStatus ?? ''}` },
-      { title: t('studio.open'), render: (_, record) => <Button size="small" onClick={() => { useProjectStore.getState().setActiveProject(record.projectId); useVideoStore.getState().setActivePipelineId(record.projectId); store.setPage('projects'); }}>{t('studio.asset.openProject')}</Button> },
+      { title: t('studio.open'), render: (_, record) => <Button size="small" onClick={() => openProject(record.projectId)}>{t('studio.asset.openProject')}</Button> },
     ]} /> : <Empty description={t('studio.empty')} />}
     <Modal open={!!detail} onCancel={() => setDetailId(undefined)} footer={null} title={t('studio.task.details')} width={720} destroyOnClose>
       {detail && <Space direction="vertical" style={{ width: '100%' }}><Tag>{t(`studio.task.${detail.status}`)}</Tag><Typography.Paragraph>{detail.input.imageEdit?.instruction ?? detail.input.prompt}</Typography.Paragraph>{detail.status === 'interrupted' && <Typography.Text type="secondary">{t('studio.task.interruptedHint')}</Typography.Text>}{detail.error && <Typography.Text type="danger">{detail.error}</Typography.Text>}

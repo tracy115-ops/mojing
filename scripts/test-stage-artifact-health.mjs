@@ -128,7 +128,7 @@ assert.equal(await isLive(completeVideoProject, 'video_review'), true);
 assert.equal(await isLive(makeProject({ clips: [{ ...clip, shotId: 'unknown' }] }), 'video_generation'), false);
 assert.equal(await isLive(makeProject({ clips: [{ ...clip, qualityReview: undefined }] }), 'video_review'), false);
 
-const mergedShot = { ...audioShot, audioTrack: 'https://assets.test/merged.mp4' };
+const mergedShot = { ...audioShot, audioTrack: clip.videoUrl };
 assert.equal(await isLive(makeProject({
   sceneSpec: { ...makeProject().sceneSpec, shots: [mergedShot] },
   clips: [{ ...clip, hasAudio: true }],
@@ -138,4 +138,20 @@ assert.equal(await isLive(makeProject({
   clips: [clip],
 }), 'audio_merge'), false);
 
-console.log('stage artifact health contract tests passed (11 cases)');
+const separateDialogue = makeProject({
+  sceneSpec: { ...makeProject().sceneSpec, shots: [audioShot] },
+});
+assert.equal(await isLive({
+  ...separateDialogue,
+  clips: [{ ...clip, hasAudio: true }],
+}, 'audio_merge'), false, 'model audio alone does not include the dialogue track');
+assert.equal(await isLive({
+  ...separateDialogue,
+  clips: [{ ...clip, hasAudio: true, audioTrack: audioShot.audioTrack }],
+}, 'audio_merge'), true, 'the clip records which source was muxed');
+assert.equal(await isLive({
+  ...separateDialogue,
+  clips: [{ ...clip, hasAudio: true, audioTrack: 'previous-voice.mp3' }],
+}, 'audio_merge'), false, 'replacing the dialogue requires a new merge');
+
+console.log('stage artifact health contract tests passed');

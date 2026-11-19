@@ -1678,40 +1678,33 @@ export const useVideoStore = create<VideoStoreState>()(
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         // 进程重启后 blob: URL 全部失效。扫一遍每个 project,把失效产物清空。
-        // 同时：清理重启前残留的 running 伪执行状态（进程重启后后台任务已销毁，不能保留 running 误导用户）
+        // 保留中断的步骤和产物，重新打开项目时可以看到上一次停在哪里。
         let totalPurged = 0;
         const nextProjects: Record<string, VideoProjectState> = {};
         for (const [pid, proj] of Object.entries(state.projects)) {
           const { project, purged } = purgeDeadAssets(proj);
           totalPurged += purged;
 
-          // 清除所有 stage 的残留 running 状态
-          let hadRunningStage = false;
+          let interruptedStage: VideoStage | undefined;
           const nextStages = { ...project.stages };
           for (const [stageKey, stageState] of Object.entries(nextStages)) {
             if (stageState && stageState.status === 'running') {
-              hadRunningStage = true;
-              nextStages[stageKey as VideoStage] = {
+              const stage = stageKey as VideoStage;
+              if (!interruptedStage || stage === project.currentStage) interruptedStage = stage;
+              nextStages[stage] = {
                 ...stageState,
-                status: 'pending',
-                progress: 0,
+                status: 'interrupted',
+                error: undefined,
                 queueRetry: undefined,
               };
-            }
-          }
-
-          let nextCurrentStage = project.currentStage;
-          if (hadRunningStage || (nextCurrentStage && nextCurrentStage !== 'complete' && nextCurrentStage !== 'idle' && nextStages[nextCurrentStage]?.status !== 'completed')) {
-            if (nextCurrentStage !== 'complete') {
-              nextCurrentStage = 'idle';
             }
           }
 
           nextProjects[pid] = {
             ...project,
             stages: nextStages,
-            currentStage: nextCurrentStage,
-            error: undefined,
+            currentStage: interruptedStage ?? project.currentStage,
+            error: interruptedStage ? undefined : project.error,
           };
         }
         // directClips 同样扫一遍

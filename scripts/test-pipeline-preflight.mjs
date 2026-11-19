@@ -153,6 +153,27 @@ const ready = evaluatePipelinePreflight({
 assert.equal(ready.ok, true);
 assert.deepEqual(ready.blocking, []);
 
+const automaticVoiceAndFrames = getPipelineRequiredCategories({
+  channel: 'novel',
+  options: fullOptions,
+  automatic: true,
+  startStage: 'tts',
+  endStage: 'keyframe_image',
+  sceneSpec,
+});
+assert.deepEqual(automaticVoiceAndFrames, ['image', 'tts'], 'automatic production prepares dialogue before first frames');
+
+const resumeVideo = evaluatePipelinePreflight({
+  channel: 'novel',
+  options: fullOptions,
+  automatic: true,
+  startStage: 'video_generation',
+  sceneSpec,
+  providers: { video: readyProviders.video },
+});
+assert.equal(resumeVideo.ok, true, 'saved first frames and voice tracks allow video-only preflight');
+assert.deepEqual(resumeVideo.requiredCategories, ['video']);
+
 const multiSubjectScene = {
   characters: [
     { id: 'subject-a', name: 'Subject A' },

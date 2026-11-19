@@ -149,8 +149,9 @@ function isTransientNetworkError(err: unknown): boolean {
   return false;
 }
 
-function isVideoQueueFull(err: unknown): boolean {
-  return err instanceof Error && /video_queue_full|queue[_ ]full/i.test(err.message);
+export function isVideoQueueFull(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return /video_queue_full|queue[_ ]full/i.test(message);
 }
 
 /** 对瞬时网络错误及 429 限流自动重试(最多 retries 次,指数退避)。

@@ -2,4 +2,12 @@
 .studio-task-progress-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .studio-task-progress-heading .ant-typography { min-width: 0; flex: 1; }
 .studio-task-progress-meta { margin-top: 14px; }
+.studio-short-drama-task { gap: 12px; flex-wrap: wrap; }
+.studio-short-drama-task-copy {
+  display: grid;
+  flex: 1 1 180px;
+  min-width: 0;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
 @media (max-width: 700px) { .studio-task-progress-card .ant-steps { overflow-x: auto; } .studio-task-progress-card .ant-steps-item { min-width: 120px; } }

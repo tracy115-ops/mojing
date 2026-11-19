@@ -9,6 +9,7 @@ import type {
   SceneSpec,
   VideoStage,
 } from '../../../types/video.ts';
+import { VIDEO_PIPELINE_STAGES } from '../../../types/video.ts';
 import { filterGenerationParameters } from '../../providers/provider-capabilities.ts';
 import { resolveVideoQualityPolicy } from './quality-policy.ts';
 import { getSubjectContinuityShot } from './shot-continuity.ts';
@@ -79,33 +80,35 @@ export interface PipelinePreflightResult {
   warnings: PipelinePreflightIssue[];
 }
 
-const RUNTIME_STAGES: VideoStage[] = [
-  'script_slicing',
-  'storyboard_prompt',
-  'extraction',
+export const AUTOMATIC_PRODUCTION_STAGES: readonly VideoStage[] = [
   'character_anchor',
   'scene_image',
-  'keyframe_image',
   'voice_assignment',
   'tts',
+  'keyframe_image',
   'video_generation',
   'video_review',
   'audio_merge',
   'composing',
 ];
 
+const AUTOMATIC_PIPELINE_STAGES = [...VIDEO_PIPELINE_STAGES.slice(0, 3), ...AUTOMATIC_PRODUCTION_STAGES];
+type StageRange = Pick<PipelinePreflightRulesInput, 'startStage' | 'endStage' | 'automatic'>;
+
+function includesStage(input: StageRange, stage: VideoStage): boolean {
+  const order = input.automatic ? AUTOMATIC_PIPELINE_STAGES : VIDEO_PIPELINE_STAGES;
+  const index = order.indexOf(stage);
+  const start = input.startStage ? Math.max(0, order.indexOf(input.startStage)) : 0;
+  const end = input.endStage ? Math.max(0, order.indexOf(input.endStage)) : order.length - 1;
+  return index >= start && index <= end;
+}
+
 export function getPipelineRequiredCategories(
-  input: Pick<PipelinePreflightRulesInput, 'channel' | 'sourceMode' | 'options' | 'startStage' | 'endStage' | 'planningRequired' | 'sceneSpec' | 'hasCharacterReferences' | 'hasSpeech'>,
+  input: StageRange & Pick<PipelinePreflightRulesInput, 'channel' | 'sourceMode' | 'options' | 'planningRequired' | 'sceneSpec' | 'hasCharacterReferences' | 'hasSpeech'>,
 ): ProviderPreflightCategory[] {
-  const startIndex = stageIndex(input.startStage);
-  const endIndex = input.endStage ? stageIndex(input.endStage) : RUNTIME_STAGES.length - 1;
-  const includes = (stage: VideoStage): boolean => {
-    const targetIndex = RUNTIME_STAGES.indexOf(stage);
-    return targetIndex >= startIndex && targetIndex <= endIndex;
-  };
   const categories = new Set<ProviderPreflightCategory>();
   const planningRequired = input.planningRequired
-    ?? (input.channel === 'novel' && startIndex <= RUNTIME_STAGES.indexOf('extraction'));
+    ?? (input.channel === 'novel' && VIDEO_PIPELINE_STAGES.slice(0, 3).some((stage) => includesStage(input, stage)));
 
   if (planningRequired) categories.add('llm');
 
@@ -115,20 +118,20 @@ export function getPipelineRequiredCategories(
   const hasSpeech = input.hasSpeech
     ?? (input.sceneSpec?.shots ?? []).some(shotHasSpeech);
 
-  if (includes('character_anchor') && input.options.enableCharacterAnchor && hasCharacters) {
+  if (includesStage(input, 'character_anchor') && input.options.enableCharacterAnchor && hasCharacters) {
     categories.add('image');
   }
-  if (includes('scene_image') && input.options.enableSceneImage && hasScenes) {
+  if (includesStage(input, 'scene_image') && input.options.enableSceneImage && hasScenes) {
     categories.add('image');
   }
-  if (includes('keyframe_image') && input.options.enableKeyframe) {
+  if (includesStage(input, 'keyframe_image') && input.options.enableKeyframe) {
     categories.add('image');
   }
-  if (includes('tts') && input.options.enableTTS && hasSpeech) {
+  if (includesStage(input, 'tts') && input.options.enableTTS && hasSpeech) {
     categories.add('tts');
   }
-  if (includes('video_generation')) categories.add('video');
-  if (includes('video_review') && resolveVideoQualityPolicy(input.options).visualReviewRequired) {
+  if (includesStage(input, 'video_generation')) categories.add('video');
+  if (includesStage(input, 'video_review') && resolveVideoQualityPolicy(input.options).visualReviewRequired) {
     categories.add('llm');
   }
 
@@ -183,8 +186,7 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
   const characterRefsExpected = input.hasCharacterReferences
     ?? (input.sceneSpec?.characters?.length ?? 0) > 0;
   const keyframeWillRun = requiredCategories.includes('image')
-    && stageIndex(input.startStage) <= RUNTIME_STAGES.indexOf('keyframe_image')
-    && (!input.endStage || stageIndex(input.endStage) >= RUNTIME_STAGES.indexOf('keyframe_image'))
+    && includesStage(input, 'keyframe_image')
     && input.options.enableKeyframe;
 
   if (keyframeWillRun && characterRefsExpected && image && image.references.supported === false) {
@@ -286,7 +288,7 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
   }
 
   if (requiredCategories.includes('llm')
-    && (!input.endStage || stageIndex(input.endStage) >= RUNTIME_STAGES.indexOf('video_review'))
+    && includesStage(input, 'video_review')
     && resolveVideoQualityPolicy(input.options).visualReviewRequired
     && (reviewLLM !== undefined && (!reviewLLM.supportsImageInputs || reviewLLM.maxImageInputs <= 0))) {
     blocking.push({
@@ -308,11 +310,6 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
   };
 }
 
-function stageIndex(stage: VideoStage | undefined): number {
-  if (!stage) return 0;
-  const index = RUNTIME_STAGES.indexOf(stage);
-  return index >= 0 ? index : 0;
-}
 
 function shotHasSpeech(shot: NonNullable<SceneSpec['shots']>[number]): boolean {
   return !!(

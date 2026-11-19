@@ -67,7 +67,8 @@ export function registerPersistedShotVersions(
       ];
     }
 
-    if (clip?.videoUrl && !nextHistory.some((version) => version.type === 'video' && version.url === clip.videoUrl)) {
+    if (clip?.videoUrl && !nextHistory.some((version) => version.type === 'video'
+      && (version.url === clip.videoUrl || (clip.audioTrack && version.id === clip.shotVersionId)))) {
       nextHistory = [
         {
           id: createLegacyVersionId(shot.id, 'video', nextHistory),

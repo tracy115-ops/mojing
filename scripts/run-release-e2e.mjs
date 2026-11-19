@@ -97,12 +97,13 @@ const server = createServer(async (request, response) => {
       data = { data: [{ b64_json: png.toString('base64') }] };
     }
     else if (request.method === 'POST' && url.pathname.endsWith('/v1/videos')) {
-      if (videoQueueFull) {
+      const secondShot = /Goodbye|lowers/i.test(body.prompt);
+      if (videoQueueFull === 'all' || (videoQueueFull === 'second' && secondShot)) {
         response.writeHead(503, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: 'video_queue_full', message: 'Fixture queue is full' }));
         return;
       }
       const id = `video_release_${++videoCounter}`;
-      tasks.set(id, { index: /Goodbye|lowers/i.test(body.prompt) ? 1 : 0, seconds: body.seconds, inconsistentMetadata: videoCounter === 5 });
+      tasks.set(id, { index: secondShot ? 1 : 0, seconds: body.seconds, inconsistentMetadata: videoCounter === 5 });
       data = { video_id: id };
     } else if (url.pathname === '/agnesapi') {
       const task = tasks.get(url.searchParams.get('video_id')); assert.ok(task, 'known video task');
@@ -638,15 +639,15 @@ try {
   await desktop.screenshot(join(output, '10-automatic-start.png'));
   const beforeAutomatic = requests.length;
   mark('show video queue retry in the series and project lists');
-  videoQueueFull = true;
+  videoQueueFull = 'all';
   await desktop.nativeClick('[data-testid=video-automatic-production]');
   const seriesCard = `.video-view-projects [data-project-id="${seriesId}"]`;
   const projectProgress = `${seriesCard} [data-testid=video-project-progress]`;
   const episodeProgress = '.video-view-content [data-testid=video-project-progress]';
   const readProgress = selector => `document.querySelector(${JSON.stringify(selector)})?.innerText`;
-  const waitingOnProvider = selector => `(() => {
+  const waitingOnProvider = (selector, completed = 0) => `(() => {
     const text = ${readProgress(selector)};
-    return text?.includes('执行中') && text.includes('生成视频') && text.includes('视频 0/2 镜')
+    return text?.includes('执行中') && text.includes('生成视频') && text.includes('视频 ${completed}/2 镜')
       && /服务队列已满 · \\d{2}:\\d{2}:\\d{2} 重试（1\\/1）/.test(text);
   })()`;
   await desktop.waitFor(waitingOnProvider(projectProgress), 'series card shows queue wait and video count', 90000);
@@ -668,12 +669,69 @@ try {
   const refused = requests.slice(beforeAutomatic).filter(item => item.method === 'POST' && item.path.endsWith('/v1/videos'));
   assert.equal(refused.length, 2, 'first submission and one automatic retry reached the model service');
   await desktop.screenshot(join(output, '10-series-queue-failed.png'));
+
+  mark('open the failed episode from the live task list and restart during the second shot');
+  const taskNavigation = '[data-testid=studio-nav-tasks]';
+  const dramaTask = `[data-testid=studio-short-drama-tasks] [data-project-id="${projectId}"]`;
+  const openDrama = `${dramaTask} [data-testid=studio-short-drama-open]`;
+  const continueVideo = '[data-testid=video-automatic-production]';
+  const taskStatus = readProgress(dramaTask);
+  await desktop.nativeClick(taskNavigation);
+  await desktop.waitFor(`${taskStatus}?.includes("服务队列已满")`, 'task list shows the episode and the queue failure');
+  await desktop.nativeClick(openDrama);
+  await desktop.waitFor(`${readProgress(continueVideo)}?.includes("继续生成成片")`, 'resume action on the failed episode');
+  assert.match(await desktop.evaluate(readProgress('.video-command-center-hero-action')), /视频服务队列已满/);
+  videoQueueFull = 'second';
+  await desktop.nativeClick(continueVideo);
+  await desktop.waitFor(waitingOnProvider(projectProgress, 1), 'first shot is saved while the second waits for the model', 90000);
+  assert.equal(await desktop.evaluate(readProgress(`${taskNavigation} small`)), '1', 'the task navigation includes the live episode');
+  await desktop.nativeClick(taskNavigation);
+  await desktop.waitFor(waitingOnProvider(dramaTask, 1), 'task list updates with one saved shot');
+  await desktop.screenshot(join(output, '11-task-second-shot-queued.png'));
+  const checkpoint = await project();
+  assert.equal(checkpoint.clips.length, 1);
+  assert.equal(checkpoint.clips[0].shotVersionId, checkpoint.sceneSpec.shots[0].lockedVersionId);
+  assert.equal(checkpoint.stages.tts.status, 'completed');
+  assert.equal(checkpoint.stages.keyframe_image.status, 'completed');
+  await desktop.evaluate(`(() => {
+    const saved = JSON.parse(localStorage.getItem('mojing-providers'));
+    saved.state.endpoints = saved.state.endpoints.map(endpoint => ['image', 'tts'].includes(endpoint.category)
+      ? { ...endpoint, enabled: false } : endpoint);
+    localStorage.setItem('mojing-providers', JSON.stringify(saved));
+  })()`);
+  await desktop.close();
+  desktop = await start();
+  await desktop.waitFor(`!!document.querySelector('button[aria-label="视频工坊"]')`, 'restart into the main window');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
+  await desktop.waitFor(`!!document.querySelector(${JSON.stringify(taskNavigation)})`, 'task navigation after restart');
+  await desktop.nativeClick(taskNavigation);
+  await desktop.waitFor(`${taskStatus}?.includes("上次中断") && ${taskStatus}?.includes("视频 1/2 镜")`, 'interrupted stage and its saved progress survive restart');
+  assert.doesNotMatch(await desktop.evaluate(taskStatus), /执行中|重试（/);
+  assert.equal(await desktop.evaluate(`!!document.querySelector(${JSON.stringify(`${taskNavigation} small`)})`), false);
+  await desktop.screenshot(join(output, '11-task-after-restart.png'));
+
+  mark('resume into the missing shot with image and voice services unavailable');
   videoQueueFull = false;
-  await desktop.nativeClick('.video-view-content [data-testid=video-project-progress]');
-  await desktop.waitFor('!!document.querySelector("[data-testid=video-automatic-production]")', 'return to the failed episode');
-  await desktop.nativeClick('[data-testid=video-automatic-production]');
+  await desktop.nativeClick(openDrama);
+  await desktop.waitFor(`${readProgress(continueVideo)}?.includes("继续生成成片")`, 'resume action on the interrupted episode');
+  const beforeResume = requests.length;
+  await desktop.nativeClick(continueVideo);
   await desktop.waitFor(`${projectExpression()}.currentStage==='complete'`, 'automatic production completes without an approval click', 150000);
   const automatic = await project();
+  const resumedRequests = requests.slice(beforeResume);
+  const newVideos = resumedRequests.filter(item => item.method === 'POST' && item.path.endsWith('/v1/videos'));
+  assert.equal(newVideos.length, 1, 'only the missing shot is requested after restart');
+  assert.match(newVideos[0].body.prompt, /Goodbye|lowers/i, 'the resumed request belongs to the second shot');
+  assert.ok(resumedRequests.every(item => !item.path.endsWith('/images/generations') && !item.path.endsWith('/audio/speech')));
+  const mediaInputs = state => state.sceneSpec.shots.map(shot => [shot.keyframeImage, shot.audioTrack]);
+  assert.deepEqual(mediaInputs(automatic), mediaInputs(checkpoint), 'all first frames and voice tracks are unchanged');
+  assert.equal(automatic.sceneSpec.shots[0].lockedVersionId, checkpoint.sceneSpec.shots[0].lockedVersionId);
+  for (const shot of automatic.sceneSpec.shots) {
+    const clip = automatic.clips.find(item => item.shotId === shot.id);
+    assert.equal(clip.audioTrack, shot.audioTrack, 'merged output references the saved dialogue source');
+    const voice = await probe(diskPath(shot.audioTrack));
+    assert.deepEqual(voice.streams.map(stream => stream.codec_type), ['audio'], 'saved dialogue is independently playable');
+  }
   assert.ok(automatic.sceneSpec.shots.every(shot => (
     shot.sourceText && shot.imagePrompt && shot.characterBinding === 'explicit' && shot.lockedVersionId
   )), 'legacy inputs are restored and every clip has a locked version');
@@ -691,10 +749,20 @@ try {
   const automaticOutput = diskPath(automatic.finalVideoUrl);
   await copyFile(automaticOutput, join(output, 'automatic-final.mp4'));
   assert.ok((await probe(automaticOutput)).streams.some(stream => stream.codec_type === 'audio'));
-  await desktop.screenshot(join(output, '11-automatic-complete.png'));
+  const resumedDialogueRms = [await audible(automaticOutput, 0.1), await audible(automaticOutput, 5.2)];
+  await desktop.screenshot(join(output, '12-automatic-complete.png'));
   assert.deepEqual(desktop.errors, []);
   assert.deepEqual(serverErrors, []);
   report = { result: 'passed', version, executable, executableSHA256: sha(await readFile(executable)), boundary: 'Remote model and visual-review responses are simulated by a local HTTP service. UI, provider adapters, Tauri HTTP/IPC, disk, FFmpeg, playback, native Save dialog and process restart are real.', projectId, steps, originalInfo, editedInfo, exportedInfo, originalColors, editedColors, previewColor, audioRms, layoutChecks, canvas: { jobs: canvasState.jobs.length, diskAssets: studioAssets.length, referenceTransport: graphRequest.mode, shotTransfer: true }, requestCounts: Object.fromEntries([...new Set(requests.map(r => r.path))].map(path => [path, requests.filter(r => r.path === path).length])), videoPayloads: submitted.map(({ body }) => ({ ...body, first_frame: `sha256:${sha(body.first_frame)}` })), output };
+  report.resume = {
+    clipsBeforeRestart: checkpoint.clips.length,
+    videoRequestsAfterRestart: newVideos.length,
+    imageRequestsAfterRestart: 0,
+    ttsRequestsAfterRestart: 0,
+    savedFirstFramesAndVoiceTracks: mediaInputs(checkpoint).length,
+    retainedFirstShotVersion: checkpoint.sceneSpec.shots[0].lockedVersionId,
+    dialogueRmsInFinalVideo: resumedDialogueRms,
+  };
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
   report = { result: 'failed', version, step: currentStep, error: String(error), serverErrors, steps, output };

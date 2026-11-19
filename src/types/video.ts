@@ -150,6 +150,7 @@ export type VideoStage =
 export type VideoStageStatus =
   | 'pending'
   | 'running'
+  | 'interrupted'
   | 'awaiting_review'  // 人工 checkpoint
   | 'completed'
   | 'skipped'
@@ -777,7 +778,7 @@ export interface GeneratedClip {
   qualityReview?: VideoClipQualityReview;
   /** Multimodal review of sampled frames against the shot contract. */
   visualReview?: VideoVisualQualityReview;
-  /** 步 8/11 产物:音轨路径/URL */
+  /** 已混入 videoUrl 的原始配音引用。 */
   audioTrack?: string;
   /** 来源:'novel' | 'direct' */
   sceneSource?: 'novel' | 'direct';

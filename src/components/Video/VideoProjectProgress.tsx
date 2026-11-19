@@ -1,11 +1,13 @@
 import { Tag } from 'antd';
 import { useTranslation } from '@/i18n';
+import { isVideoQueueFull } from '@/services/providers/router';
 import {
   getProductionReadiness,
   getVideoPipelineStatus,
   type VideoPipelineStatus,
 } from '@/services/video/core/production-readiness';
 import type { VideoProjectState, VideoQueueRetry } from '@/types/video';
+import './VideoProjectProgress.css';
 
 const colors: Record<VideoPipelineStatus, string> = {
   idle: 'default',
@@ -14,6 +16,7 @@ const colors: Record<VideoPipelineStatus, string> = {
   complete: 'success',
   error: 'error',
   stopped: 'warning',
+  interrupted: 'warning',
 };
 
 export function formatVideoQueueRetry(t: ReturnType<typeof useTranslation>['t'], retry: VideoQueueRetry): string {
@@ -45,7 +48,7 @@ export default function VideoProjectProgress({ project, episodeNumber, runningEp
         ? t('video.overview.progress', { percent: Math.round(stageState.progress * 100) })
         : undefined;
   const queueRetry = status === 'running' ? stageState?.queueRetry : undefined;
-  const queueFailed = status === 'error' && /video_queue_full|queue[_ ]full/i.test(stageState?.error ?? project.error ?? '');
+  const queueFailed = status === 'error' && isVideoQueueFull(stageState?.error ?? project.error);
   const stageLabel = stage === 'complete' || stage === 'error' ? undefined : t(`video.gen.stage.${stage}`);
   const progress = [stageLabel, detail].filter(Boolean).join(' · ');
 

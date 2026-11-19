@@ -1,4 +1,5 @@
 import type {
+  GeneratedClip,
   ShotSpec,
   VideoProjectState,
   VideoStage,
@@ -10,6 +11,19 @@ export interface StageArtifactHealthDependencies {
   isAssetAvailable: (url: string | undefined) => Promise<boolean>;
   isValidVideoClip: (clip: { videoUrl?: string } | undefined) => boolean;
   environmentReferenceVersion: number;
+  resolveAssetPath?: (url: string) => string;
+}
+
+export function hasMergedDialogue(
+  shot: Pick<ShotSpec, 'audioTrack'>,
+  clip: GeneratedClip,
+  resolveAssetPath: (url: string) => string = (url) => url,
+): boolean {
+  if (clip.importedVideo?.audio === 'preserve') return true;
+  const dialogue = shot.audioTrack;
+  // Older projects stored the muxed video itself as the shot's audioTrack.
+  return !!dialogue && !!clip.hasAudio && (clip.audioTrack === dialogue
+    || resolveAssetPath(clip.videoUrl) === resolveAssetPath(dialogue));
 }
 
 /** Decide whether a completed stage still has every output required downstream. */
@@ -162,7 +176,7 @@ async function audioMergeAssetsAvailable(
   const clipsByShot = new Map(project.clips.map((clip) => [clip.shotId, clip]));
   return (await Promise.all(shotsWithAudio.map(async (shot) => {
     const clip = clipsByShot.get(shot.id);
-    return !!clip?.hasAudio
+    return !!clip && hasMergedDialogue(shot, clip, dependencies.resolveAssetPath)
       && dependencies.isValidVideoClip(clip)
       && await dependencies.isAssetAvailable(clip.videoUrl);
   }))).every(Boolean);

@@ -32,6 +32,7 @@ function videoProjectStatus(
     || Object.values(pipeline.stages).some((stage) => (
       stage.status === 'running'
       || stage.status === 'awaiting_review'
+      || stage.status === 'interrupted'
       || stage.status === 'completed'
       || stage.status === 'error'
       || (stage.invocations?.length ?? 0) > 0
@@ -143,7 +144,7 @@ const VideoView: React.FC = () => {
     });
     const running = episodeRuns.filter((episode) => episode.status === 'running');
     const displayed = running[0]
-      ?? episodeRuns.find((episode) => episode.status === 'error' || episode.status === 'stopped')
+      ?? episodeRuns.find((episode) => episode.status === 'error' || episode.status === 'stopped' || episode.status === 'interrupted')
       ?? episodeRuns.find((episode) => episode.status === 'review');
     return displayed && (
       <VideoProjectProgress

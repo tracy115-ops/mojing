@@ -6,19 +6,22 @@
 //   1. 落地 audioTrack(base64 → 临时文件)
 //   2. 落地 videoUrl(远程 → 下载;data URI → 解码;本地路径 → 直接用)
 //   3. 调 ffmpeg_merge_audio
-//   4. 把合并后的本地路径写回 shot(覆盖 audioTrack 字段表示"已合并")
-//
-// 单镜失败不阻塞。FFmpeg 不可用时整步跳过。
+//   4. 把带声音的片段交给下游，分镜继续引用独立配音。
 
 import { probeFFmpeg, downloadClip, mergeAudio, writeDataUri } from '../ffmpeg-bridge';
-import { resolveLocalPath, isRemoteUrl } from '../asset-store';
+import { resolveLocalPath, isRemoteUrl, isAssetAvailable, toWebviewUrl } from '../asset-store';
+import { t } from '@/i18n';
 import type { ShotSpec, GeneratedClip } from '@/types/video';
+import { hasMergedDialogue } from './stage-artifact-health';
 
 export interface AudioMergeResult {
-  shots: ShotSpec[];
-  /** clip.videoUrl 已更新(指向合并后文件)的 shotId 集合 */
-  mergedShotIds: string[];
+  clips: GeneratedClip[];
   failedShotIds: string[];
+}
+
+export function describeAudioMergeFailure(shots: ShotSpec[], failedShotIds: string[]): string {
+  const indexes = shots.filter((shot) => failedShotIds.includes(shot.id)).map((shot) => shot.index + 1);
+  return t('video.workflow.audioMergeFailure', { shots: indexes.join(', ') });
 }
 
 export type BGMMoodStyle = 'epic_action' | 'suspense_thriller' | 'warm_emotional' | 'comic_funny' | 'cyberpunk';
@@ -40,31 +43,39 @@ export async function runAudioMerge(
   onProgress?: (done: number, total: number) => void,
 ): Promise<AudioMergeResult> {
   const total = shots.length;
-  const probe = await probeFFmpeg().catch(() => null);
-  if (!probe?.available) {
-    // FFmpeg 不可用:整步跳过
-    console.warn('step-audio-merge: FFmpeg unavailable, skipping');
-    return { shots, mergedShotIds: [], failedShotIds: [] };
-  }
-
   const workDir = `${await getWorkDir(ctx.novelProjectId)}/audio-${crypto.randomUUID()}`;
-  const result: ShotSpec[] = shots.map((s) => ({ ...s }));
-  const mergedShotIds: string[] = [];
+  const clips = new Map(ctx.clips.map((clip) => [clip.shotId, clip]));
   const failedShotIds: string[] = [];
+  let checkedFFmpeg = false;
 
   for (let i = 0; i < shots.length; i++) {
     ctx.signal?.throwIfAborted();
     const shot = shots[i];
-    const clip = ctx.clips.find((c) => c.shotId === shot.id);
-
-    if (!shot.audioTrack || !clip || clip.importedVideo?.audio === 'preserve') {
-      // 没音轨或没 clip,跳过
+    const clip = clips.get(shot.id);
+    if (!shot.audioTrack || clip?.importedVideo?.audio === 'preserve') {
+      onProgress?.(i + 1, total);
+      continue;
+    }
+    if (!clip) {
+      failedShotIds.push(shot.id);
+      onProgress?.(i + 1, total);
+      continue;
+    }
+    if (hasMergedDialogue(shot, clip, resolveLocalPath) && await isAssetAvailable(clip.videoUrl)) {
       onProgress?.(i + 1, total);
       continue;
     }
 
+    if (!checkedFFmpeg) {
+      const probe = await probeFFmpeg().catch(() => null);
+      if (!probe?.available) throw new Error(t('video.workflow.audioMergeUnavailable'));
+      checkedFFmpeg = true;
+    }
+
     try {
-      const localVideoPath = await materializeVideo(clip.videoUrl, workDir, `v_${i}`);
+      const version = shot.versionHistory?.find((item) => item.id === clip.shotVersionId && item.type === 'video');
+      const videoUrl = version?.url && await isAssetAvailable(version.url) ? version.url : clip.videoUrl;
+      const localVideoPath = await materializeVideo(videoUrl, workDir, `v_${i}`);
       const localAudioPath = await materializeAudio(shot.audioTrack, workDir, `a_${i}`);
       const outputPath = `${workDir}/merged_${i}.mp4`;
 
@@ -75,19 +86,22 @@ export async function runAudioMerge(
         outputPath,
       });
 
-      // 把合并后的本地路径写回 shot 的 audioTrack(标记已合并),
-      // 同时通知调用方该 clip 的 videoUrl 应该更新为 outputPath。
-      result[i].audioTrack = outputPath;
-      mergedShotIds.push(shot.id);
+      ctx.signal?.throwIfAborted();
+      clips.set(shot.id, {
+        ...clip,
+        videoUrl: toWebviewUrl(outputPath),
+        hasAudio: true,
+        audioTrack: shot.audioTrack,
+      });
     } catch (err) {
+      ctx.signal?.throwIfAborted();
       console.warn(`audio_merge: failed for shot ${shot.id}`, err);
       failedShotIds.push(shot.id);
-      // audioTrack 保留原 base64,UI 仍能播
     }
     onProgress?.(i + 1, total);
   }
 
-  return { shots: result, mergedShotIds, failedShotIds };
+  return { clips: [...clips.values()], failedShotIds };
 }
 
 /** 把 videoUrl 落地为本地文件:webview URL 反解 / 远程下载 / data URI 解码 / 本地路径直用 */

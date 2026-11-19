@@ -27,7 +27,7 @@ import { runSceneImage } from './step-scene-image';
 import { runTTS } from './step-tts';
 import { runKeyframe } from './step-keyframe';
 import { runVideoGen, type VideoGenOptions } from './step-video-gen';
-import { runAudioMerge } from './step-audio-merge';
+import { describeAudioMergeFailure, runAudioMerge } from './step-audio-merge';
 import { runCompose } from './step-compose';
 import { sliceChaptersWithLLM, type RawShot } from '../chapter-slicer';
 import { buildStoryboard, type StoryboardContext } from '../storyboard-prompt';
@@ -1108,42 +1108,15 @@ export async function executeAudioMerge(ctx: StageContext): Promise<StageResult 
     ctx.isCurrentRun,
   );
   if (!mergeResult || !isStageRunActive(ctx)) return null;
-  const spec = { ...workingSpec, shots: mergeResult.shots };
-  store.setSceneSpec(pid, spec);
-  // 把合并产物同步回 clips(覆盖 videoUrl 指向带音轨的文件)。
-  //
-  // 关键 bug 修复:
-  // 1) 只对真正合并成功的 shot(mergedShotIds)更新 videoUrl。
-  //    之前用 mergeResult.shots 全量建 map,失败的 shot 的 audioTrack
-  //    是原 TTS URL(也不以 data: 开头),会被错误地当成"合并文件路径"
-  //    写进 clip.videoUrl → 把视频 URL 替换成音频 URL。
-  // 2) 必须写回 store(addClip 做 upsert)。之前只改了局部 newClips 副本,
-  //    runPipeline 累积进局部 clips 变量,但单步重跑(runSingleStage/
-  //    runFromStage)从 store 重建 ctx 时读到的还是旧的无音轨 clips。
-  let updatedClips = clips;
-  if (mergeResult.mergedShotIds.length) {
-    const mergedSet = new Set(mergeResult.mergedShotIds);
-    const shotToMerged = new Map(
-      mergeResult.shots
-        .filter((s) => mergedSet.has(s.id))
-        .map((s) => [s.id, s.audioTrack]),
-    );
-    updatedClips = clips.map((clip) => {
-      const mergedPath = shotToMerged.get(clip.shotId);
-      if (mergedPath && !mergedPath.startsWith('data:')) {
-        const updated: GeneratedClip = {
-          ...clip,
-          videoUrl: toWebviewUrl(mergedPath),
-          hasAudio: true,
-        };
-        store.addClip(pid, updated);
-        return updated;
-      }
-      return clip;
-    });
+  store.setClips(pid, mergeResult.clips);
+  if (mergeResult.failedShotIds.length > 0) {
+    const error = describeAudioMergeFailure(workingSpec.shots, mergeResult.failedShotIds);
+    store.setStageStatus(pid, 'audio_merge', 'error', { error });
+    callbacks?.onError?.(error);
+    return null;
   }
   store.setStageStatus(pid, 'audio_merge', 'completed', { progress: 1 });
-  return { spec, clips: updatedClips };
+  return { spec: workingSpec, clips: mergeResult.clips };
 }
 
 /** 步:拼接合成(composing) */

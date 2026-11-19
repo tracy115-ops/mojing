@@ -4,7 +4,8 @@
 
 import { probeFFmpeg, downloadClip, composeClips } from '../ffmpeg-bridge';
 import { resolveLocalPath, isRemoteUrl, toWebviewUrl, isValidVideoClip } from '../asset-store';
-import { runAudioMerge } from './step-audio-merge';
+import { describeAudioMergeFailure, runAudioMerge } from './step-audio-merge';
+import { hasMergedDialogue } from './stage-artifact-health';
 import { orderClipsByShots } from './clip-order';
 import { normalizeTimelineState } from './timeline-state';
 import { getShotSubtitleText } from './shot-subtitles';
@@ -66,44 +67,22 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     );
   }
 
-  // 兜底防御：若镜头存在 TTS 中文配音音轨 (shot.audioTrack)，但 clip 尚未融合音轨 (!clip.hasAudio)，
-  // 自动在合成前触发一次音视合并，确保中文配音 100% 融入最终成片中！
-  const unmergedShots = shots.filter((s) => {
-    const c = clips.find((clip) => clip.shotId === s.id);
-    return s.audioTrack && c && !c.hasAudio;
+  const clipsByShot = new Map(clips.map((clip) => [clip.shotId, clip]));
+  const unmergedShots = shots.filter((shot) => {
+    const clip = clipsByShot.get(shot.id);
+    return shot.audioTrack && clip && !hasMergedDialogue(shot, clip, resolveLocalPath);
   });
 
   if (unmergedShots.length > 0) {
-    console.log(`step-compose: 检测到 ${unmergedShots.length} 个镜头的 TTS 中文配音尚未合并进视频，自动补跑音视合并...`);
-    try {
-      const mergeResult = await runAudioMerge(shots, {
-        novelProjectId: opts.novelProjectId,
-        clips,
-        signal: opts.signal,
-      });
-      if (mergeResult.mergedShotIds.length > 0) {
-        const mergedSet = new Set(mergeResult.mergedShotIds);
-        const shotToMerged = new Map(
-          mergeResult.shots
-            .filter((s) => mergedSet.has(s.id))
-            .map((s) => [s.id, s.audioTrack]),
-        );
-        clips = clips.map((clip) => {
-          const mergedPath = shotToMerged.get(clip.shotId);
-          if (mergedPath && !mergedPath.startsWith('data:')) {
-            return {
-              ...clip,
-              videoUrl: toWebviewUrl(mergedPath),
-              hasAudio: true,
-            };
-          }
-          return clip;
-        });
-      }
-    } catch (err) {
-      opts.signal?.throwIfAborted();
-      console.warn('step-compose: 自动补跑音视合并失败，将继续使用原 Clip 进行合成:', err);
+    const mergeResult = await runAudioMerge(unmergedShots, {
+      novelProjectId: opts.novelProjectId,
+      clips,
+      signal: opts.signal,
+    });
+    if (mergeResult.failedShotIds.length > 0) {
+      throw new Error(describeAudioMergeFailure(unmergedShots, mergeResult.failedShotIds));
     }
+    clips = mergeResult.clips;
   }
 
   const hasSubtitleBurnIn = opts.hardcodeSubtitles && shots.some((shot) => !!getShotSubtitleText(shot));
