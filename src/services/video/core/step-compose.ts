@@ -20,6 +20,7 @@ export interface ComposeOptions {
   style?: string;
   timelineState?: VideoTimelineState;
   assemblyRequirements?: AssemblyQualityRequirements;
+  signal?: AbortSignal;
 }
 
 export interface ComposeResult {
@@ -78,6 +79,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
       const mergeResult = await runAudioMerge(shots, {
         novelProjectId: opts.novelProjectId,
         clips,
+        signal: opts.signal,
       });
       if (mergeResult.mergedShotIds.length > 0) {
         const mergedSet = new Set(mergeResult.mergedShotIds);
@@ -99,6 +101,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
         });
       }
     } catch (err) {
+      opts.signal?.throwIfAborted();
       console.warn('step-compose: 自动补跑音视合并失败，将继续使用原 Clip 进行合成:', err);
     }
   }
@@ -125,7 +128,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
     return { finalVideoUrl: toWebviewUrl(resolveLocalPath(clips[0].videoUrl)), degraded: true };
   }
 
-  const workDir = await getWorkDir(opts.novelProjectId);
+  const workDir = `${await getWorkDir(opts.novelProjectId)}/compose-${crypto.randomUUID()}`;
   const localPaths: string[] = [];
   const subtitles: (string | null)[] = [];
   const trimStartSeconds: number[] = [];
@@ -133,6 +136,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
   const invalidReasons: string[] = [];
 
   for (let i = 0; i < clips.length; i++) {
+    opts.signal?.throwIfAborted();
     const clip = clips[i];
 
     // 校验 clip 是否为真正可播放的视频路径（过滤掉旧数据中的 video_xxx ID 字符串）
@@ -180,6 +184,7 @@ export async function runCompose(opts: ComposeOptions): Promise<ComposeResult> {
 
   const outputPath = `${workDir}/final.mp4`;
 
+  opts.signal?.throwIfAborted();
   const result = await composeClips({
     clipPaths: localPaths,
     subtitles,

@@ -22,6 +22,7 @@ import type {
   VideoGenerationCapabilities,
   VideoModelCapabilityOverride,
 } from '@/types/providers';
+import type { VideoQueueRetry } from '@/types/video';
 import { BaseLLMProvider } from './base';
 import { OpenAICompatibleProvider, ClaudeProvider } from './llm-adapters';
 import { createImageProvider } from './image-adapters';
@@ -31,7 +32,7 @@ import { createVideoProvider } from './video-adapters';
 import { createTTSProvider } from './tts-adapters';
 import { isEndpointInCategory, useProviderStore } from '@/stores/providerStore';
 import { logger } from '@/services/log';
-import { emitInvocation } from './invocation-context';
+import { emitInvocation, peekStageContext } from './invocation-context';
 import {
   buildImageRequestSnapshot,
   buildLLMRequestSnapshot,
@@ -78,10 +79,12 @@ function truncatePrompt(prompt: string | undefined, max = 2000): string | undefi
 async function callWithSafetyRetry<T>(
   originalPrompt: string,
   attempt: (prompt: string) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
   try {
     return await attempt(originalPrompt);
   } catch (err) {
+    signal?.throwIfAborted();
     if (!isContentPolicyViolation(err)) throw err;
 
     const chain = buildSafetyRewriteChain(originalPrompt);
@@ -92,6 +95,7 @@ async function callWithSafetyRetry<T>(
 
     let lastErr = err;
     for (let i = 0; i < chain.length; i++) {
+      signal?.throwIfAborted();
       const rewritten = chain[i];
       try {
         const result = await attempt(rewritten);
@@ -154,15 +158,23 @@ function isVideoQueueFull(err: unknown): boolean {
 async function callWithTimeoutRetry<T>(
   fn: () => Promise<T>,
   retries = 3,
-  options: { queueRetries?: number; queueBackoffMs?: number } = {},
+  options: {
+    queueRetries?: number;
+    queueBackoffMs?: number;
+    onQueueRetry?: (retry: VideoQueueRetry | undefined) => void;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<T> {
   let lastErr: unknown;
   const queueRetries = Math.max(0, Math.min(20, Math.floor(options.queueRetries ?? retries)));
   const queueBackoffMs = Math.max(1000, Math.min(30 * 60 * 1000, Math.floor(options.queueBackoffMs ?? 30000)));
+  const { signal } = options;
   for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted();
     try {
       return await fn();
     } catch (err) {
+      signal?.throwIfAborted();
       lastErr = err;
       const queueFull = isVideoQueueFull(err);
       const maxRetries = queueFull ? queueRetries : retries;
@@ -178,7 +190,24 @@ async function callWithTimeoutRetry<T>(
         }`,
         'router',
       );
-      await new Promise((r) => setTimeout(r, delayMs));
+      const reportQueueRetry = queueFull ? options.onQueueRetry : undefined;
+      reportQueueRetry?.({ attempt: attempt + 1, total: maxRetries, nextAttemptAt: Date.now() + delayMs });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const cancel = () => {
+            clearTimeout(timer);
+            reject(signal?.reason);
+          };
+          const timer = setTimeout(() => {
+            signal?.removeEventListener('abort', cancel);
+            resolve();
+          }, delayMs);
+          signal?.addEventListener('abort', cancel, { once: true });
+          if (signal?.aborted) cancel();
+        });
+      } finally {
+        reportQueueRetry?.(undefined);
+      }
     }
   }
   throw lastErr;
@@ -213,7 +242,9 @@ function updateInvocationPrompt(fields: RouterInvocationFields, prompt: string):
 async function runWithInvocation<T extends { latencyMs?: number; model: string; provider: string; usage?: { promptTokens?: number; completionTokens?: number }; durationSeconds?: number }>(
   fields: RouterInvocationFields,
   fn: () => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
+  const stageContext = peekStageContext(signal);
   const startedAt = nowIso();
   const startTs = Date.now();
   let retries = 0;
@@ -222,7 +253,9 @@ async function runWithInvocation<T extends { latencyMs?: number; model: string; 
   // inside fallback paths increment via a closure passed in below — but for
   // simplicity we just count attempts in this scope.
   try {
+    signal?.throwIfAborted();
     const result = await fn();
+    signal?.throwIfAborted();
     // If fallback path was used (caught inside), the caller's fn does its own
     // retry — we can't see that from here. We approximate retries=0 if first
     // attempt succeeded.
@@ -255,9 +288,10 @@ async function runWithInvocation<T extends { latencyMs?: number; model: string; 
       executionStatus: fields.executionStatus ?? ('succeeded' as const),
       error: lastErr,
     };
-    emitInvocation(invocation);
+    emitInvocation(invocation, stageContext);
     return result;
   } catch (err) {
+    signal?.throwIfAborted();
     const msg = err instanceof Error ? err.message : String(err);
     void logger.error(`[router] ${fields.category} FAIL ${fields.provider}/${fields.model} endpoint=${fields.endpointId ?? '-'} baseUrl=${fields.baseUrl ?? '-'} : ${msg}`, 'router');
     const invocation = {
@@ -279,7 +313,7 @@ async function runWithInvocation<T extends { latencyMs?: number; model: string; 
       executionStatus: 'failed' as const,
       error: msg,
     };
-    emitInvocation(invocation);
+    emitInvocation(invocation, stageContext);
     throw err;
   }
 }
@@ -747,7 +781,7 @@ class ProviderRouter {
     );
   }
 
-  async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
+  async generate(request: LLMGenerateRequest, signal?: AbortSignal): Promise<LLMGenerateResponse> {
     const store = useProviderStore.getState();
     const config = store.config.llm;
     const endpoint = request.endpointId ? resolveEndpoint(request.endpointId, 'llm') : store.getActiveEndpoint('llm');
@@ -802,6 +836,7 @@ class ProviderRouter {
           const provider = createLLMProvider(endpoint.provider as LLMProviderId, endpoint);
           return await provider.generate(requestWithModel);
         } catch (primaryError) {
+          signal?.throwIfAborted();
           if (request.endpointId || !config.fallback) throw primaryError;
 
           // Try fallback
@@ -816,6 +851,7 @@ class ProviderRouter {
           }
         }
       },
+      signal,
     );
   }
 
@@ -897,7 +933,7 @@ class ProviderRouter {
       : capabilities;
   }
 
-  async generateImage(request: ImageGenerateRequest): Promise<ImageGenerateResponse> {
+  async generateImage(request: ImageGenerateRequest, signal?: AbortSignal): Promise<ImageGenerateResponse> {
     const store = useProviderStore.getState();
     const config = store.config.image;
     const explicitEndpoint = request.endpointId
@@ -993,6 +1029,7 @@ class ProviderRouter {
               const provider = createImageProvider(endpointProvider, endpoint);
               return await provider.generate(reqWithRewritten);
             } catch (primaryError) {
+              signal?.throwIfAborted();
               if (explicitEndpoint || !config.fallback) throw primaryError;
               const fallbackEndpoint = store.getFallbackEndpoint('image');
               if (!fallbackEndpoint) throw primaryError;
@@ -1066,9 +1103,10 @@ class ProviderRouter {
                 throw new Error(`Primary image provider failed: ${primaryMessage}; fallback failed: ${fallbackMessage}`);
               }
             }
-          });
-        });
+          }, undefined, { signal });
+        }, signal);
       },
+      signal,
     );
     return {
       ...result,
@@ -1080,7 +1118,8 @@ class ProviderRouter {
 
   // Video
 
-  async generateVideo(request: VideoGenerateRequest): Promise<VideoGenerateResponse> {
+  async generateVideo(request: VideoGenerateRequest, signal?: AbortSignal): Promise<VideoGenerateResponse> {
+    const reportQueueRetry = peekStageContext(signal)?.onVideoQueueRetry;
     const store = useProviderStore.getState();
     const config = store.config.video;
 
@@ -1182,6 +1221,7 @@ class ProviderRouter {
               const provider = createVideoProvider(endpointProvider, endpoint);
               return await provider.generate(reqWithRewritten);
             } catch (primaryError) {
+              signal?.throwIfAborted();
               if (explicitEndpoint || !config.fallback) throw primaryError;
               const fallbackEndpoint = store.getFallbackEndpoint('video');
               if (!fallbackEndpoint) throw primaryError;
@@ -1261,15 +1301,18 @@ class ProviderRouter {
               }
             }
           }, 3, {
+            signal,
             queueRetries: endpointProvider === 'agnes-video'
               ? config.queueRetryCount ?? 6
               : 3,
             queueBackoffMs: endpointProvider === 'agnes-video'
               ? config.queueRetryBackoffMs ?? 30000
               : 30000,
+            onQueueRetry: reportQueueRetry,
           });
-        });
+        }, signal);
       },
+      signal,
     );
     return {
       ...result,
@@ -1291,7 +1334,7 @@ class ProviderRouter {
     return endpoint.provider as TTSProviderId;
   }
 
-  async generateTTS(request: TTSRequest): Promise<TTSResponse> {
+  async generateTTS(request: TTSRequest, signal?: AbortSignal): Promise<TTSResponse> {
     const store = useProviderStore.getState();
     const config = store.config.tts;
 
@@ -1346,6 +1389,7 @@ class ProviderRouter {
           const provider = createTTSProvider(endpointProvider, endpoint);
           return await provider.generate(requestWithDefaults);
         } catch (primaryError) {
+          signal?.throwIfAborted();
           if (!explicitEndpoint && config.fallback) {
             const fallbackEndpoint = store.getFallbackEndpoint('tts');
             if (fallbackEndpoint) {
@@ -1358,6 +1402,7 @@ class ProviderRouter {
             }
           }
 
+          signal?.throwIfAborted();
           // 零门槛免费兜底：若主端点与备用端点均失败（如中转站 400 无额度），自动倒扣调用免费微软 Edge TTS
           console.warn('[tts] Primary & Fallback TTS endpoints failed, falling back to free EdgeTTS Provider:', primaryError);
           const now = new Date().toISOString();
@@ -1375,6 +1420,7 @@ class ProviderRouter {
           return await edgeProvider.generate(requestWithDefaults);
         }
       },
+      signal,
     );
   }
 }

@@ -44,7 +44,7 @@ export function getStyleNameZh(style?: string): string {
   return style?.trim() || '';
 }
 
-export async function planImagePrompt(input: ImagePromptPlannerInput): Promise<ImagePromptPlan> {
+export async function planImagePrompt(input: ImagePromptPlannerInput, signal?: AbortSignal): Promise<ImagePromptPlan> {
   const capability = providerRouter.getImageCapabilities(
     input.purpose === 'scene_background' ? 'scene' : 'character',
     input.model,
@@ -68,14 +68,14 @@ export async function planImagePrompt(input: ImagePromptPlannerInput): Promise<I
   };
 
   try {
-    const response = await providerRouter.generate(request);
+    const response = await providerRouter.generate(request, signal);
     let plan = parsePlan(response.content);
     if (!plan) {
       const repaired = await providerRouter.generate({
         ...request,
         userPrompt: `${userPrompt}\n\nThe previous response was not valid JSON. Return only one JSON object matching the schema; do not use Markdown or explanation.`,
         temperature: 0.1,
-      });
+      }, signal);
       plan = parsePlan(repaired.content);
     }
     if (plan) {
@@ -85,6 +85,7 @@ export async function planImagePrompt(input: ImagePromptPlannerInput): Promise<I
     }
     throw new Error('Image prompt planner returned no usable JSON plan');
   } catch (err) {
+    signal?.throwIfAborted();
     console.warn(`image prompt planning failed for ${input.purpose}; using source facts`, err);
     return fallbackPlan(input);
   }

@@ -1,4 +1,5 @@
 import type { PipelinePreflightResult } from './pipeline-preflight-rules.ts';
+import { VIDEO_GENERATION_STOPPED } from '../../../types/video.ts';
 import type {
   CharacterAnchor,
   SceneAnchor,
@@ -19,6 +20,23 @@ import { getContinuityHandoffIssue } from './shot-continuity.ts';
 import { getShotStillPrompt, validateShotPlanContract, type ShotPlanIssue } from './shot-plan-contract.ts';
 
 export type ProductionPhase = 'script' | 'assets' | 'shots' | 'timeline';
+export type VideoPipelineStatus = 'idle' | 'running' | 'review' | 'complete' | 'error' | 'stopped';
+
+export function getVideoPipelineStatus(project: VideoProjectState): { status: VideoPipelineStatus; stage: VideoStage } {
+  const stage = project.currentStage;
+  const stageState = project.stages[stage];
+  if (stageState?.status === 'running') return { status: 'running', stage };
+  if (stage === 'complete') return { status: 'complete', stage };
+  const failed = findStageError(project);
+  if (failed) {
+    const status = project.stages[failed]?.error === VIDEO_GENERATION_STOPPED ? 'stopped' : 'error';
+    return { status, stage: failed };
+  }
+  if (project.error || stage === 'error') return { status: 'error', stage };
+  if (stageState?.status === 'awaiting_review') return { status: 'review', stage };
+  if (project.finalVideoUrl) return { status: 'complete', stage: 'complete' };
+  return { status: 'idle', stage };
+}
 
 export type ProductionAction =
   | 'configure'
@@ -271,7 +289,8 @@ export function phaseForAction(action: ProductionAction): ProductionPhase {
 function findStageError(project: VideoProjectState): VideoStage | undefined {
   const current = project.currentStage;
   if (current && project.stages[current]?.status === 'error') return current;
-  return Object.values(project.stages).find((stage) => stage.status === 'error')?.stage;
+  const failed = Object.values(project.stages).filter((stage) => stage.status === 'error');
+  return failed.find((stage) => stage.error === VIDEO_GENERATION_STOPPED)?.stage ?? failed[0]?.stage;
 }
 
 function findContinuityRisks(

@@ -91,12 +91,15 @@ export interface VideoGenOptions {
   usePlannedLastFrame?: boolean;
   /** Optional manual seed from the single-shot workspace. */
   seed?: number;
+  /** Use a different seed for a candidate without changing the accepted shot inputs. */
+  candidateSeed?: number;
   /**
    * 用于产物落盘(appDataDir/video-assets/<projectId>/clip/)。
    * Novel pipeline 总是传;Direct modal 可不传 — 不传则不落盘,
    * clip.videoUrl 直接用 provider 返回的原值(关闭重开会失效,但 direct 模式本来就不 persist)。
    */
   novelProjectId?: string;
+  signal?: AbortSignal;
 }
 
 export interface VideoGenResult {
@@ -273,6 +276,7 @@ async function generateOne(
   previousLastFrameImage?: string,
   onShotUpdate?: (shot: ShotSpec) => void,
 ): Promise<GeneratedClip> {
+  options.signal?.throwIfAborted();
   if (enableI2V && options.requireKeyframeForI2V && !isShotKeyframeApproved(shot)) {
     throw new Error(`Shot ${shot.index + 1} requires a current approved keyframe before I2V generation`);
   }
@@ -332,6 +336,7 @@ async function generateOne(
         continuityReferenceImage: previousLastFrameImage,
         continuityReferenceShotIndex: previousShot?.index,
         preferContinuityReference: true,
+        signal: options.signal,
       },
     );
     shot = {
@@ -643,8 +648,9 @@ async function generateOne(
   const presentCharacters = findMatchingCharacters(shot, options.characters);
   const prompt = buildVideoGenerationPrompt(shot, presentCharacters, controlMode);
   if (!prompt) throw new Error(`Shot ${shot.index + 1} has no video prompt`);
-  const seed = getEffectiveShotSeed(shot, options.seed);
+  const seed = options.candidateSeed ?? getEffectiveShotSeed(shot, options.seed);
   let response;
+  options.signal?.throwIfAborted();
   try {
     response = await providerRouter.generateVideo({
       taskType: 'clip',
@@ -666,8 +672,9 @@ async function generateOne(
       firstFrame,
       lastFrame,
       subjectReferences: activeSubjectReferences.length > 0 ? activeSubjectReferences : undefined,
-    });
+    }, options.signal);
   } catch (err) {
+    options.signal?.throwIfAborted();
     // 如果 I2V 模式报错(中转站不支持参考图/参考图过大/模型拒绝 I2V),自动平滑回退到 T2V 模式重试
     if (isI2VMode && options.allowReferenceFallback === true && !options.requireKeyframeForI2V && !options.controlMode) {
       console.warn(`video_gen: I2V failed for shot ${shot.id}, falling back to T2V`, err);
@@ -700,7 +707,7 @@ async function generateOne(
         firstFrame: undefined,
         lastFrame: undefined,
         subjectReferences: undefined,
-      });
+      }, options.signal);
     } else {
       throw err;
     }
@@ -743,6 +750,7 @@ async function generateOne(
   const videoUrl = options.novelProjectId
     ? await saveAsset(options.novelProjectId, 'clip', response.videoData, `clip_shot_${shot.index + 1}`)
     : response.videoData;
+  options.signal?.throwIfAborted();
   const lastFrameImage = await extractLastFrameIfPossible(options.novelProjectId, videoUrl, shot.index);
 
   return {
@@ -925,7 +933,7 @@ async function extractLastFrameIfPossible(
 
   try {
     const directory = await getAssetDirectory(projectId, 'last-frame');
-    const outputPath = `${directory}/last_frame_shot_${shotIndex + 1}.png`;
+    const outputPath = `${directory}/last_frame_shot_${shotIndex + 1}_${crypto.randomUUID()}.png`;
     const result = await extractLastFrame({ videoPath: localPath, outputPath });
     return toWebviewUrl(result.outputPath);
   } catch (err) {

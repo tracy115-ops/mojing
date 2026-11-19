@@ -25,6 +25,7 @@ export type BGMMoodStyle = 'epic_action' | 'suspense_thriller' | 'warm_emotional
 
 export interface AudioMergeCtx {
   novelProjectId: string;
+  signal?: AbortSignal;
   /** clip by shotId,用于拿到 videoUrl */
   clips: GeneratedClip[];
   /** 可选背景音乐风格预设 */
@@ -46,12 +47,13 @@ export async function runAudioMerge(
     return { shots, mergedShotIds: [], failedShotIds: [] };
   }
 
-  const workDir = await getWorkDir(ctx.novelProjectId);
+  const workDir = `${await getWorkDir(ctx.novelProjectId)}/audio-${crypto.randomUUID()}`;
   const result: ShotSpec[] = shots.map((s) => ({ ...s }));
   const mergedShotIds: string[] = [];
   const failedShotIds: string[] = [];
 
   for (let i = 0; i < shots.length; i++) {
+    ctx.signal?.throwIfAborted();
     const shot = shots[i];
     const clip = ctx.clips.find((c) => c.shotId === shot.id);
 
@@ -66,6 +68,7 @@ export async function runAudioMerge(
       const localAudioPath = await materializeAudio(shot.audioTrack, workDir, `a_${i}`);
       const outputPath = `${workDir}/merged_${i}.mp4`;
 
+      ctx.signal?.throwIfAborted();
       await mergeAudio({
         videoPath: localVideoPath,
         audioPath: localAudioPath,

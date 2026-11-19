@@ -26,6 +26,7 @@ export async function runCharacterAnchor(
     turnaroundPrompts?: Record<string, string>;
     promptOverride?: string;
     shouldAbort?: () => boolean;
+    signal?: AbortSignal;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<CharacterAnchorResult> {
@@ -56,8 +57,9 @@ export async function runCharacterAnchor(
           requestedAspectRatio: '2:3',
           endpointId: ctx.imageEndpointId,
           model: ctx.imageModel,
-        });
+        }, ctx.signal);
 
+    if (ctx.shouldAbort?.()) break;
     let portraitOk = !!result[i].portraitImage;
     let currentPortraitRaw = '';
     if (!portraitOk) {
@@ -74,7 +76,7 @@ export async function runCharacterAnchor(
           seed: character.seed,
           endpointId: ctx.imageEndpointId,
           model: ctx.imageModel,
-        });
+        }, ctx.signal);
         currentPortraitRaw = image.imageData;
         result[i].portraitImage = await saveAsset(
           ctx.novelProjectId,
@@ -98,6 +100,7 @@ export async function runCharacterAnchor(
 
     if (character.costumeVariants?.length) {
       for (let j = 0; j < character.costumeVariants.length; j++) {
+        if (ctx.shouldAbort?.()) break;
         const variant = character.costumeVariants[j];
         if (variant.id === 'default') continue;
         if (result[i].costumeVariants?.[j].portraitImage) continue;
@@ -110,7 +113,8 @@ export async function runCharacterAnchor(
             requestedAspectRatio: '2:3',
             endpointId: ctx.imageEndpointId,
             model: ctx.imageModel,
-          });
+          }, ctx.signal);
+          if (ctx.shouldAbort?.()) break;
           const image = await providerRouter.generateImage({
             taskType: 'character',
             prompt: variantPlan.prompt,
@@ -123,7 +127,7 @@ export async function runCharacterAnchor(
             seed: character.seed,
             endpointId: ctx.imageEndpointId,
             model: ctx.imageModel,
-          });
+          }, ctx.signal);
           result[i].costumeVariants![j].portraitImage = await saveAsset(
             ctx.novelProjectId,
             'portrait',
@@ -140,6 +144,7 @@ export async function runCharacterAnchor(
       }
     }
 
+    if (ctx.shouldAbort?.()) break;
     const portraitUrl = result[i].portraitImage;
     const turnaroundIsStale = !!result[i].turnaroundSourcePortrait
       && result[i].turnaroundSourcePortrait !== portraitUrl;
@@ -161,7 +166,8 @@ export async function runCharacterAnchor(
               referenceCount: reference ? 1 : 0,
               endpointId: ctx.imageEndpointId,
               model: ctx.imageModel,
-            });
+            }, ctx.signal);
+        if (ctx.shouldAbort?.()) break;
         const image = await providerRouter.generateImage({
           taskType: 'character',
           prompt: turnaroundPlan.prompt,
@@ -175,7 +181,7 @@ export async function runCharacterAnchor(
           seed: character.seed,
           endpointId: ctx.imageEndpointId,
           model: ctx.imageModel,
-        });
+        }, ctx.signal);
         result[i].turnaroundImage = await saveAsset(
           ctx.novelProjectId,
           'portrait',

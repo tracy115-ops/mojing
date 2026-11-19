@@ -62,6 +62,7 @@ interface EpisodeContinuityFormValues {
 interface VideoSeriesWorkspaceProps {
   series: CreativeProject;
   episodes: CreativeProject[];
+  renderEpisodeStatus?: (episode: CreativeProject) => React.ReactNode;
   onUpdateSeriesInfo?: (title: string, description: string) => void;
   onDeleteSeries?: (seriesId: string) => void;
   onUpdateCharacters: (characters: CharacterAnchor[]) => void;
@@ -91,6 +92,7 @@ function readFileAsDataUri(file: File): Promise<string> {
 const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   series,
   episodes,
+  renderEpisodeStatus,
   onUpdateSeriesInfo,
   onDeleteSeries,
   onUpdateCharacters,
@@ -646,6 +648,7 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <Text strong ellipsis>{episode.title}</Text>
                       {episode.description && <Text type="secondary" ellipsis style={{ display: 'block', fontSize: 12 }}>{episode.description}</Text>}
+                      {renderEpisodeStatus?.(episode)}
                     </div>
                     <Tooltip title="编辑分集名称与剧情梗概">
                       <Button

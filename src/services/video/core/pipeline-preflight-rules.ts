@@ -12,6 +12,7 @@ import type {
 import { filterGenerationParameters } from '../../providers/provider-capabilities.ts';
 import { resolveVideoQualityPolicy } from './quality-policy.ts';
 import { getSubjectContinuityShot } from './shot-continuity.ts';
+import { canComposeFromOrderedReferences } from './reference-strategy.ts';
 
 export type ProviderPreflightCategory = 'llm' | 'image' | 'video' | 'tts';
 
@@ -61,6 +62,7 @@ export interface PipelinePreflightRulesInput {
   endStage?: VideoStage;
   /** True when the caller is about to run the text planning stages. */
   planningRequired?: boolean;
+  automatic?: boolean;
   sceneSpec?: Pick<SceneSpec, 'characters' | 'scenes' | 'shots'>;
   /** Set explicitly when the scene spec has not been built yet. */
   hasCharacterReferences?: boolean;
@@ -205,7 +207,8 @@ export function evaluatePipelinePreflight(input: PipelinePreflightRulesInput): P
       const hasCompleteContinuityReference = !!getSubjectContinuityShot(input.sceneSpec.shots, shot)?.keyframeImage;
       const lacksSemanticSlots = image.references.supportsReferenceRoles !== true;
       const lacksCapacity = image.references.maxImages < visibleSubjectIds.size;
-      if ((lacksSemanticSlots || lacksCapacity) && !hasCompleteContinuityReference) {
+      const canCompose = input.automatic && canComposeFromOrderedReferences(image.references, visibleSubjectIds.size);
+      if ((lacksSemanticSlots || lacksCapacity) && !hasCompleteContinuityReference && !canCompose) {
         blocking.push({
           code: 'multi-subject-reference-unsupported',
           category: 'image',

@@ -14,10 +14,9 @@ import type {
   GeneratedClip,
   SceneAnchor,
   ShotSpec,
-  VideoVisualCheckId,
   VideoVisualQualityReview,
 } from '@/types/video';
-import { normalizeVisualReview, unavailableVisualReview } from './visual-quality-normalizer';
+import { normalizeVisualReview, SHOT_VISUAL_CHECKS, unavailableVisualReview } from './visual-quality-normalizer';
 
 export { normalizeVisualReview } from './visual-quality-normalizer';
 
@@ -30,6 +29,7 @@ export interface VisualQualityReviewOptions {
   characters?: CharacterAnchor[];
   scenes?: SceneAnchor[];
   reviewedAt?: string;
+  signal?: AbortSignal;
 }
 
 interface VisualInput {
@@ -40,13 +40,13 @@ interface VisualInput {
   dataUri: string;
 }
 
-const CHECK_IDS: VideoVisualCheckId[] = [
-  'subject_count',
-  'subject_identity',
-  'scene_match',
-  'composition',
-  'temporal_consistency',
-];
+export function evaluateKeyframeVisually(
+  shot: ShotSpec,
+  imageUrl: string,
+  options: VisualQualityReviewOptions,
+): Promise<VideoVisualQualityReview> {
+  return evaluateShotVisuals(shot, { ...options, outputFrames: [imageUrl] });
+}
 
 /**
  * Review sampled output frames against the structured shot contract.
@@ -60,7 +60,19 @@ export async function evaluateVideoClipVisually(
   clip: GeneratedClip,
   options: VisualQualityReviewOptions = {},
 ): Promise<VideoVisualQualityReview> {
+  return evaluateShotVisuals(shot, options, clip);
+}
+
+async function evaluateShotVisuals(
+  shot: ShotSpec,
+  options: VisualQualityReviewOptions,
+  clip?: GeneratedClip,
+): Promise<VideoVisualQualityReview> {
   const reviewedAt = options.reviewedAt ?? new Date().toISOString();
+  const still = !clip;
+  const requiredChecks = still
+    ? SHOT_VISUAL_CHECKS.filter((id) => id !== 'temporal_consistency')
+    : SHOT_VISUAL_CHECKS;
   const capabilities = providerRouter.getLLMCapabilities('review', options.llmModel, options.llmEndpointId);
   if (!capabilities.supportsImageInputs || capabilities.maxImageInputs <= 0) {
     return unavailableVisualReview(
@@ -97,13 +109,14 @@ export async function evaluateVideoClipVisually(
       responseFormat: 'json',
       systemPrompt: [
         'You are a strict visual quality reviewer for generated video shots.',
+        ...(still ? ['Assess the single supplied keyframe as a still. Check framing, subject identity, wardrobe, and intended starting pose.'] : []),
         'Inspect the supplied images, compare them with the structured shot contract, and never infer a pass from filenames or prompt text alone.',
         'Count visible entities conservatively. An unbound visible entity is a failure for subject_count.',
         'Return JSON only. Every required check id must appear exactly once.',
         'Use status pass, warning, or fail. Use scores from 0 to 100.',
       ].join('\n'),
       userPrompt: JSON.stringify({
-        task: 'Evaluate one generated video clip from sampled frames.',
+        task: still ? 'Evaluate the proposed first frame for this shot.' : 'Evaluate one generated video clip from sampled frames.',
         expected: {
           visibleSubjects: expectedSubjects,
           visibleSubjectIds: visibleCharacterIds(shot),
@@ -115,10 +128,10 @@ export async function evaluateVideoClipVisually(
           endState: shot.endState,
           cameraMovement: shot.cameraMovement,
           sourceText: shot.sourceText,
-          shotPrompt: shot.videoPrompt,
+          shotPrompt: still ? shot.imagePrompt : shot.videoPrompt,
         },
         sampledInputs: inputManifest,
-        requiredChecks: CHECK_IDS,
+        requiredChecks,
         outputShape: {
           overallScore: 'number 0..100',
           summary: 'short evidence-based text',
@@ -126,13 +139,13 @@ export async function evaluateVideoClipVisually(
         },
       }, null, 2),
       imageInputs: inputs.map((input) => input.dataUri),
-    });
+    }, options.signal);
     return normalizeVisualReview(response.content, {
       reviewedAt,
       provider: response.provider,
       model: response.model,
       frameCount: inputs.filter((input) => input.kind === 'frame').length,
-    });
+    }, still);
   } catch (error) {
     return unavailableVisualReview(
       reviewedAt,
@@ -145,7 +158,7 @@ export async function evaluateVideoClipVisually(
 
 async function collectVisualInputs(
   shot: ShotSpec,
-  clip: GeneratedClip,
+  clip: GeneratedClip | undefined,
   options: VisualQualityReviewOptions,
   maxInputs: number,
 ): Promise<VisualInput[]> {
@@ -170,11 +183,18 @@ async function collectVisualInputs(
   for (const [index, frame] of (options.outputFrames ?? []).entries()) {
     await addInput(frames, `${shot.id}:output:${index}`, `sampled output frame ${index + 1}`, 'frame', frame);
   }
-  if (!options.outputFrames?.length && !clip.importedVideo) await addInput(frames, `${shot.id}:first`, 'first frame / approved keyframe', 'frame', shot.keyframeImage ?? clip.keyframeImage);
+  if (clip) {
+    if (!options.outputFrames?.length && !clip.importedVideo) await addInput(frames, `${shot.id}:first`, 'first frame / approved keyframe', 'frame', shot.keyframeImage ?? clip.keyframeImage);
+    const middleFrame = await extractMiddleFrame(clip, shot, options.projectId);
+    await addInput(frames, `${shot.id}:middle`, 'middle frame / sampled output', 'frame', middleFrame);
+    await addInput(frames, `${shot.id}:last`, 'last frame / sampled output', 'frame', clip.lastFrameImage);
+  }
 
-  const middleFrame = await extractMiddleFrame(clip, shot, options.projectId);
-  await addInput(frames, `${shot.id}:middle`, 'middle frame / sampled output', 'frame', middleFrame);
-  await addInput(frames, `${shot.id}:last`, 'last frame / sampled output', 'frame', clip.lastFrameImage);
+  const visibleIds = visibleCharacterIds(shot);
+  for (const character of options.characters ?? []) {
+    if (!visibleIds.some((id) => characterReferenceMatches(character, id))) continue;
+    await addInput(references, character.id, `identity reference / ${character.name}`, 'reference', character.portraitImage);
+  }
 
   for (const asset of shot.referenceAssets ?? []) {
     if (asset.sentToProvider === false) continue;
@@ -196,7 +216,7 @@ async function extractMiddleFrame(
   if (!videoPath || isRemoteUrl(videoPath) || videoPath.startsWith('data:')) return undefined;
   try {
     const directory = await getAssetDirectory(projectId, 'last-frame');
-    const outputPath = `${directory}/visual_review_middle_${shot.index + 1}.png`;
+    const outputPath = `${directory}/visual_review_middle_${shot.index + 1}_${crypto.randomUUID()}.png`;
     const result = await extractFrameAt({
       videoPath,
       outputPath,

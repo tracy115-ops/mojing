@@ -5,7 +5,7 @@ import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
 import { useVideoStudioStore } from '@/stores/videoStudioStore';
-import type { VideoMetadata } from '@/types';
+import type { CreativeProject, VideoMetadata } from '@/types';
 import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal, { CreateVideoFormValues } from './CreateVideoModal';
 import VideoGeneratorModal from './VideoGeneratorModal';
@@ -13,8 +13,10 @@ import VideoPipelinePanel from './VideoPipelinePanel';
 import { VideoPipelineErrorBoundary } from './VideoPipelineErrorBoundary';
 import { runFromStage } from '@/services/video/core/pipeline-runner';
 import { applySeriesProjectLibrary } from '@/services/video/series-character-library';
+import { getVideoPipelineStatus } from '@/services/video/core/production-readiness';
 import { DEFAULT_PIPELINE_OPTIONS, type CharacterAnchor, type SceneAnchor } from '@/types/video';
 import VideoSeriesWorkspace from './VideoSeriesWorkspace';
+import VideoProjectProgress from './VideoProjectProgress';
 import './VideoView.css';
 
 const { Text, Title } = Typography;
@@ -24,6 +26,7 @@ function videoProjectStatus(
   pipeline: ReturnType<typeof useVideoStore.getState>['projects'][string] | undefined,
 ): 'planning' | 'in_progress' | 'paused' | 'completed' | 'archived' {
   if (!pipeline || current === 'archived') return current;
+  if (pipeline.stages[pipeline.currentStage]?.status === 'running') return 'in_progress';
   if (pipeline.finalVideoUrl || pipeline.currentStage === 'complete') return 'completed';
   const hasPipelineWork = !!pipeline.sceneSpec
     || Object.values(pipeline.stages).some((stage) => (
@@ -76,9 +79,38 @@ const VideoView: React.FC = () => {
   const [generatorSeriesContinuityContext, setGeneratorSeriesContinuityContext] = useState<string | undefined>();
   const [seriesForm] = Form.useForm<{ title: string; description?: string }>();
 
+  const episodesBySeries = useMemo(() => {
+    const groups = new Map<string, CreativeProject[]>();
+    const seriesIds = new Set(projects
+      .filter((project) => project.type === 'video' && (project.metadata as VideoMetadata).seriesRole === 'series')
+      .map((project) => project.id));
+    for (const project of projects) {
+      if (project.type !== 'video') continue;
+      const { seriesRole, seriesId } = project.metadata as VideoMetadata;
+      if (seriesRole !== 'episode' || !seriesId || !seriesIds.has(seriesId)) continue;
+      const episodes = groups.get(seriesId) ?? [];
+      episodes.push(project);
+      groups.set(seriesId, episodes);
+    }
+    for (const episodes of groups.values()) {
+      episodes.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    }
+    return groups;
+  }, [projects]);
   const videoProjects = useMemo(
-    () => projects.filter((p) => p.type === 'video' && (p.metadata as VideoMetadata).seriesRole !== 'episode'),
-    [projects],
+    () => {
+      const nestedEpisodes = new Set([...episodesBySeries.values()].flatMap((episodes) => episodes.map((episode) => episode.id)));
+      return projects.filter((project) => project.type === 'video' && !nestedEpisodes.has(project.id))
+      .map((project) => {
+        const episodes = episodesBySeries.get(project.id)?.filter((episode) => episode.status !== 'archived');
+        if (!episodes?.length || project.status === 'archived') return project;
+        const statuses = episodes.map((episode) => videoProjectStatus(episode.status, videoPipelineProjects[episode.id]));
+        if (statuses.every((status) => status === 'completed')) return { ...project, status: 'completed' as const };
+        if (statuses.some((status) => status !== 'planning')) return { ...project, status: 'in_progress' as const };
+        return { ...project, status: 'planning' as const };
+      });
+    },
+    [episodesBySeries, projects, videoPipelineProjects],
   );
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeVideoMetadata = activeProject?.metadata as VideoMetadata | undefined;
@@ -89,11 +121,38 @@ const VideoView: React.FC = () => {
     ? projects.find((project) => project.id === activeVideoMetadata.seriesId)
     : undefined;
   const seriesEpisodes = useMemo(
-    () => activeSeries
-      ? projects.filter((project) => project.type === 'video' && (project.metadata as VideoMetadata).seriesId === activeSeries.id)
-      : [],
-    [activeSeries, projects],
+    () => activeSeries ? episodesBySeries.get(activeSeries.id) ?? [] : [],
+    [activeSeries, episodesBySeries],
   );
+
+  const renderProjectStatus = (project: CreativeProject) => {
+    if (project.status === 'archived') return undefined;
+    const episodes = episodesBySeries.get(project.id);
+    if (!episodes?.length) {
+      const pipeline = videoPipelineProjects[project.id];
+      return pipeline && getVideoPipelineStatus(pipeline).status !== 'idle'
+        ? <VideoProjectProgress project={pipeline} />
+        : undefined;
+    }
+
+    const episodeRuns = episodes.flatMap((episode, index) => {
+      const pipeline = videoPipelineProjects[episode.id];
+      return pipeline && episode.status !== 'archived'
+        ? [{ pipeline, number: index + 1, status: getVideoPipelineStatus(pipeline).status }]
+        : [];
+    });
+    const running = episodeRuns.filter((episode) => episode.status === 'running');
+    const displayed = running[0]
+      ?? episodeRuns.find((episode) => episode.status === 'error' || episode.status === 'stopped')
+      ?? episodeRuns.find((episode) => episode.status === 'review');
+    return displayed && (
+      <VideoProjectProgress
+        project={displayed.pipeline}
+        episodeNumber={displayed.number}
+        runningEpisodes={running.length}
+      />
+    );
+  };
 
   const handleCreate = async (values: CreateVideoFormValues) => {
     const desc = values.scriptText || values.description;
@@ -262,10 +321,11 @@ const VideoView: React.FC = () => {
         <ProjectList
           projects={videoProjects}
           type="video"
-          activeId={activeProjectId}
+          activeId={activeEpisodeSeries?.id ?? activeProjectId}
           onSelect={handleSelectProject}
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
+          renderStatus={renderProjectStatus}
           showCreateAction={false}
           onCreate={() => {
             setEpisodeSeriesId(undefined);
@@ -307,6 +367,7 @@ const VideoView: React.FC = () => {
             <VideoSeriesWorkspace
               series={activeSeries}
               episodes={seriesEpisodes}
+              renderEpisodeStatus={renderProjectStatus}
               onUpdateSeriesInfo={(title, description) => {
                 useProjectStore.getState().updateProject(activeSeries.id, { title, description });
                 message.success('系列信息已更新！');

@@ -10,7 +10,7 @@
 import { useVideoStore } from '@/stores/videoStore';
 import { logger } from '@/services/log';
 import { providerRouter } from '@/services/providers';
-import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { pushStageContext } from '@/services/providers/invocation-context';
 import type {
   SceneSpec,
   PipelineOptions,
@@ -39,6 +39,7 @@ import { applySeriesProjectLibrary } from '../series-character-library';
 import { isAssetAvailable, isValidVideoClip } from '../asset-store';
 import { evaluateVideoClipQuality } from './video-quality-gate';
 import { evaluateVideoClipVisually } from './visual-quality-review';
+import { makeAutomaticClips, makeAutomaticKeyframes } from './automatic-shot-production';
 import { toWebviewUrl } from '../asset-store';
 import { orderClipsByShots } from './clip-order';
 import { resolveTemporalAuthority, shotsShareScene, shotsShareSubjects } from './shot-continuity';
@@ -56,6 +57,8 @@ export interface StageContext {
   videoGen: VideoGenOptions;
   callbacks?: PipelineCallbacks;
   shouldAbort?: () => boolean;
+  signal?: AbortSignal;
+  automatic?: boolean;
   /** False when another run for the same project has taken ownership. */
   isCurrentRun?: () => boolean;
   /** 累积的 clips(video_generation 产出,audio_merge/composing 消费)。
@@ -86,15 +89,25 @@ function addGeneratedShotVersion(
 // --- 共用 helper(从 pipeline-runner 搬过来,避免循环依赖) ---
 
 async function withStageContext<T>(
-  pid: string,
+  ctx: StageContext,
   stage: VideoStage,
   fn: () => Promise<T>,
 ): Promise<T> {
-  pushStageContext({ novelProjectId: pid, stage });
+  const releaseContext = pushStageContext({
+    novelProjectId: ctx.pid,
+    stage,
+    signal: ctx.signal,
+    onVideoQueueRetry: stage === 'video_generation' ? (queueRetry) => {
+      const store = useVideoStore.getState();
+      if (isStageRunActive(ctx) && store.projects[ctx.pid]?.stages[stage]?.status === 'running') {
+        store.setStageStatus(ctx.pid, stage, 'running', { queueRetry });
+      }
+    } : undefined,
+  });
   try {
     return await fn();
   } finally {
-    popStageContext();
+    releaseContext();
   }
 }
 
@@ -333,7 +346,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
   const turnaroundPrompts = (anchorInput as any)?.turnaroundPrompts as Record<string, string> | undefined;
 
   const result = await safeRunStage(pid, 'character_anchor', () =>
-    withStageContext(pid, 'character_anchor', () =>
+    withStageContext(ctx, 'character_anchor', () =>
       runCharacterAnchor(
         anchorChars,
         {
@@ -347,6 +360,7 @@ export async function executeCharacterAnchor(ctx: StageContext): Promise<StageRe
           characterPrompts,
           turnaroundPrompts,
           shouldAbort: ctx.shouldAbort,
+          signal: ctx.signal,
         },
         (done, total) => {
           if (!isStageRunActive(ctx)) return;
@@ -383,7 +397,7 @@ export async function executeVoiceAssignment(ctx: StageContext): Promise<StageRe
   });
 
   const voiceResult = await safeRunStage(pid, 'voice_assignment', () =>
-    withStageContext(pid, 'voice_assignment', () => stepVoice(voiceChars)),
+    withStageContext(ctx, 'voice_assignment', () => stepVoice(voiceChars)),
     ctx.isCurrentRun,
   );
   if (!voiceResult || !isStageRunActive(ctx)) return null;
@@ -407,7 +421,7 @@ export async function executeSceneImage(ctx: StageContext): Promise<StageResult 
   });
 
   const result = await safeRunStage(pid, 'scene_image', () =>
-    withStageContext(pid, 'scene_image', () =>
+    withStageContext(ctx, 'scene_image', () =>
       runSceneImage(
         workingSpec.scenes!,
         {
@@ -419,6 +433,7 @@ export async function executeSceneImage(ctx: StageContext): Promise<StageResult 
           novelProjectId: pid,
           characters: workingSpec.characters,
           shouldAbort: ctx.shouldAbort,
+          signal: ctx.signal,
         },
         (done, total) => {
           if (!isStageRunActive(ctx)) return;
@@ -465,11 +480,11 @@ export async function executeTTS(ctx: StageContext): Promise<StageResult | null>
   const customModel = stageInput?.model as string | undefined;
 
   const ttsResult = await safeRunStage(pid, 'tts', () =>
-    withStageContext(pid, 'tts', () =>
+    withStageContext(ctx, 'tts', () =>
       runTTS(
         workingSpec.shots,
         workingSpec.characters ?? [],
-        { ttsTier: 'free', novelProjectId: pid, model: customModel, shouldAbort: ctx.shouldAbort },
+        { ttsTier: 'free', novelProjectId: pid, model: customModel, shouldAbort: ctx.shouldAbort, signal: ctx.signal },
         (done, total) => {
           if (!isStageRunActive(ctx)) return;
           store.setStageStatus(pid, 'tts', 'running', { progress: done / total });
@@ -531,7 +546,7 @@ async function executeKeyframePass(ctx: StageContext): Promise<StageResult | nul
   });
 
   const result = await safeRunStage(pid, 'keyframe_image', () =>
-    withStageContext(pid, 'keyframe_image', () =>
+    withStageContext(ctx, 'keyframe_image', () =>
       runKeyframe(
         workingSpec.shots,
         {
@@ -546,6 +561,7 @@ async function executeKeyframePass(ctx: StageContext): Promise<StageResult | nul
           openingReferenceImage: workingSpec.meta.openingReferenceImage,
           requireCharacterReferences: options.enableCharacterAnchor,
           shouldAbort: ctx.shouldAbort,
+          signal: ctx.signal,
         },
         (done, total) => {
           if (!isStageRunActive(ctx)) return;
@@ -593,6 +609,7 @@ async function executeKeyframePass(ctx: StageContext): Promise<StageResult | nul
  * history forward. No story-specific prompt or subject rule is introduced.
  */
 export async function executeKeyframe(ctx: StageContext): Promise<StageResult | null> {
+  if (ctx.automatic) return withStageContext(ctx, 'keyframe_image', () => makeAutomaticKeyframes(ctx));
   const candidateCount = resolveVideoQualityPolicy(ctx.options).keyframeCandidatesPerShot;
   const baseShots = ctx.workingSpec.shots;
   let currentContext = ctx;
@@ -669,11 +686,12 @@ async function executeVideoGenPass(ctx: StageContext): Promise<StageResult | nul
   const continuityShotUpdates = new Map<string, ShotSpec>();
 
   const result = await safeRunStage(pid, 'video_generation', () =>
-    withStageContext(pid, 'video_generation', () =>
+    withStageContext(ctx, 'video_generation', () =>
       runVideoGen(
         workingSpec.shots,
         {
           ...videoGen,
+          signal: ctx.signal,
           novelProjectId: pid,
           characters: workingSpec.characters ?? videoGen.characters,
           scenes: workingSpec.scenes ?? videoGen.scenes,
@@ -752,6 +770,7 @@ async function executeVideoGenPass(ctx: StageContext): Promise<StageResult | nul
           projectId: pid,
           characters: productionSpec.characters,
           scenes: productionSpec.scenes,
+          signal: ctx.signal,
         })
       : undefined;
     return {
@@ -767,6 +786,7 @@ async function executeVideoGenPass(ctx: StageContext): Promise<StageResult | nul
       ...(visualReview ? { visualReview } : {}),
     };
   }));
+  if (!isStageRunActive(ctx)) return null;
   // runVideoGen returns the complete current candidate set, including clips
   // reused during a partial retry. Keeping that set together prevents a
   // successful clip from disappearing from version history on the next run.
@@ -869,6 +889,7 @@ async function executeVideoGenPass(ctx: StageContext): Promise<StageResult | nul
  * candidate while all versions remain in the shot history for comparison.
  */
 export async function executeVideoGen(ctx: StageContext): Promise<StageResult | null> {
+  if (ctx.automatic) return withStageContext(ctx, 'video_generation', () => makeAutomaticClips(ctx));
   const candidateCount = resolveVideoQualityPolicy(ctx.options).videoCandidatesPerShot;
   const baseShots = ctx.workingSpec.shots;
   let currentContext = ctx;
@@ -922,6 +943,7 @@ export async function executeVideoReview(ctx: StageContext): Promise<StageResult
   store.setStageStatus(pid, 'video_review', 'running');
 
   const availability = new Map(await Promise.all(clips.map(async (clip) => [clip.shotId, await isAssetAvailable(clip.videoUrl)] as const)));
+  if (!isStageRunActive(ctx)) return null;
   const reviewedClips = await Promise.all(clips.map(async (clip) => {
     const shot = workingSpec.shots.find((candidate) => candidate.id === clip.shotId);
     if (!shot) return clip;
@@ -939,12 +961,15 @@ export async function executeVideoReview(ctx: StageContext): Promise<StageResult
       requirePreviousTail: expectedTemporalAuthority === 'previous_tail',
       requireTailFrame: !!nextShot && shotsShareScene(shot, nextShot) && shotsShareSubjects(shot, nextShot),
     });
-    const visualReview = !qualityPolicy.visualReviewRequired
+    const visualReview = ctx.automatic && clip.visualReview
+      ? clip.visualReview
+      : !qualityPolicy.visualReviewRequired
       ? undefined
       : await evaluateVideoClipVisually(shot, clip, {
           projectId: pid,
           characters: workingSpec.characters,
           scenes: workingSpec.scenes,
+          signal: ctx.signal,
         });
     return {
       ...clip,
@@ -952,6 +977,7 @@ export async function executeVideoReview(ctx: StageContext): Promise<StageResult
       ...(visualReview ? { visualReview } : {}),
     };
   }));
+  if (!isStageRunActive(ctx)) return null;
   store.setClips(pid, reviewedClips);
   const reviewedSpec: SceneSpec = {
     ...workingSpec,
@@ -1028,6 +1054,9 @@ export async function executeVideoReview(ctx: StageContext): Promise<StageResult
     `尾帧可追溯 ${Math.max(0, workingSpec.shots.length - 1 - missingTailFrames.length)}/${Math.max(0, workingSpec.shots.length - 1)}`,
   ];
   store.setStageInputSummary(pid, 'video_review', {
+    ...(ctx.automatic ? {
+      automaticReviewMode: reviewedClips.every((clip) => clip.visualReview?.status === 'passed') ? 'visual' : 'technical',
+    } : {}),
     headline: missingShots.length || t2vShots.length || missingReferences.length || qualityFailedShots.length || visualFailedShots.length || visualUnavailableShots.length
       ? '视频技术质检未通过'
       : '视频技术质检通过',
@@ -1069,7 +1098,7 @@ export async function executeAudioMerge(ctx: StageContext): Promise<StageResult 
   const mergeResult = await safeRunStage(pid, 'audio_merge', () =>
     runAudioMerge(
       workingSpec.shots,
-      { novelProjectId: pid, clips },
+      { novelProjectId: pid, clips, signal: ctx.signal },
       (done, total) => {
         if (!isStageRunActive(ctx)) return;
         store.setStageStatus(pid, 'audio_merge', 'running', { progress: done / total });
@@ -1145,6 +1174,7 @@ export async function executeCompose(ctx: StageContext): Promise<StageResult | n
       style: workingSpec.meta.style,
       timelineState: store.getProject(pid)?.timelineState,
       assemblyRequirements: resolveAssemblyQualityRequirements(options),
+      signal: ctx.signal,
     });
     if (!isStageRunActive(ctx)) return null;
     store.setFinalVideo(pid, toWebviewUrl(result.finalVideoUrl), {
@@ -1279,8 +1309,10 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
           minWordsPerShot: 10,
           maxWordsPerShot: isScript ? 200 : 250,
         },
+        ctx.signal,
       );
     }
+    if (!isStageRunActive(ctx)) return null;
 
     // 如果切分后依然只有 1 个镜头且文本有多行，按换行切分
     if (rawShots.length <= 1 && rawText.trim()) {
@@ -1329,6 +1361,7 @@ export async function executeScriptSlicing(ctx: StageContext): Promise<StageResu
     callbacks?.onStageProgress?.('script_slicing', 1);
     return { spec: updatedSpec };
   } catch (err) {
+    if (!isStageRunActive(ctx)) return null;
     const msg = err instanceof Error ? err.message : String(err);
     store.setStageStatus(pid, 'script_slicing', 'error', { error: msg });
     callbacks?.onError?.(msg);
@@ -1377,15 +1410,18 @@ export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageR
       aspectRatio: workingSpec.meta.aspectRatio || '16:9',
       defaultShotDuration: defaultDuration,
       allowFallback: false,
+      signal: ctx.signal,
       sourceLanguage: detectInputLanguage(rawShots.map((shot) => shot.rawText).join('\n\n')),
       imageCapabilities: providerRouter.getImageCapabilities('storyboard'),
       videoCapabilities: providerRouter.getVideoCapabilities('clip'),
     };
 
     const storyboardShots = await buildStoryboard(rawShots, sbCtx, (done, total) => {
+      if (!isStageRunActive(ctx)) return;
       store.setStageStatus(pid, 'storyboard_prompt', 'running', { progress: done / total });
       callbacks?.onStageProgress?.('storyboard_prompt', done / total);
     });
+    if (!isStageRunActive(ctx)) return null;
 
     store.setShots(pid, storyboardShots);
     const updatedSpec: SceneSpec = {
@@ -1426,6 +1462,7 @@ export async function executeStoryboardPrompt(ctx: StageContext): Promise<StageR
     callbacks?.onStageProgress?.('storyboard_prompt', 1);
     return { spec: updatedSpec };
   } catch (err) {
+    if (!isStageRunActive(ctx)) return null;
     const msg = err instanceof Error ? err.message : String(err);
     store.setStageStatus(pid, 'storyboard_prompt', 'error', { error: msg });
     callbacks?.onError?.(msg);
@@ -1473,7 +1510,8 @@ export async function executeExtraction(ctx: StageContext): Promise<StageResult 
       shots: workingSpec.shots,
       existingCharacters: seriesChars?.length ? seriesChars : workingSpec.characters,
       allowFallback: false,
-    });
+    }, ctx.signal);
+    if (!isStageRunActive(ctx)) return null;
 
     const knownCharNames = new Set(extractResult.characters.map((c) => c.name));
     const knownCharIds = new Set(extractResult.characters.map((c) => c.id));
@@ -1521,6 +1559,7 @@ export async function executeExtraction(ctx: StageContext): Promise<StageResult 
     callbacks?.onStageProgress?.('extraction', 1);
     return { spec: updatedSpec };
   } catch (err) {
+    if (!isStageRunActive(ctx)) return null;
     const msg = err instanceof Error ? err.message : String(err);
     store.setStageStatus(pid, 'extraction', 'error', { error: msg });
     callbacks?.onError?.(msg);

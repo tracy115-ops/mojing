@@ -25,6 +25,7 @@ export interface StoryboardContext {
   /** Full script context retains global constraints outside individual shots. */
   sourceContext?: string;
   allowFallback?: boolean;
+  signal?: AbortSignal;
   /** Language of the supplied source text, used as a planner contract. */
   sourceLanguage?: 'zh' | 'en';
   /** Active provider/model contracts are part of the planner input. */
@@ -82,7 +83,7 @@ async function processBatch(
   };
 
   try {
-    const response = await providerRouter.generate(request);
+    const response = await providerRouter.generate(request, ctx.signal);
     let parsed = parseStoryboardArray(response.content);
 
     if (!parsed || parsed.length !== batch.length) {
@@ -90,7 +91,7 @@ async function processBatch(
         ...request,
         userPrompt: `${request.userPrompt}\n\nReturn exactly ${batch.length} objects in the requested JSON array. Do not return markdown or commentary.`,
         temperature: 0.2,
-      });
+      }, ctx.signal);
       parsed = parseStoryboardArray(repairResponse.content);
     }
 
@@ -113,7 +114,7 @@ async function processBatch(
       ...request,
       userPrompt: `${request.userPrompt}\n\n[Language contract repair]\nThe source language is ${sourceLanguage === 'zh' ? 'Simplified Chinese' : 'English'}. Rewrite every natural-language output field in that language, preserve the source meaning and entity names, return exactly ${batch.length} JSON objects, and return no markdown.`,
       temperature: 0.2,
-    });
+    }, ctx.signal);
     const repaired = parseStoryboardArray(repairedResponse.content);
     if (repaired?.length === batch.length) {
       const repairedShots = repaired.map((item, index) => normalizeShot(item, batch[index], ctx, index));
@@ -124,6 +125,7 @@ async function processBatch(
     }
     throw new Error(`Storyboard planner returned fields outside the ${sourceLanguage} source-language contract`);
   } catch (err) {
+    ctx.signal?.throwIfAborted();
     if (ctx.allowFallback === false) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`Storyboard planning failed: ${reason}`);

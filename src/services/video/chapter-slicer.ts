@@ -28,6 +28,7 @@ import type { ShotCharacterBinding } from '../../types/video';
 export async function sliceChaptersWithLLM(
   chapters: ChapterInput[],
   opts: SliceOptions = {},
+  signal?: AbortSignal,
 ): Promise<RawShot[]> {
   const fullText = chapters.map((c) => c.content || '').join('\n\n').trim();
   if (!fullText) return [];
@@ -62,7 +63,7 @@ export async function sliceChaptersWithLLM(
   };
 
   try {
-    const resp = await providerRouter.generate(request);
+    const resp = await providerRouter.generate(request, signal);
     let parsed: any = parseLLMJson<any>(resp.content);
 
     if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
@@ -114,6 +115,7 @@ export async function sliceChaptersWithLLM(
       });
     }
   } catch (err) {
+    signal?.throwIfAborted();
     console.warn('[chapter-slicer] LLM slicing failed, falling back to local heuristic', err);
   }
 

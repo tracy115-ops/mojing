@@ -155,6 +155,14 @@ export type VideoStageStatus =
   | 'skipped'
   | 'error';
 
+export const VIDEO_GENERATION_STOPPED = '已被用户强行终止生成';
+
+export interface VideoQueueRetry {
+  attempt: number;
+  total: number;
+  nextAttemptAt: number;
+}
+
 export interface VideoStageState {
   stage: VideoStage;
   status: VideoStageStatus;
@@ -162,6 +170,7 @@ export interface VideoStageState {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  queueRetry?: VideoQueueRetry;
   /** Inputs used to produce a reusable planning checkpoint. */
   inputFingerprint?: string;
   /** 该步骤所有 provider 调用(LLM/image/video/tts)的逐条记录。
@@ -233,6 +242,7 @@ export interface StageTotals {
 
 /** 步骤输入摘要(纯展示用)。 */
 export interface StageInputSummary {
+  automaticReviewMode?: 'visual' | 'technical';
   /** 一句话描述输入,如 "3 个章节 / 共 12,345 字" */
   headline?: string;
   /** 详细列表项(可折叠),如章节标题 + 字数 */

@@ -30,6 +30,7 @@ import { useProjectStore } from '@/stores/projectStore';
 import { useProviderStore } from '@/stores/providerStore';
 import type { CharacterAnchor, SceneAnchor, AspectRatio, ShotSpec, VideoStage } from '@/types/video';
 import { VIDEO_PIPELINE_STAGES, DEFAULT_SKIPPED_STAGES, DEFAULT_PIPELINE_OPTIONS } from '@/types/video';
+import { getVideoPipelineStatus } from '@/services/video/core/production-readiness';
 import { renderStageContent } from './StageArtifactsModal';
 import ExportVideoModal from './ExportVideoModal';
 import VideoPromptSettingsModal from './VideoPromptSettingsModal';
@@ -51,6 +52,13 @@ import './VideoPipelinePanel.css';
 const { Text } = Typography;
 
 export type StudioPhase = ConsolePhase;
+
+interface WorkflowRun {
+  planning?: VideoPipeline;
+}
+
+// A project can keep generating while its panel is unmounted.
+const workflowRuns = new Map<string, WorkflowRun>();
 
 function shotStoryText(shot: ShotSpec): string {
   const source = shot.sourceText?.trim();
@@ -80,7 +88,6 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
   const activeImageEndpoint = useProviderStore((s) => s.getActiveEndpoint('image'));
   const stages = project?.stages;
   const currentStage = Object.values(stages ?? {}).find((stage) => stage.status === 'running')?.stage ?? project?.currentStage;
-  const errorMsg = project?.error;
   const sceneSpec = project?.sceneSpec;
   const shots = project?.sceneSpec?.shots || [];
   const characters = project?.sceneSpec?.characters || [];
@@ -114,15 +121,14 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
   // inputs, readiness, and next action instead of an empty shot editor.
   const [activePhase, setActivePhase] = useState<StudioPhase>('flow');
   const [shotFocus, setShotFocus] = useState<{ shotId: string; review?: 'image' | 'video' }>();
-  const [starting, setStarting] = useState(false);
-  const planningRun = useRef<VideoPipeline | null>(null);
+  const [runningProjectIds, setRunningProjectIds] = useState<string[]>([]);
+  const starting = !!pipelineId && runningProjectIds.includes(pipelineId);
   const [traceOpen, setTraceOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState(sourceText);
 
   useEffect(() => {
     setActivePhase('flow');
     setShotFocus(undefined);
-    setStarting(false);
     setTraceOpen(false);
   }, [pipelineId]);
 
@@ -171,17 +177,7 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
   }, [parentSeries?.title, project, pipelineId, novelTitle, sourceProject?.title, sourceProject?.type, t]);
 
   // 整体状态与实时工序计算
-  const overall: 'idle' | 'running' | 'review' | 'complete' | 'error' = (() => {
-    if (currentStage === 'complete') return 'complete';
-    if (currentStage === 'error' || errorMsg) return 'error';
-    if (currentStage === 'idle' || !currentStage) return 'idle';
-    const stageState = stages?.[currentStage];
-    if (!stageState) return 'idle';
-    if (stageState.status === 'running') return 'running';
-    if (stageState.status === 'awaiting_review') return 'review';
-    if (stageState.status === 'error') return 'error';
-    return 'idle';
-  })();
+  const overall = project ? getVideoPipelineStatus(project).status : 'idle';
   const statusLabel = t(`video.pipeline.status.${overall}`);
 
   const isRunning = overall === 'running';
@@ -409,36 +405,54 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
     }
   };
 
-  const handleWorkflowRun = async (stage: VideoStage, endStage?: VideoStage) => {
-    if (productionBusy || editingAsset) return;
-    if (!checkPreflight(stage, endStage).ok) {
+  const finishWorkflowRun = (run: WorkflowRun) => {
+    if (workflowRuns.get(pipelineId) !== run) return;
+    workflowRuns.delete(pipelineId);
+    setRunningProjectIds((ids) => ids.filter((id) => id !== pipelineId));
+  };
+
+  const handleWorkflowRun = async (stage: VideoStage, endStage?: VideoStage, automatic = false) => {
+    if (productionBusy || editingAsset || workflowRuns.has(pipelineId)) return;
+    if (!automatic && !checkPreflight(stage, endStage).ok) {
       message.error(t('video.preflight.blocked'));
       return;
     }
-    setStarting(true);
-    setActivePhase(phaseForStage(stage));
+    const run: WorkflowRun = {};
+    workflowRuns.set(pipelineId, run);
+    setRunningProjectIds((ids) => [...ids, pipelineId]);
+    setActivePhase(automatic ? 'flow' : phaseForStage(stage));
     const noticeKey = `video-workflow-run-${pipelineId}`;
     try {
       let ok: boolean;
-      if (phaseForStage(stage) === 'script') {
+      if (automatic) {
+        if (!useVideoStore.getState().getProject(pipelineId)?.sceneSpec?.shots.length) {
+          const pipeline = VideoPipeline.forResume(pipelineId);
+          if (!pipeline) throw new Error(t('video.overview.inputRequired'));
+          run.planning = pipeline;
+          if (!await pipeline.run()) return;
+        }
+        if (workflowRuns.get(pipelineId) !== run) return;
+        if (!approvePlanning(pipelineId)) throw new Error(t('video.workflow.planApprovalFailed'));
+        ok = await runFromStage(pipelineId, 'character_anchor', { force: false, automatic: true });
+      } else if (phaseForStage(stage) === 'script') {
         const pipeline = VideoPipeline.forResume(pipelineId);
         if (!pipeline) throw new Error(t('video.overview.inputRequired'));
-        planningRun.current = pipeline;
+        run.planning = pipeline;
         ok = !!(await (stage === 'script_slicing' && sceneSpec ? pipeline.replan() : pipeline.run()));
       } else {
         ok = await runFromStage(pipelineId, stage, { force: false, endStage });
       }
-      if (!ok && useVideoStore.getState().getProject(pipelineId)?.error) {
+      if (workflowRuns.get(pipelineId) === run && !ok && useVideoStore.getState().getProject(pipelineId)?.error) {
         message.warning({ content: t('video.pipeline.batchGenerationIncomplete'), key: noticeKey });
       }
     } catch (error) {
+      if (workflowRuns.get(pipelineId) !== run) return;
       message.error({
         content: t('video.pipeline.batchGenerationFailed', { error: error instanceof Error ? error.message : String(error) }),
         key: noticeKey,
       });
     } finally {
-      planningRun.current = null;
-      setStarting(false);
+      finishWorkflowRun(run);
     }
   };
 
@@ -458,6 +472,7 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
   };
 
   const handleWorkflowStop = () => {
+    const run = workflowRuns.get(pipelineId);
     Modal.confirm({
       title: t('video.workflow.stopConfirmTitle'),
       content: t('video.workflow.stopConfirmDescription'),
@@ -465,9 +480,13 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
       cancelText: t('common.cancel'),
       okButtonProps: { danger: true },
       onOk: () => {
+        if (workflowRuns.get(pipelineId) !== run) return;
         const latest = useVideoStore.getState().getProject(pipelineId);
         if (!Object.values(latest?.stages ?? {}).some((stage) => stage.status === 'running')) return;
-        planningRun.current?.abort();
+        if (run) {
+          run.planning?.abort();
+          finishWorkflowRun(run);
+        }
         abortPipeline(pipelineId);
         message.warning(t('video.workflow.stopped'));
       },
@@ -489,6 +508,7 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
         checkPreflight={checkPreflight}
         onPhaseChange={(phase) => setActivePhase(phase)}
         onRunFromStage={(stage, endStage) => void handleWorkflowRun(stage, endStage)}
+        onRunAutomatic={() => void handleWorkflowRun('character_anchor', 'composing', true)}
         onApprovePlan={handleApprovePlan}
         onAssemble={handleAssembleApprovedShots}
         onStop={handleWorkflowStop}

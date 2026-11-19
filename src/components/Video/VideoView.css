@@ -19,6 +19,33 @@
   flex-wrap: wrap;
 }
 
+.video-project-progress {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.video-project-progress-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.video-project-progress-heading .ant-tag {
+  margin-inline-end: 0;
+  padding-inline: 4px;
+  line-height: 16px;
+}
+
+.video-project-progress-queue {
+  color: var(--text-primary);
+}
+
 @media (max-width: 760px) {
   .video-view-shell {
     flex-direction: column;

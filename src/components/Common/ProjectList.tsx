@@ -51,6 +51,7 @@ interface ProjectListProps {
   onEditInfo?: (id: string) => void;
   onDuplicate?: (id: string) => void;
   onExport?: (id: string) => void;
+  renderStatus?: (project: CreativeProject) => React.ReactNode;
 }
 
 const TAB_META: { key: FilterTab; color: string }[] = [
@@ -71,6 +72,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
   onEditInfo,
   onDuplicate,
   onExport,
+  renderStatus,
 }) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
@@ -253,6 +255,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
               >
                 <Card
                   size="small"
+                  data-project-id={project.id}
                   hoverable
                   onClick={() => onSelect(project.id)}
                   style={{
@@ -275,7 +278,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
                           {project.description}
                         </Paragraph>
                       )}
-                      <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
+                      {renderStatus?.(project) ?? <div style={{ display: 'flex', gap: 4, marginTop: 3, flexWrap: 'wrap' }}>
                         <Tag color={STATUS_COLORS[project.status]} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
                           {t(`project.status.${project.status}`)}
                         </Tag>
@@ -289,7 +292,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
                             {t('video.series.badge')}
                           </Tag>
                         )}
-                      </div>
+                      </div>}
                     </div>
                   </div>
                 </Card>

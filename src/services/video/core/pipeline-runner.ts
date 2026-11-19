@@ -9,6 +9,7 @@ import { useProviderStore } from '@/stores/providerStore';
 import { useProjectStore } from '@/stores/projectStore';
 import { providerRouter } from '@/services/providers';
 import { logger } from '@/services/log';
+import { VIDEO_GENERATION_STOPPED } from '@/types/video';
 import type {
   SceneSpec,
   PipelineOptions,
@@ -47,6 +48,8 @@ import { updateShotGenerationPlan } from './shot-generation-plan';
 import { collectVideoPipelinePreflight } from './pipeline-preflight';
 import type { PipelinePreflightResult } from './pipeline-preflight-rules';
 import { resolveAssemblyQualityRequirements, resolveVideoQualityPolicy } from './quality-policy';
+import { restoreLegacyShotInputs } from './automatic-shot-production';
+import { assertShotPlanContract } from './shot-plan-contract';
 
 export interface RunPipelineArgs {
   novelProjectId: string;
@@ -63,21 +66,23 @@ export interface RunStageOptions {
   /** Explicit UI reruns must invalidate the stage output before execution. */
   force?: boolean;
   endStage?: VideoStage;
+  automatic?: boolean;
 }
 
-const activeRuns = new Map<string, symbol>();
+const activeRuns = new Map<string, AbortController>();
 
-function beginPipelineRun(pid: string): symbol {
-  const token = Symbol(pid);
+function beginPipelineRun(pid: string): AbortController {
+  activeRuns.get(pid)?.abort();
+  const token = new AbortController();
   activeRuns.set(pid, token);
   return token;
 }
 
-function isPipelineRunActive(pid: string, token: symbol): boolean {
+function isPipelineRunActive(pid: string, token: AbortController): boolean {
   return activeRuns.get(pid) === token;
 }
 
-function finishPipelineRun(pid: string, token: symbol): void {
+function finishPipelineRun(pid: string, token: AbortController): void {
   if (isPipelineRunActive(pid, token)) activeRuns.delete(pid);
 }
 
@@ -159,15 +164,16 @@ function ensureExecutionBinding(
  */
 export function abortPipeline(pid: string): void {
   void logger.info(`[pipeline] abortPipeline request pid=${pid}`, 'pipeline');
+  activeRuns.get(pid)?.abort();
   activeRuns.delete(pid);
   const store = useVideoStore.getState();
   const proj = store.getProject(pid);
   if (proj) {
-    store.setError(pid, '已被用户强行终止生成');
+    store.setError(pid, VIDEO_GENERATION_STOPPED);
     const runningStage = Object.values(proj.stages).find((stage) => stage.status === 'running');
     if (runningStage) {
-      store.setStageStatus(pid, runningStage.stage, 'error', { error: '已被用户强行终止生成', progress: 0 });
-      store.advanceToStage(pid, 'idle');
+      store.setStageStatus(pid, runningStage.stage, 'error', { error: VIDEO_GENERATION_STOPPED });
+      store.advanceToStage(pid, runningStage.stage);
     }
   }
 }
@@ -320,6 +326,7 @@ export async function runPipeline(args: RunPipelineArgs): Promise<VideoProjectSt
       videoGen: boundVideoGen,
       callbacks,
       shouldAbort: checkAbort,
+      signal: runToken.signal,
       isCurrentRun: () => isPipelineRunActive(novelProjectId, runToken),
       // video_generation 用 preExistingClips 做增量;auido_merge/composing 用累积 clips
       clips,
@@ -649,6 +656,8 @@ export async function runSingleStage(
   // 应用用户改过的 input(prompt/seed/resolution 等)到 workingSpec/videoGen
   const ctx = {
     ...applyStageInput(built.ctx, stage),
+    shouldAbort: () => runToken.signal.aborted,
+    signal: runToken.signal,
     isCurrentRun: () => isPipelineRunActive(pid, runToken),
   };
   const result = await handler(ctx);
@@ -690,7 +699,7 @@ export async function runFromStage(
       && preflightProject.stages.tts?.status !== 'completed'
       ? 'voice_assignment'
       : stage;
-    const preflight = preflightStoredProject(preflightProject, effectiveStart, stageOptions.endStage);
+    const preflight = preflightStoredProject(preflightProject, effectiveStart, stageOptions.endStage, stageOptions.automatic);
     if (!preflight.ok) {
       markPipelineBoundaryFailure(pid, stage, new Error(describePreflightFailure(preflight)));
       finishPipelineRun(pid, runToken);
@@ -716,6 +725,15 @@ export async function runFromStage(
   // projects may contain generated IDs that no longer point at the series assets.
   try {
     built.ctx.workingSpec = applyPersistedSeriesLibrary(pid, built.ctx.workingSpec);
+    if (stageOptions.automatic) {
+      built.ctx.workingSpec = restoreLegacyShotInputs(built.ctx.workingSpec);
+      assertShotPlanContract(built.ctx.workingSpec.shots, {
+        characters: built.ctx.workingSpec.characters,
+        scenes: built.ctx.workingSpec.scenes,
+        requireAssetBindings: true,
+      });
+      built.ctx.options = automaticProductionOptions(built.ctx.options, built.proj.options);
+    }
   } catch (err) {
     markPipelineBoundaryFailure(pid, stage, err);
     finishPipelineRun(pid, runToken);
@@ -749,10 +767,15 @@ export async function runFromStage(
   let workingSpec = freshProj.sceneSpec;
   let clips = [...freshProj.clips];
 
-  const startIdx = RUNTIME_STAGE_ORDER.indexOf(effectiveStage);
+  // Voice duration is part of the keyframe receipt. Resolve it before
+  // reviewing stills during a continuous automatic run.
+  const stageOrder: readonly VideoStage[] = stageOptions.automatic
+    ? ['character_anchor', 'scene_image', 'voice_assignment', 'tts', 'keyframe_image', 'video_generation', 'video_review', 'audio_merge', 'composing']
+    : RUNTIME_STAGE_ORDER;
+  const startIdx = stageOrder.indexOf(effectiveStage);
   const endIdx = stageOptions.endStage
-    ? RUNTIME_STAGE_ORDER.indexOf(stageOptions.endStage)
-    : RUNTIME_STAGE_ORDER.length - 1;
+    ? stageOrder.indexOf(stageOptions.endStage)
+    : stageOrder.length - 1;
   if (startIdx < 0 || endIdx < startIdx) {
     void logger.warn(`[pipeline] runFromStage: stage ${stage} 不在 RUNTIME_STAGE_ORDER`, 'pipeline');
     finishPipelineRun(pid, runToken);
@@ -767,7 +790,7 @@ export async function runFromStage(
       allOk = false;
       break;
     }
-    const s = RUNTIME_STAGE_ORDER[i];
+    const s = stageOrder[i];
 
     // composing 需要 clips 非空
     if (s === 'composing' && clips.length === 0) {
@@ -779,6 +802,11 @@ export async function runFromStage(
     if (!enabled) {
       store.setStageStatus(pid, s, 'skipped', { progress: 0 });
       continue;
+    }
+    if (stageOptions.automatic && s !== 'keyframe_image' && s !== 'video_generation' && s !== 'video_review') {
+      const current = store.getProject(pid);
+      if (current && await isStageLiveCompleted(current, s)) continue;
+      if (checkAbort()) return false;
     }
 
     // A keyframe is a production input, not merely a generated file. Keep the
@@ -817,6 +845,8 @@ export async function runFromStage(
         videoGen: built.ctx.videoGen,
         clips,
         shouldAbort: checkAbort,
+        signal: runToken.signal,
+        automatic: stageOptions.automatic,
         isCurrentRun: () => isPipelineRunActive(pid, runToken),
       },
       s,
@@ -838,7 +868,7 @@ export async function runFromStage(
       break;
     }
 
-    if (result && isPipelineRunActive(pid, runToken) && s === 'keyframe_image' && requiresKeyframeReview(pid)) {
+    if (!stageOptions.automatic && result && isPipelineRunActive(pid, runToken) && s === 'keyframe_image' && requiresKeyframeReview(pid)) {
       store.advanceToStage(pid, 'video_generation');
       store.setStageStatus(pid, 'video_generation', 'awaiting_review', { progress: 0, error: undefined });
       store.setStageInputSummary(pid, 'video_generation', {
@@ -871,7 +901,7 @@ export async function runFromStage(
     finishPipelineRun(pid, runToken);
     return false;
   }
-  store.setSceneSpec(pid, workingSpec);
+  if (allOk || !stageOptions.automatic) store.setSceneSpec(pid, workingSpec);
   finishPipelineRun(pid, runToken);
   return allOk;
 }
@@ -888,6 +918,7 @@ function preflightStoredProject(
   project: VideoProjectState,
   startStage: VideoStage,
   endStage?: VideoStage,
+  automatic?: boolean,
 ): PipelinePreflightResult {
   const sceneSpec = project.sceneSpec;
   if (!sceneSpec) {
@@ -899,7 +930,8 @@ function preflightStoredProject(
       warnings: [],
     };
   }
-  const options = project.options ?? defaultPipelineOptions();
+  const storedOptions = project.options ?? defaultPipelineOptions();
+  const options = automatic ? automaticProductionOptions(storedOptions, project.options) : storedOptions;
   return collectVideoPipelinePreflight({
     channel: sceneSpec.meta.channel,
     sourceMode: sceneSpec.meta.sourceMode,
@@ -907,6 +939,7 @@ function preflightStoredProject(
     startStage,
     endStage,
     planningRequired: false,
+    automatic,
     sceneSpec,
     hasCharacterReferences: options.enableCharacterAnchor && (sceneSpec.characters?.length ?? 0) > 0,
     hasSpeech: sceneSpec.shots.some(shotHasSpeech),
@@ -915,6 +948,22 @@ function preflightStoredProject(
     videoEndpointId: project.executionBinding?.video.endpointId,
     videoModel: project.executionBinding?.video.model,
   });
+}
+
+function automaticProductionOptions(options: PipelineOptions, savedOptions?: PipelineOptions): PipelineOptions {
+  const savedPolicy = resolveVideoQualityPolicy(savedOptions);
+  let hasVision = false;
+  try {
+    const review = providerRouter.getLLMCapabilities('review');
+    hasVision = review.supportsImageInputs && review.maxImageInputs > 0;
+  } catch {
+    // A saved quality policy can require a vision model during preflight.
+  }
+  return {
+    ...options,
+    enableVisualQualityGate: savedPolicy.visualReviewRequired || (hasVision && savedOptions?.enableVisualQualityGate !== false),
+    blockOnVisualReviewUnavailable: savedPolicy.visualReviewRequired && savedPolicy.blockOnVisualReviewUnavailable,
+  };
 }
 
 function describePreflightFailure(result: PipelinePreflightResult): string {
@@ -1030,8 +1079,9 @@ export async function rerunSingleKeyframe(pid: string, shotId: string): Promise<
 
   const stage: VideoStage = 'keyframe_image';
   store.setStageStatus(pid, stage, 'running');
-  const { pushStageContext, popStageContext } = await import('@/services/providers/invocation-context');
-  pushStageContext({ novelProjectId: pid, stage });
+  const { pushStageContext } = await import('@/services/providers/invocation-context');
+  if (!isPipelineRunActive(pid, runToken)) return null;
+  const releaseContext = pushStageContext({ novelProjectId: pid, stage, signal: runToken.signal });
 
   try {
     const { generateSingleKeyframe } = await import('./step-keyframe');
@@ -1046,6 +1096,7 @@ export async function rerunSingleKeyframe(pid: string, shotId: string): Promise<
       novelProjectId: pid,
       openingReferenceImage: proj.sceneSpec.meta.openingReferenceImage ?? getPreviousEpisodeKeyframe(pid),
       requireCharacterReferences: proj.options?.enableCharacterAnchor ?? true,
+      signal: runToken.signal,
     });
     if (!isPipelineRunActive(pid, runToken)) return null;
 
@@ -1105,7 +1156,7 @@ export async function rerunSingleKeyframe(pid: string, shotId: string): Promise<
     store.setStageStatus(pid, stage, 'error', { error: msg });
     return null;
   } finally {
-    popStageContext();
+    releaseContext();
     finishPipelineRun(pid, runToken);
   }
 }
@@ -1134,9 +1185,10 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
   const stage: VideoStage = 'video_generation';
   store.setStageStatus(pid, stage, 'running');
   const { generateSingleVideoClip } = await import('./step-video-gen');
-  const { pushStageContext, popStageContext } = await import('@/services/providers/invocation-context');
+  const { pushStageContext } = await import('@/services/providers/invocation-context');
 
-  pushStageContext({ novelProjectId: pid, stage });
+  if (!isPipelineRunActive(pid, runToken)) return null;
+  const releaseContext = pushStageContext({ novelProjectId: pid, stage, signal: runToken.signal });
 
   try {
     const qualityPolicy = resolveVideoQualityPolicy(proj.options);
@@ -1177,6 +1229,7 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
       shot,
       {
         ...videoGenOpts,
+        signal: runToken.signal,
         requireContinuityHandoff: true,
         temporalAuthority,
         continuityKeyframeMode: 'off',
@@ -1272,7 +1325,7 @@ export async function rerunSingleShot(pid: string, shotId: string): Promise<Gene
     store.setStageStatus(pid, stage, 'error', { error: msg });
     return null;
   } finally {
-    popStageContext();
+    releaseContext();
     finishPipelineRun(pid, runToken);
   }
 }

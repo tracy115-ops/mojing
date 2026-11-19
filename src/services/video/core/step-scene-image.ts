@@ -25,6 +25,7 @@ export async function runSceneImage(
     novelProjectId: string;
     characters?: CharacterAnchor[];
     shouldAbort?: () => boolean;
+    signal?: AbortSignal;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<SceneImageResult> {
@@ -61,7 +62,8 @@ export async function runSceneImage(
         excludedEntities: collectEntityReferences(ctx.characters),
         endpointId: ctx.imageEndpointId,
         model: ctx.imageModel,
-      });
+      }, ctx.signal);
+      if (ctx.shouldAbort?.()) break;
       const img = await providerRouter.generateImage({
         taskType: 'scene',
         prompt: plan.prompt,
@@ -73,7 +75,7 @@ export async function runSceneImage(
         style: ctx.style,
         endpointId: ctx.imageEndpointId,
         model: ctx.imageModel,
-      });
+      }, ctx.signal);
       result[i].backgroundImage = await saveAsset(
         ctx.novelProjectId,
         'background',

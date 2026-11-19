@@ -54,6 +54,10 @@ await run('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=6
 const audio = await readFile(audioPath);
 const png = await sharp({ create: { width: 2048, height: 1152, channels: 3, background: '#467aa8' } }).composite([{ input: Buffer.from('<svg width="2048" height="1152"><circle cx="1024" cy="420" r="150" fill="#f0d0b0"/><rect x="820" y="570" width="408" height="480" rx="80" fill="#123c78"/><path d="M0 1100H2048M100 0V1152M1948 0V1152" stroke="#ddd" stroke-width="30"/></svg>') }]).png().toBuffer();
 let videoCounter = 0, failSceneOnce = true, firstImage = true;
+let videoQueueFull = false;
+let planRequests = 0, sceneRequests = 0;
+const releasePlanResponses = [];
+const releaseSceneResponses = [];
 const tasks = new Map();
 const server = createServer(async (request, response) => {
   try {
@@ -81,14 +85,22 @@ const server = createServer(async (request, response) => {
     } else if (url.pathname.endsWith('/images/generations')) {
       assert.ok(body.seed === undefined || Number.isInteger(body.seed) && body.seed >= -1 && body.seed <= 999, 'Agnes Image accepts only seeds from -1 to 999');
       if (firstImage) { firstImage = false; await delay(1600); }
-      if (failSceneOnce && /scene_background/.test(body.prompt)) {
-        failSceneOnce = false;
-        response.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: { message: 'E2E scene generation failed once' } }));
-        return;
+      if (/scene_background/.test(body.prompt)) {
+        const attempt = ++sceneRequests;
+        if (attempt <= 2) await new Promise(resolve => { releaseSceneResponses[attempt - 1] = resolve; });
+        if (attempt > 1 && failSceneOnce) {
+          failSceneOnce = false;
+          response.writeHead(400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: { message: 'E2E scene generation failed once' } }));
+          return;
+        }
       }
       data = { data: [{ b64_json: png.toString('base64') }] };
     }
     else if (request.method === 'POST' && url.pathname.endsWith('/v1/videos')) {
+      if (videoQueueFull) {
+        response.writeHead(503, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: 'video_queue_full', message: 'Fixture queue is full' }));
+        return;
+      }
       const id = `video_release_${++videoCounter}`;
       tasks.set(id, { index: /Goodbye|lowers/i.test(body.prompt) ? 1 : 0, seconds: body.seconds, inconsistentMetadata: videoCounter === 5 });
       data = { video_id: id };
@@ -100,6 +112,8 @@ const server = createServer(async (request, response) => {
       const user = body.messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : m.content.filter(c => c.type === 'text').map(c => c.text).join('\n')).join('\n');
       let content;
       if (system.includes('source-preserving shot segmentation')) {
+        const attempt = ++planRequests;
+        if (attempt <= 2) await new Promise(resolve => { releasePlanResponses[attempt - 1] = resolve; });
         const input = JSON.parse(user), chapter = input.chapters[0];
         content = paragraphs.map((sourceText, index) => ({ index, sourceChapterId: chapter.id, sourceChapterNumber: chapter.number, sourceText, visibleCharacters: ['Ada'], offscreenCharacters: [], location: 'Studio', mood: 'calm', hasDialogue: true, hasAction: true }));
       } else if (system.includes('Return only a JSON array with exactly one object per input segment')) {
@@ -122,13 +136,23 @@ const modelOrigin = `http://127.0.0.1:${server.address().port}`;
 const config = {
   llm: { primary: 'openai', endpointId: 'fixture-llm', defaultModel: 'gpt-4o-mini', models: { planning: '', generation: '', review: '', extraction: '', translation: '', embedding: '' } },
   image: { primary: 'agnes-image', endpointId: 'fixture-image', defaultModel: 'agnes-image-2.1-flash', models: { character: '', scene: '', panel: '', 'style-transfer': '', storyboard: '' }, defaultWidth: 2048, defaultHeight: 1152 },
-  video: { primary: 'agnes-video', endpointId: 'fixture-video', defaultModel: 'agnes-video-2.5-flash', models: { clip: '', transition: '', 'full-scene': '', 'lip-sync': '', effects: '' }, defaultResolution: '1280x704', defaultFps: 24 },
+  video: { primary: 'agnes-video', endpointId: 'fixture-video', defaultModel: 'agnes-video-2.5-flash', models: { clip: '', transition: '', 'full-scene': '', 'lip-sync': '', effects: '' }, defaultResolution: '1280x704', defaultFps: 24, queueRetryCount: 1, queueRetryBackoffMs: 20000 },
   tts: { primary: 'openai-tts', endpointId: 'fixture-tts', defaultModel: 'tts-1', defaultVoice: 'alloy', defaultFormat: 'mp3', defaultSpeed: 1 },
 };
 const endpoints = [['llm', 'openai', 'gpt-4o-mini'], ['image', 'agnes-image', 'agnes-image-2.1-flash'], ['video', 'agnes-video', 'agnes-video-2.5-flash'], ['tts', 'openai-tts', 'tts-1']].map(([category, provider, model]) => ({ id: `fixture-${category}`, name: `E2E ${category}`, category, provider, baseUrl: modelOrigin, apiKey: 'local-fixture-only', models: [model], enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
 const projectExpression = () => `JSON.parse(localStorage.getItem('mojing-video')).state.projects[${JSON.stringify(projectId)}]`;
 const project = () => desktop.evaluate(projectExpression());
 const start = () => desktopSession({ executable, profile: join(root, 'webview'), allowedOrigins: [modelOrigin], softwareRendering: process.env.MOJING_E2E_HARDWARE_RENDERING !== '1' });
+const stopGeneration = async () => {
+  await desktop.nativeTextButton('停止生成', '.video-production-console-tools');
+  const confirmStop = '.ant-modal-confirm-btns .ant-btn-dangerous';
+  await desktop.waitFor(`(()=>{
+    const modal = document.querySelector(${JSON.stringify(confirmStop)})?.closest('.ant-modal');
+    return modal?.getClientRects().length && !modal.getAnimations({subtree:true}).some(animation => animation.playState === 'running');
+  })()`, 'stop confirmation ready for mouse input');
+  await desktop.nativeClick(confirmStop);
+  await desktop.waitFor(`!document.querySelector(${JSON.stringify(confirmStop)})?.getClientRects().length`, 'stop confirmation closes');
+};
 const studioReader = `window.e2eReadStudio=async()=>{const db=await new Promise((ok,fail)=>{const r=indexedDB.open('mojing-video-studio',1);r.onsuccess=()=>ok(r.result);r.onerror=()=>fail(r.error);});try{return await new Promise((ok,fail)=>{const tx=db.transaction('workspace','readonly'),r=tx.objectStore('workspace').get('video-studio');tx.oncomplete=()=>ok(JSON.parse(r.result||'null'));tx.onerror=()=>fail(tx.error);});}finally{db.close();}}`;
 try {
   mark('launch isolated release desktop');
@@ -154,8 +178,33 @@ try {
   assert.match(projectId, /^[a-zA-Z0-9_-]+$/);
   assert.equal(requests.length, 0, 'new project is local and makes no model call');
 
-  mark('plan script and stop for human approval');
+  mark('stop and resume script planning after leaving and reopening the workbench');
   await desktop.nativeClick('[data-testid=video-overview-next-action-button]');
+  await desktop.waitFor(`${projectExpression()}.stages.script_slicing?.status==='running'`, 'script planning started');
+  await desktop.waitFor(
+    'document.querySelector(".video-view-projects [data-testid=video-project-progress]")?.innerText.includes("执行中")',
+    'standalone project shows running status in the list',
+  );
+  for (let tries = 0; !releasePlanResponses[0] && tries < 120; tries++) await delay(100);
+  assert.equal(planRequests, 1);
+  await desktop.nativeClick('button[aria-label="小说引擎"]');
+  await desktop.waitFor('!document.querySelector(".video-production-console")', 'project panel closes when leaving the workbench');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'return to video workspace');
+  await desktop.nativeClick('[data-testid=studio-nav-projects]');
+  await desktop.waitFor('!!document.querySelector(".video-production-console.is-running")', 'the reopened project is still generating');
+  await stopGeneration();
+  await desktop.waitFor('document.querySelector("[data-testid=video-overview-next-action-button]")?.textContent.includes("继续生成")', 'resume script planning');
+  await desktop.nativeClick('[data-testid=video-overview-next-action-button]');
+  for (let tries = 0; !releasePlanResponses[1] && tries < 120; tries++) await delay(100);
+  assert.equal(planRequests, 2);
+  releasePlanResponses[0]();
+  await delay(600);
+  assert.equal((await project()).stages.script_slicing.status, 'running', 'the stopped plan cannot advance the resumed stage');
+  assert.deepEqual((await project()).shots, [], 'the stopped plan cannot overwrite the resumed draft');
+  releasePlanResponses[1]();
+
+  mark('complete script planning and wait for approval');
   await desktop.waitFor(`${projectExpression()}.stages.extraction?.status==='awaiting_review'`, 'planning review checkpoint', 45000);
   assert.equal((await project()).sceneSpec.shots.length, 2);
   assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 0, 'planning approval blocks paid image calls');
@@ -187,6 +236,36 @@ try {
   await desktop.nativeClick(assetAction);
   await desktop.waitFor('document.querySelector(".video-production-console.is-running") && document.querySelector("[data-testid=video-phase-action]").getAttribute("aria-busy")==="true"', 'asset generation visible in place');
   await desktop.screenshot(join(output, '01-assets-running.png'));
+  mark('stop a pending scene request and resume immediately from the overview');
+  await desktop.waitFor(`${projectExpression()}.stages.scene_image?.status==='running'`, 'scene generation started');
+  const requestDeadline = Date.now() + 10000;
+  while (sceneRequests < 1 && Date.now() < requestDeadline) await delay(100);
+  assert.equal(sceneRequests, 1, 'the first scene request is still held by the provider');
+  const refsBeforeStop = (await project()).sceneSpec.characters;
+  await desktop.nativeClick('button[aria-label="生产链路"]');
+  await stopGeneration();
+  await desktop.waitFor('document.querySelector("[data-testid=video-overview-next-action-button]")?.textContent.includes("继续生成")', 'resume action while the old response is still pending', 5000);
+  assert.match(await desktop.evaluate('document.querySelector(".video-production-console-status").innerText'), /已停止/);
+  const stopped = await project();
+  assert.equal(stopped.stages.scene_image.status, 'error');
+  assert.deepEqual(stopped.sceneSpec.characters, refsBeforeStop);
+  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(1280,800))');
+  await desktop.waitFor('innerWidth===1280&&innerHeight===800', 'overview at the regular desktop size');
+  await desktop.screenshot(join(output, '01-assets-stopped.png'));
+  await desktop.nativeClick('[data-phase=assets]');
+  await desktop.waitFor('document.querySelector("[data-testid=video-phase-next-action-button]")?.textContent.includes("继续生成")', 'resume action also appears in Assets');
+  await desktop.nativeClick('button[aria-label="生产链路"]');
+  await desktop.nativeClick('[data-testid=video-overview-next-action-button]');
+  const resumeDeadline = Date.now() + 10000;
+  while (sceneRequests < 2 && Date.now() < resumeDeadline) await delay(100);
+  assert.equal(sceneRequests, 2, 'the new request starts before the stopped request returns');
+  releaseSceneResponses[0]();
+  await delay(750);
+  const resumed = await project();
+  assert.equal(resumed.stages.scene_image.status, 'running', 'late response cannot change the resumed stage');
+  assert.ok(!resumed.sceneSpec.scenes[0].backgroundImage, 'late response cannot populate a resumed stage');
+  assert.equal(await desktop.evaluate('document.querySelector("[data-testid=video-phase-action]")?.getAttribute("aria-busy")'), 'true');
+  releaseSceneResponses[1]();
   await desktop.waitFor(`${projectExpression()}.stages.scene_image?.status==='error'`, 'failed scene graph state', 90000);
   const partial = (await project()).sceneSpec;
   assert.ok(partial.characters[0].portraitImage && partial.characters[0].turnaroundImage);
@@ -198,10 +277,9 @@ try {
   assert.deepEqual(prepared.characters, partial.characters, 'retry retains the completed references');
   assert.deepEqual(prepared.shots, planned.shots, 'asset work retains the original storyboard and bindings');
   assert.ok(prepared.scenes[0].backgroundImage && prepared.scenes[0].backgroundReferenceRole === 'environment_only');
-  assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 4, 'portrait, turnaround, failed scene and successful scene are the only image requests');
+  assert.equal(requests.filter(r => r.path.endsWith('/images/generations')).length, 5, 'portrait and turnaround are reused across the three scene attempts');
   await desktop.waitFor('document.querySelector("[data-testid=video-phase-action]")?.textContent.includes("角色参考图 1/1 · 场景图 1/1")', 'asset view shows saved reference counts');
   await desktop.screenshot(join(output, '01-assets-finished.png'));
-  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(1280,800))');
   await desktop.waitFor('innerWidth===1280&&innerHeight===800', 'desktop restored after asset checks');
   for (let i = 0; i < 3; i++) await desktop.nativeClick('.ws-titlebar-window-controls .ant-btn');
   await desktop.waitFor('document.documentElement.dataset.theme==="dark"', 'dark theme restored');
@@ -283,7 +361,9 @@ try {
   await desktop.waitFor(`${projectExpression()}.stages.composing?.status==='completed'&&!!${projectExpression()}.finalVideoUrl`, 'native final composition', 90000);
   state = await project();
   const finalPath = diskPath(state.finalVideoUrl);
-  assert.equal(resolve(dirname(finalPath)), resolve(join(appData, 'video-cache', projectId)));
+  const cacheDirectory = resolve(appData, 'video-cache', projectId);
+  assert.equal(resolve(dirname(dirname(finalPath))), cacheDirectory);
+  assert.match(basename(dirname(finalPath)), /^compose-[a-f0-9-]{36}$/);
   await copyFile(finalPath, join(output, 'final-original.mp4'));
   const originalInfo = await probe(finalPath);
   const originalVideo = originalInfo.streams.find(s => s.codec_type === 'video');
@@ -332,13 +412,18 @@ try {
   await desktop.waitFor(`${projectExpression()}.timelineState.trims[${JSON.stringify(shotIds[1])}]?.endSeconds>=.99`, 'persisted one-second trim');
   await desktop.click('[data-testid=video-timeline-compose]');
   await desktop.waitFor(`${projectExpression()}.finalDurationSeconds>8.8&&${projectExpression()}.finalDurationSeconds<9.2`, 'recomposed duration', 90000);
-  assert.equal((await project()).stages.composing.status, 'completed');
-  const editedInfo = await probe(finalPath);
+  const edited = await project();
+  assert.equal(edited.stages.composing.status, 'completed');
+  const editedPath = diskPath(edited.finalVideoUrl);
+  assert.equal(resolve(dirname(dirname(editedPath))), cacheDirectory);
+  assert.notEqual(editedPath, finalPath, 'each composition writes to its own path');
+  assert.deepEqual(await probe(finalPath), originalInfo, 'the new render leaves the original movie intact');
+  const editedInfo = await probe(editedPath);
   assert.ok(Math.abs(Number(editedInfo.format.duration) - 9) < .2);
-  const editedColors = await Promise.all([averageFrame(finalPath, 1), averageFrame(finalPath, 5)]);
+  const editedColors = await Promise.all([averageFrame(editedPath, 1), averageFrame(editedPath, 5)]);
   assert.ok(editedColors[0][2] > editedColors[0][0] + 30, 'edited first shot is blue');
   assert.ok(editedColors[1][0] > editedColors[1][2] + 30, 'edited second shot is red');
-  await copyFile(finalPath, join(output, 'final-edited.mp4'));
+  await copyFile(editedPath, join(output, 'final-edited.mp4'));
   await desktop.waitFor('(()=>{const v=document.querySelector(".video-timeline-workspace video");return v?.readyState>=2&&v.duration>8.8&&v.duration<9.2;})()', 'edited preview reloads the actual new duration', 15000);
   await desktop.evaluate('(()=>{const v=document.querySelector(".video-timeline-workspace video");v.pause();v.currentTime=1;})()');
   await desktop.waitFor('(()=>{const v=document.querySelector(".video-timeline-workspace video");return v.readyState>=2&&!v.seeking&&Math.abs(v.currentTime-1)<.1;})()', 'seek in recomposed preview');
@@ -439,7 +524,7 @@ try {
   state = await project();
   assert.equal(state.sceneSpec.shots[0].versionHistory.length, oldVersionCount + 1);
   assert.equal(state.sceneSpec.shots[0].versionHistory[0].reviewStatus, 'unreviewed');
-  assert.equal(state.finalVideoUrl, finalPath, 'comparison candidate retains the current final output');
+  assert.equal(resolve(diskPath(state.finalVideoUrl)), resolve(editedPath), 'comparison candidate retains the current final output');
   await desktop.click('[data-testid=studio-nav-assets]');
   const libraryVideo = `[data-testid=studio-assets] [data-asset-id="${studioAssets.find(a => a.kind === 'video').id}"] video`;
   await desktop.waitFor(`document.querySelector(${JSON.stringify(libraryVideo)})?.readyState>=1`, 'library disk video playback');
@@ -478,6 +563,136 @@ try {
   assert.equal((await project()).finalVideoUrl, undefined, 'adoption invalidates the old final');
   await desktop.screenshot(join(output, '09-large-video-import.png'));
   assert.deepEqual(desktop.errors, []);
+
+  mark('reopen and resume a project saved with the 0.3.5 stop state');
+  stopped.currentStage = 'idle';
+  stopped.stages.scene_image.progress = 0;
+  await desktop.evaluate(`(()=>{const saved=JSON.parse(localStorage.getItem('mojing-video'));saved.state.projects[${JSON.stringify(projectId)}]=${JSON.stringify(stopped)};localStorage.setItem('mojing-video',JSON.stringify(saved));})()`);
+  await desktop.close(); desktop = await start();
+  await desktop.waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'legacy restart navigation');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'legacy restart studio');
+  await desktop.nativeClick('[data-testid=studio-nav-projects]');
+  await desktop.waitFor('document.querySelector("[data-testid=video-overview-next-action-button]")?.textContent.includes("继续生成")', 'resume action on the legacy stop state');
+  await desktop.nativeClick('[data-testid=video-overview-next-action-button]');
+  await desktop.waitFor(`${projectExpression()}.stages.scene_image?.status==='completed'`, 'scene completed from the legacy stop state', 30000);
+  assert.deepEqual((await project()).sceneSpec.characters, refsBeforeStop, 'upgrading the stopped project preserves character references');
+  assert.deepEqual(desktop.errors, []);
+
+  mark('produce a legacy multi-subject episode in one action');
+  const technicalOnly = process.env.MOJING_E2E_AUTOMATIC_WITHOUT_VISION === '1';
+  const legacy = await project();
+  const [ada] = legacy.sceneSpec.characters;
+  const secondSubject = {
+    ...ada,
+    id: 'second-subject',
+    name: 'Bo',
+    portraitImage: ada.turnaroundImage,
+    turnaroundImage: ada.portraitImage,
+    turnaroundSourcePortrait: ada.turnaroundImage,
+  };
+  const courtyard = legacy.sceneSpec.scenes[0];
+  const uploadedFrame = courtyard.backgroundImage;
+  legacy.sceneSpec = {
+    ...legacy.sceneSpec,
+    characters: [ada, secondSubject],
+    shots: legacy.sceneSpec.shots.map((shot, index) => ({
+      ...shot,
+      transition: 'cut',
+      characterIds: index === 0 ? [ada.id, secondSubject.id] : [ada.id],
+      sourceText: undefined,
+      imagePrompt: undefined,
+      characterBinding: undefined,
+      visibleCharacterIds: undefined,
+      ...(index === 1 ? { manualReferenceImage: uploadedFrame } : {}),
+    })),
+  };
+  if (technicalOnly) {
+    const textOnlyConfig = { ...config, llm: { ...config.llm, defaultModel: 'text-fixture' } };
+    const textOnlyEndpoints = endpoints.map(endpoint => endpoint.category === 'llm'
+      ? { ...endpoint, models: ['text-fixture'] } : endpoint);
+    legacy.options = { ...legacy.options, qualityProfile: 'draft', enableVisualQualityGate: false, blockOnVisualReviewUnavailable: false };
+    await desktop.evaluate(`localStorage.setItem('mojing-providers',${JSON.stringify(JSON.stringify({
+      state: { config: textOnlyConfig, endpoints: textOnlyEndpoints }, version: 0,
+    }))})`);
+  }
+  await desktop.evaluate(`(()=>{const saved=JSON.parse(localStorage.getItem('mojing-video'));saved.state.projects[${JSON.stringify(projectId)}]=${JSON.stringify(legacy)};localStorage.setItem('mojing-video',JSON.stringify(saved));})()`);
+  const seriesId = `${projectId}_series`;
+  const otherId = `${projectId}_other`;
+  await desktop.evaluate(`(() => {
+    const saved = JSON.parse(localStorage.getItem('mojing-projects'));
+    const episode = saved.state.projects.find(project => project.id === ${JSON.stringify(projectId)});
+    episode.metadata = { ...episode.metadata, seriesRole: 'episode', seriesId: ${JSON.stringify(seriesId)} };
+    saved.state.projects.push(
+      { ...episode, id: ${JSON.stringify(seriesId)}, title: 'Release E2E Series', description: '', status: 'planning', metadata: { seriesRole: 'series' } },
+      { ...episode, id: ${JSON.stringify(otherId)}, title: 'Another project', description: '', status: 'planning', metadata: {} },
+    );
+    localStorage.setItem('mojing-projects', JSON.stringify(saved));
+  })()`);
+  await desktop.close(); desktop = await start();
+  await desktop.waitFor('!!document.querySelector(\'button[aria-label="视频工坊"]\')', 'automatic production launch');
+  await desktop.nativeClick('button[aria-label="视频工坊"]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=studio-nav-projects]")', 'automatic production studio');
+  await desktop.nativeClick('[data-testid=studio-nav-projects]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=video-automatic-production]")', 'one-click production action');
+  await desktop.screenshot(join(output, '10-automatic-start.png'));
+  const beforeAutomatic = requests.length;
+  mark('show video queue retry in the series and project lists');
+  videoQueueFull = true;
+  await desktop.nativeClick('[data-testid=video-automatic-production]');
+  const seriesCard = `.video-view-projects [data-project-id="${seriesId}"]`;
+  const projectProgress = `${seriesCard} [data-testid=video-project-progress]`;
+  const episodeProgress = '.video-view-content [data-testid=video-project-progress]';
+  const readProgress = selector => `document.querySelector(${JSON.stringify(selector)})?.innerText`;
+  const waitingOnProvider = selector => `(() => {
+    const text = ${readProgress(selector)};
+    return text?.includes('执行中') && text.includes('生成视频') && text.includes('视频 0/2 镜')
+      && /服务队列已满 · \\d{2}:\\d{2}:\\d{2} 重试（1\\/1）/.test(text);
+  })()`;
+  await desktop.waitFor(waitingOnProvider(projectProgress), 'series card shows queue wait and video count', 90000);
+  assert.match(await desktop.evaluate(readProgress(projectProgress)), /第\s*1\s*集/);
+  await desktop.nativeClick(`.video-view-projects [data-project-id="${otherId}"]`);
+  await desktop.waitFor('document.querySelector(".video-production-console-header")?.innerText.includes("Another project")', 'open a different short drama');
+  assert.equal(await desktop.evaluate(waitingOnProvider(projectProgress)), true, 'the series status stays visible beside another project');
+  await desktop.nativeClick(seriesCard);
+  await desktop.waitFor(waitingOnProvider(episodeProgress), 'episode list shows progress without opening the episode');
+  assert.equal(await desktop.evaluate('!!document.querySelector(".video-production-console")'), false);
+  await desktop.screenshot(join(output, '10-series-queue-dark.png'));
+  await desktop.nativeClick('.ws-titlebar-window-controls .ant-btn');
+  await desktop.waitFor('document.documentElement.dataset.theme==="light"', 'series queue in light theme');
+  await desktop.screenshot(join(output, '10-series-queue-light.png'));
+  await desktop.waitFor(`${readProgress(episodeProgress)}?.includes("出错")`, 'terminal queue failure shown in series list', 40000);
+  assert.match(await desktop.evaluate(readProgress(projectProgress)), /服务队列已满/);
+  assert.doesNotMatch(await desktop.evaluate(readProgress(projectProgress)), /重试（/);
+  assert.equal((await project()).stages.video_generation.queueRetry, undefined);
+  const refused = requests.slice(beforeAutomatic).filter(item => item.method === 'POST' && item.path.endsWith('/v1/videos'));
+  assert.equal(refused.length, 2, 'first submission and one automatic retry reached the model service');
+  await desktop.screenshot(join(output, '10-series-queue-failed.png'));
+  videoQueueFull = false;
+  await desktop.nativeClick('.video-view-content [data-testid=video-project-progress]');
+  await desktop.waitFor('!!document.querySelector("[data-testid=video-automatic-production]")', 'return to the failed episode');
+  await desktop.nativeClick('[data-testid=video-automatic-production]');
+  await desktop.waitFor(`${projectExpression()}.currentStage==='complete'`, 'automatic production completes without an approval click', 150000);
+  const automatic = await project();
+  assert.ok(automatic.sceneSpec.shots.every(shot => (
+    shot.sourceText && shot.imagePrompt && shot.characterBinding === 'explicit' && shot.lockedVersionId
+  )), 'legacy inputs are restored and every clip has a locked version');
+  assert.equal(automatic.sceneSpec.shots[1].keyframeImage, uploadedFrame, 'the existing uploaded image is the actual second-shot keyframe');
+  const automaticImages = requests.slice(beforeAutomatic).filter(item => item.path.endsWith('/images/generations'));
+  assert.equal(automaticImages.length, 1, 'generate only the missing shot composition');
+  assert.match(automaticImages[0].body.prompt, /input 2: character/);
+  assert.equal(automatic.stages.video_review.inputSummary.automaticReviewMode, technicalOnly ? 'technical' : 'visual');
+  if (technicalOnly) {
+    assert.ok(automatic.clips.every(clip => !clip.visualReview && clip.qualityReview?.status !== 'failed'));
+    assert.ok((await desktop.evaluate('document.querySelector(".video-command-center-hero-action").innerText')).includes('草稿成片已就绪'));
+  } else {
+    assert.ok(automatic.clips.every(clip => clip.visualReview?.status === 'passed'), 'every clip passed visual review');
+  }
+  const automaticOutput = diskPath(automatic.finalVideoUrl);
+  await copyFile(automaticOutput, join(output, 'automatic-final.mp4'));
+  assert.ok((await probe(automaticOutput)).streams.some(stream => stream.codec_type === 'audio'));
+  await desktop.screenshot(join(output, '11-automatic-complete.png'));
+  assert.deepEqual(desktop.errors, []);
   assert.deepEqual(serverErrors, []);
   report = { result: 'passed', version, executable, executableSHA256: sha(await readFile(executable)), boundary: 'Remote model and visual-review responses are simulated by a local HTTP service. UI, provider adapters, Tauri HTTP/IPC, disk, FFmpeg, playback, native Save dialog and process restart are real.', projectId, steps, originalInfo, editedInfo, exportedInfo, originalColors, editedColors, previewColor, audioRms, layoutChecks, canvas: { jobs: canvasState.jobs.length, diskAssets: studioAssets.length, referenceTransport: graphRequest.mode, shotTransfer: true }, requestCounts: Object.fromEntries([...new Set(requests.map(r => r.path))].map(path => [path, requests.filter(r => r.path === path).length])), videoPayloads: submitted.map(({ body }) => ({ ...body, first_frame: `sha256:${sha(body.first_frame)}` })), output };
   console.log(JSON.stringify(report, null, 2));
@@ -489,6 +704,7 @@ try {
   }
   throw error;
 } finally {
+  for (const release of [...releasePlanResponses, ...releaseSceneResponses]) release?.();
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2));
   if (desktop) {
     studioAssets = (await desktop.evaluate('window.e2eReadStudio?.()').catch(() => null))?.state?.assets ?? studioAssets;

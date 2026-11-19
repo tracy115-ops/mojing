@@ -20,6 +20,10 @@ export interface ImageReferenceStrategyInput {
   capability: ImageReferenceCapability;
 }
 
+export function canComposeFromOrderedReferences(capability: ImageReferenceCapability, subjects: number): boolean {
+  return capability.supported && capability.mode === 'multiple' && capability.maxImages >= subjects;
+}
+
 export interface ContinuityReferencePolicyInput {
   hasMatchingContinuityShot: boolean;
   continuityReferenceCount: number;

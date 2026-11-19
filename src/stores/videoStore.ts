@@ -619,6 +619,7 @@ export const useVideoStore = create<VideoStoreState>()(
         startedAt: status === 'running' && !prev.startedAt ? now() : prev.startedAt,
         completedAt: status === 'completed' || status === 'skipped' ? now() : prev.completedAt,
       };
+      if (status !== 'running') next.queueRetry = undefined;
       return {
         projects: {
           ...s.projects,
@@ -1694,6 +1695,7 @@ export const useVideoStore = create<VideoStoreState>()(
                 ...stageState,
                 status: 'pending',
                 progress: 0,
+                queueRetry: undefined,
               };
             }
           }
@@ -1746,8 +1748,7 @@ export const useVideoStore = create<VideoStoreState>()(
 export type { AspectRatio, ModelTier };
 
 // --- 订阅 provider router 的 invocation 上报 ---
-// router 每次发一个 invocation,自动追加到栈顶 stage 的账本。
-// 栈顶由 pipeline 进入/退出 stage 时通过 pushStageContext/popStageContext 设置。
+// 每条调用记录追加到发起请求的 stage 的账本。
 import { subscribeInvocation } from '@/services/providers/invocation-context';
 
 subscribeInvocation((ctx, invocation) => {

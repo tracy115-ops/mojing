@@ -5,7 +5,7 @@
 
 import { useComicStore } from '@/stores/comicStore';
 import { logger } from '@/services/log';
-import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { pushStageContext } from '@/services/providers/invocation-context';
 import type {
   ComicStage,
   ComicTrackedStage,
@@ -62,11 +62,11 @@ async function withStageContext<T>(
   stage: ComicStage,
   fn: () => Promise<T>,
 ): Promise<T> {
-  pushStageContext({ novelProjectId: pid, stage });
+  const releaseContext = pushStageContext({ novelProjectId: pid, stage });
   try {
     return await fn();
   } finally {
-    popStageContext();
+    releaseContext();
   }
 }
 

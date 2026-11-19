@@ -18,7 +18,7 @@ export interface TTSResult {
 export async function runTTS(
   shots: ShotSpec[],
   characters: CharacterAnchor[],
-  ctx: { ttsTier: string; novelProjectId: string; model?: string; shouldAbort?: () => boolean },
+  ctx: { ttsTier: string; novelProjectId: string; model?: string; shouldAbort?: () => boolean; signal?: AbortSignal },
   onProgress?: (done: number, total: number) => void,
 ): Promise<TTSResult> {
   const total = shots.length;
@@ -95,7 +95,7 @@ export async function runTTS(
         text: cleanText,
         voice,
         model: ctx.model,
-      });
+      }, ctx.signal);
       result[i].audioTrack = await saveAsset(
         ctx.novelProjectId,
         'audio',

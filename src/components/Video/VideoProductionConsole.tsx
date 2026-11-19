@@ -30,18 +30,19 @@ import {
   getProductionReadiness,
   type ProductionPhase,
   type ProductionReadiness,
+  type VideoPipelineStatus,
 } from '@/services/video/core/production-readiness';
 import type { VideoProjectState, VideoStage, VideoStageState } from '@/types/video';
 import { resolveLocalPath, toWebviewUrl } from '@/services/video/asset-store';
 import { resolveVideoQualityPolicy } from '@/services/video/core/quality-policy';
 import { isShotKeyframeApproved, isShotKeyframeCurrent } from '@/services/video/core/shot-production-contract';
 import { formatPipelinePreflightIssue } from './PipelinePreflightAlert';
+import { formatVideoQueueRetry } from './VideoProjectProgress';
 import './VideoProductionConsole.css';
 
 const { Text, Title } = Typography;
 
 export type ConsolePhase = 'flow' | 'script' | 'assets' | 'studio' | 'timeline';
-export type ConsoleOverall = 'idle' | 'running' | 'review' | 'complete' | 'error';
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 type PhaseStatus = 'pending' | 'ready' | 'done' | 'blocked';
 
@@ -50,7 +51,7 @@ interface Props {
   headerLabel: string;
   sourceText?: string;
   activePhase: ConsolePhase;
-  overall: ConsoleOverall;
+  overall: VideoPipelineStatus;
   statusLabel: string;
   stages?: Record<VideoStage, VideoStageState>;
   currentStage?: VideoStage;
@@ -58,6 +59,7 @@ interface Props {
   checkPreflight: (stage: VideoStage, endStage?: VideoStage) => PipelinePreflightResult;
   onPhaseChange: (phase: ConsolePhase) => void;
   onRunFromStage: (stage: VideoStage, endStage?: VideoStage) => void;
+  onRunAutomatic: () => void;
   onApprovePlan: () => void;
   onAssemble: () => void;
   onStop: () => void;
@@ -92,10 +94,10 @@ export function phaseForStage(stage: VideoStage): Exclude<ConsolePhase, 'flow'> 
   return 'studio';
 }
 
-function statusColor(status: ConsoleOverall | PhaseStatus): string {
+function statusColor(status: VideoPipelineStatus | PhaseStatus): string {
   if (status === 'complete' || status === 'done') return 'success';
   if (status === 'running' || status === 'ready') return 'processing';
-  if (status === 'review') return 'warning';
+  if (status === 'review' || status === 'stopped') return 'warning';
   if (status === 'error' || status === 'blocked') return 'error';
   return 'default';
 }
@@ -161,6 +163,7 @@ const VideoProductionConsole: React.FC<Props> = ({
   checkPreflight,
   onPhaseChange,
   onRunFromStage,
+  onRunAutomatic,
   onApprovePlan,
   onAssemble,
   onStop,
@@ -203,9 +206,11 @@ const VideoProductionConsole: React.FC<Props> = ({
       const phase = phaseForStage(stage);
       return {
         label: state?.status === 'running' ? t(`video.gen.stage.${stage}`) : t('video.workflow.starting'),
-        detail: state?.status === 'running' && state.progress > 0
-          ? t('video.overview.progress', { percent: Math.round(state.progress * 100) })
-          : t('video.workflow.awaitingResult'),
+        detail: state?.queueRetry
+          ? formatVideoQueueRetry(t, state.queueRetry)
+          : state?.status === 'running' && state.progress > 0
+            ? t('video.overview.progress', { percent: Math.round(state.progress * 100) })
+            : t('video.workflow.awaitingResult'),
         onClick: state?.status === 'running' && activePhase !== phase ? () => onPhaseChange(phase) : undefined,
       };
     }
@@ -215,6 +220,11 @@ const VideoProductionConsole: React.FC<Props> = ({
         : phase === 'script' ? 'extraction'
         : failedStage === 'keyframe_image' ? 'keyframe_image'
         : phase === 'studio' ? 'video_review' : 'composing';
+      if (overall === 'stopped') {
+        return runAction(failedStage, t('video.workflow.resume'), t('video.workflow.resumeDescription', {
+          stage: t(`video.gen.stage.${failedStage}`),
+        }), endStage);
+      }
       return runAction(failedStage, t('video.workflow.fixStage'), stages?.[failedStage]?.error || t(`video.gen.stage.${failedStage}`), endStage);
     }
     if (!readiness.sourceReady && !counts.shots) {
@@ -269,9 +279,21 @@ const VideoProductionConsole: React.FC<Props> = ({
   const preflight = next.preflight;
   const blocking = preflight?.blocking ?? [];
   const configure = blocking.length > 0;
+  const canStartAutomatic = !productionBusy && !project.finalVideoUrl && (readiness.sourceReady || counts.shots > 0);
+  const automaticButton = canStartAutomatic && (
+    <Button
+      type="primary"
+      icon={<RocketOutlined />}
+      disabled={editingAsset}
+      data-testid="video-automatic-production"
+      onClick={onRunAutomatic}
+    >
+      {t('video.workflow.automaticProduction')}
+    </Button>
+  );
   const actionButton = next.onClick && (
     <Button
-      type={productionBusy ? 'default' : 'primary'}
+      type={productionBusy || canStartAutomatic ? 'default' : 'primary'}
       icon={configure ? <SettingOutlined /> : productionBusy ? <ArrowRightOutlined /> : <RocketOutlined />}
       disabled={editingAsset}
       data-testid={next.testId || (activePhase === 'flow' ? 'video-overview-next-action-button' : 'video-phase-next-action-button')}
@@ -280,7 +302,12 @@ const VideoProductionConsole: React.FC<Props> = ({
       {configure ? t('video.workflow.configureModels') : productionBusy ? t('video.workflow.viewProgress') : next.label}
     </Button>
   );
-  const actionDetails = configure
+  const technicalDraft = project.finalVideoUrl && stages?.video_review?.inputSummary?.automaticReviewMode === 'technical';
+  const actionDetails = technicalDraft
+    ? t('video.workflow.automaticTechnicalDraft')
+    : canStartAutomatic && configure && blocking.every((issue) => issue.code === 'multi-subject-reference-unsupported')
+    ? t('video.workflow.automaticComposition')
+    : configure
     ? blocking.map((issue) => formatPipelinePreflightIssue(issue, t)).join(' ')
     : project.error && !productionBusy && !failedStage ? project.error : next.detail;
   const actionTitle = productionBusy || !next.onClick
@@ -357,7 +384,7 @@ const VideoProductionConsole: React.FC<Props> = ({
             <div className="video-command-center-hero-action">
               <strong>{actionTitle}</strong>
               <Text type="secondary">{actionDetails}</Text>
-              {actionButton}
+              <Space wrap>{automaticButton}{actionButton}</Space>
             </div>
           </section>
 
@@ -462,7 +489,7 @@ const VideoProductionConsole: React.FC<Props> = ({
               <Text type={configure || overall === 'error' ? 'danger' : 'secondary'}>{actionDetails}</Text>
               {activePhase === 'assets' && actionDetails !== assetDetail && <Text type="secondary">{assetDetail}</Text>}
             </div>
-            {actionButton}
+            <Space wrap>{automaticButton}{actionButton}</Space>
           </section>
           <main className="video-production-console-workspace">{children}</main>
         </>

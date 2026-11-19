@@ -30,7 +30,7 @@ import { detectInputLanguage } from './core/lang-detector';
 import { stepExtract } from './core/step-extract';
 import { assertShotPlanContract } from './core/shot-plan-contract';
 import { runPipeline, type VideoGenOptions } from './core/pipeline-runner';
-import { pushStageContext, popStageContext } from '@/services/providers/invocation-context';
+import { pushStageContext } from '@/services/providers/invocation-context';
 import { providerRouter } from '@/services/providers';
 import { useProviderStore } from '@/stores/providerStore';
 import { applySeriesProjectLibrary } from './series-character-library';
@@ -63,7 +63,11 @@ export interface PipelineInput {
 export class VideoPipeline {
   private readonly input: PipelineInput;
   private readonly cb: PipelineCallbacks;
-  private aborted = false;
+  private readonly controller = new AbortController();
+
+  private get aborted(): boolean {
+    return this.controller.signal.aborted;
+  }
 
   constructor(input: PipelineInput, cb: PipelineCallbacks = {}) {
     this.input = input;
@@ -71,7 +75,7 @@ export class VideoPipeline {
   }
 
   abort(): void {
-    this.aborted = true;
+    this.controller.abort();
   }
 
   /**
@@ -448,7 +452,7 @@ export class VideoPipeline {
       upstreamArtifacts: undefined,
     });
 
-    pushStageContext({ novelProjectId: this.input.novelProjectId, stage });
+    const releaseContext = pushStageContext({ novelProjectId: this.input.novelProjectId, stage, signal: this.controller.signal });
     try {
       const isScript = this.input.genre === 'script' || this.input.genre === 'custom_script';
       const rawShots: RawShot[] = await sliceChaptersWithLLM(
@@ -462,6 +466,7 @@ export class VideoPipeline {
           minWordsPerShot: 20,
           maxWordsPerShot: isScript ? 180 : 240,
         },
+        this.controller.signal,
       );
 
       if (!this.aborted) {
@@ -470,7 +475,7 @@ export class VideoPipeline {
       }
       return rawShots;
     } finally {
-      popStageContext();
+      releaseContext();
     }
   }
 
@@ -507,6 +512,7 @@ export class VideoPipeline {
         ? this.input.chapters.map((chapter) => chapter.content).join('\n\n')
         : undefined,
       allowFallback: false,
+      signal: this.controller.signal,
       sourceLanguage: detectInputLanguage(rawShots.map((shot) => shot.rawText).join('\n\n')),
       imageCapabilities: providerRouter.getImageCapabilities(
         'storyboard',
@@ -520,7 +526,7 @@ export class VideoPipeline {
       ),
     };
 
-    pushStageContext({ novelProjectId, stage });
+    const releaseContext = pushStageContext({ novelProjectId, stage, signal: this.controller.signal });
     try {
       const shots = await buildStoryboard(rawShots, ctx, (done, total) => {
         if (this.aborted) return;
@@ -534,7 +540,7 @@ export class VideoPipeline {
       }
       return shots;
     } finally {
-      popStageContext();
+      releaseContext();
     }
   }
 
@@ -597,7 +603,7 @@ export class VideoPipeline {
     // 注意:shotSpecs 里的 characterIds 是中文名(从 chapter-slicer 来),
     // LLM 会输出 characterIdMap 把名字映射成 char_xxx,
     // 我们在 step-extract 里用名字回填。
-    pushStageContext({ novelProjectId, stage });
+    const releaseContext = pushStageContext({ novelProjectId, stage, signal: this.controller.signal });
     let extractResult;
     try {
       extractResult = await stepExtract({
@@ -605,10 +611,11 @@ export class VideoPipeline {
         shots: shotSpecs,
         existingCharacters: this.input.seriesCharacters,
         allowFallback: false,
-      });
+      }, this.controller.signal);
     } finally {
-      popStageContext();
+      releaseContext();
     }
+    this.controller.signal.throwIfAborted();
 
     // chapter-slicer 检测的角色是中文名,step-extract 也会输出中文名的角色,
     // 但 step-extract 内部已经做了占位 id 替换。这里再保险一次:把 shots 里
@@ -686,7 +693,7 @@ export class VideoPipeline {
       upstreamArtifacts: `storyboard ${storyboardShots.length} 镜 / 系列资产已绑定`,
     });
 
-    if (!this.aborted) store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
+    store.setStageStatus(novelProjectId, stage, 'completed', { progress: 1 });
     return boundSpec;
   }
 }

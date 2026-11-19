@@ -31,6 +31,7 @@ export interface VideoPipelinePreflightInput {
   startStage?: VideoStage;
   endStage?: VideoStage;
   planningRequired?: boolean;
+  automatic?: boolean;
   sceneSpec?: Pick<SceneSpec, 'characters' | 'scenes' | 'shots'>;
   hasCharacterReferences?: boolean;
   hasSpeech?: boolean;

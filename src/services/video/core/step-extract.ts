@@ -65,7 +65,7 @@ interface LLMExtract {
  * 步 3:LLM 提取角色/场景/道具。
  * 失败不阻塞,返回空数组。
  */
-export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
+export async function stepExtract(input: ExtractInput, signal?: AbortSignal): Promise<ExtractResult> {
   const templates = useSettingsStore.getState().settings.creative.promptTemplates;
   const customSystem = useSettingsStore.getState().settings.creative.promptTemplatesEnabled
     ? templates?.extractEn || templates?.extractZh
@@ -89,14 +89,14 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
   };
 
   try {
-    const resp = await providerRouter.generate(request);
+    const resp = await providerRouter.generate(request, signal);
     let parsed: any = parseLLMJson<any>(resp.content);
     if (!parsed) {
       const repairResp = await providerRouter.generate({
         ...request,
         userPrompt: `${request.userPrompt}\n\n上一次输出格式无效。只返回符合 system schema 的 JSON 对象，不要 Markdown、解释或代码围栏。`,
         temperature: 0.1,
-      });
+      }, signal);
       parsed = parseLLMJson<any>(repairResp.content);
     }
     if (!parsed) {
@@ -183,6 +183,7 @@ export async function stepExtract(input: ExtractInput): Promise<ExtractResult> {
 
     return { characters, scenes, props, resolvedShots };
   } catch (err) {
+    signal?.throwIfAborted();
     if (input.allowFallback === false) {
       const reason = err instanceof Error ? err.message : String(err);
       throw new Error(`角色与场景提取失败，已停止后续生成：${reason}`);

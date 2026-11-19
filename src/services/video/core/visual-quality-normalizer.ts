@@ -5,7 +5,7 @@ import type {
   VideoVisualQualityReview,
 } from '../../../types/video';
 
-const CHECK_IDS: VideoVisualCheckId[] = [
+export const SHOT_VISUAL_CHECKS: VideoVisualCheckId[] = [
   'subject_count',
   'subject_identity',
   'scene_match',
@@ -16,6 +16,7 @@ const CHECK_IDS: VideoVisualCheckId[] = [
 export function normalizeVisualReview(
   rawContent: string,
   meta: Pick<VideoVisualQualityReview, 'reviewedAt' | 'provider' | 'model' | 'frameCount'>,
+  still = false,
 ): VideoVisualQualityReview {
   const parsed = parseLLMJson<{
     overallScore?: number;
@@ -34,8 +35,9 @@ export function normalizeVisualReview(
   }
 
   const rawById = new Map(parsed.checks.map((check) => [check.id, check]));
-  const checks = CHECK_IDS.map((id) => normalizeCheck(id, rawById.get(id)));
-  if (meta.frameCount < 2) {
+  const checkIds = still ? SHOT_VISUAL_CHECKS.filter((id) => id !== 'temporal_consistency') : SHOT_VISUAL_CHECKS;
+  const checks = checkIds.map((id) => normalizeCheck(id, rawById.get(id)));
+  if (!still && meta.frameCount < 2) {
     const temporal = checks.find((check) => check.id === 'temporal_consistency');
     if (temporal && temporal.status === 'pass') {
       temporal.status = 'warning';

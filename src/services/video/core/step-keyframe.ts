@@ -30,6 +30,7 @@ import { hasCurrentTurnaround, resolveCharacterReferenceImage } from './characte
 import { fingerprintShotInputs } from './shot-generation-receipt';
 import { updateShotGenerationPlan } from './shot-generation-plan';
 import {
+  canComposeFromOrderedReferences,
   chooseImageReferenceStrategy,
   shouldPreferContinuityReference,
 } from './reference-strategy';
@@ -72,6 +73,7 @@ export async function runKeyframe(
     seed?: number;
     requireCharacterReferences?: boolean;
     shouldAbort?: () => boolean;
+    signal?: AbortSignal;
   },
   onProgress?: (done: number, total: number) => void,
 ): Promise<KeyframeResult> {
@@ -182,6 +184,7 @@ export async function runKeyframe(
           + `order=${preparedReferences.candidates.map((reference, refIndex) => `${refIndex + 1}:${reference.kind}:${reference.characterId ?? reference.label}:${reference.url === preparedReferences.sent.find((item) => item === reference)?.url ? 'sent' : 'omitted'}`).join('|')}`,
         'pipeline',
       );
+      if (ctx.shouldAbort?.()) break;
       const image = await providerRouter.generateImage({
         taskType: 'storyboard',
         sourceLabel: `${shot.id}:keyframe`,
@@ -197,7 +200,7 @@ export async function runKeyframe(
         endpointId: ctx.imageEndpointId,
         model: requestedImageModel,
         seed: getEffectiveShotSeed(shot, ctx.seed),
-      });
+      }, ctx.signal);
       const seed = getEffectiveShotSeed(shot, ctx.seed);
       const executionContext = buildKeyframeExecutionContext({
         provider: image.provider,
@@ -272,6 +275,8 @@ export async function generateSingleKeyframe(
     continuityReferenceShotIndex?: number;
     /** Use the rendered tail as the single authoritative visual input. */
     preferContinuityReference?: boolean;
+    automatic?: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<{
   imagePath: string;
@@ -313,6 +318,11 @@ export async function generateSingleKeyframe(
     && ctx.openingReferenceImage
     ? [{ url: ctx.openingReferenceImage, kind: 'opening', label: 'episode opening reference' }]
     : [];
+  const composeWithOrderedReferences = ctx.automatic
+    && manualShotRef.length === 0
+    && presentCharacters.length > 1
+    && !imageCapabilities.references.supportsReferenceRoles
+    && canComposeFromOrderedReferences(imageCapabilities.references, presentCharacters.length);
   assertMultiSubjectReferenceStrategy(
     shot,
     presentCharacters,
@@ -321,6 +331,8 @@ export async function generateSingleKeyframe(
   );
   const providerReferences = manualShotRef.length > 0
     ? manualShotRef
+    : composeWithOrderedReferences
+      ? dedupeReferences([...characterRefs, ...customRefs, ...sceneRefs])
     : selectReferenceCandidates(
         shot,
         continuityShot,
@@ -337,7 +349,7 @@ export async function generateSingleKeyframe(
     : ctx.preferContinuityReference === true && !!ctx.continuityReferenceImage && !shot.previsReferenceImage
       ? continuityRefs
       : characterRefs;
-  const resolvedReferences = await resolveProviderReferences(
+  const resolvedReferences = composeWithOrderedReferences ? { candidates: providerReferences, required: characterRefs } : await resolveProviderReferences(
     providerReferences,
     requiredReferences,
     presentCharacters,
@@ -381,7 +393,7 @@ export async function generateSingleKeyframe(
     endpointId: ctx.imageEndpointId,
     model: requestedImageModel,
     seed: getEffectiveShotSeed(shot, ctx.seed),
-  });
+  }, ctx.signal);
   const seed = getEffectiveShotSeed(shot, ctx.seed);
   const imagePath = await saveAsset(
     ctx.novelProjectId,
