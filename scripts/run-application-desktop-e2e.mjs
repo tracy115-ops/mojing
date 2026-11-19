@@ -36,11 +36,12 @@ const type = async (selector, chunks) => {
 };
 const newProject = async (label, formSelector) => {
   await desktop.nativeClick('.ws-titlebar-project-actions button[aria-label="新建"]');
-  const menuItem = `[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.trim()===${JSON.stringify(label)})`;
+  const menuItem = `[...document.querySelectorAll('.ant-dropdown:not(.ant-dropdown-hidden) [role=menuitem]')].find(e=>e.textContent.trim()===${JSON.stringify(label)}&&e.getBoundingClientRect().width>0)`;
   await desktop.waitFor(`!!(${menuItem})`, 'new project menu');
-  const index = await desktop.evaluate(`Array.from(document.querySelectorAll('[role=menuitem]')).indexOf(${menuItem})`);
-  await desktop.nativeClick(`.ant-dropdown-menu > [role=menuitem]:nth-child(${index + 1})`);
-  await desktop.waitFor(`!!document.querySelector(${JSON.stringify(formSelector)})`, 'requested form after changing workshop');
+  await delay(300);
+  const index = await desktop.evaluate(`Array.from((${menuItem}).parentElement.children).indexOf(${menuItem})`);
+  await desktop.nativeClick(`.ant-dropdown:not(.ant-dropdown-hidden) .ant-dropdown-menu > [role=menuitem]:nth-child(${index + 1})`);
+  await desktop.waitFor(`!!document.querySelector(${JSON.stringify(formSelector)})`, 'requested form after changing workshop: ' + label);
 };
 try {
   desktop = await start();
@@ -137,5 +138,5 @@ try {
   await writeFile(join(output, 'report.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } catch (error) {
   await desktop?.screenshot(join(output, 'failure.png')).catch(() => undefined);
-  await writeFile(join(output, 'report.json'), JSON.stringify({ result: 'failed', error: String(error), steps, runtimeErrors: desktop?.errors, serverErrors }, null, 2)); throw error;
+  await writeFile(join(output, 'report.json'), JSON.stringify({ result: 'failed', error: String(error), steps, pages, runtimeErrors: desktop?.errors, serverErrors }, null, 2)); throw error;
 } finally { await desktop?.close(); await new Promise(resolveClose => server.close(resolveClose)); }
