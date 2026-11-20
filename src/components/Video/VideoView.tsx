@@ -1,10 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Typography, message, Button, Form, Input, Modal } from 'antd';
-import { VideoCameraOutlined, FolderAddOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, VideoCameraOutlined, FolderAddOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProjectStore } from '@/stores/projectStore';
 import { useVideoStore } from '@/stores/videoStore';
-import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import type { CreativeProject, VideoMetadata } from '@/types';
 import ProjectList from '@/components/Common/ProjectList';
 import CreateVideoModal, { CreateVideoFormValues } from './CreateVideoModal';
@@ -19,7 +18,7 @@ import VideoSeriesWorkspace from './VideoSeriesWorkspace';
 import VideoProjectProgress from './VideoProjectProgress';
 import './VideoView.css';
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 function videoProjectStatus(
   current: 'planning' | 'in_progress' | 'paused' | 'completed' | 'archived',
@@ -62,13 +61,6 @@ const VideoView: React.FC = () => {
   }, [projects, updateProject, videoPipelineProjects]);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const createRequested = useVideoStudioStore((state) => state.createProjectRequested);
-  useEffect(() => {
-    if (createRequested) {
-      setEpisodeSeriesId(undefined); setCreateOpen(true);
-      useVideoStudioStore.setState({ createProjectRequested: false });
-    }
-  }, [createRequested]);
   const [genOpen, setGenOpen] = useState(false);
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [episodeSeriesId, setEpisodeSeriesId] = useState<string | undefined>();
@@ -327,7 +319,11 @@ const VideoView: React.FC = () => {
           onDelete={handleDeleteProject}
           onToggleFavorite={toggleFavorite}
           renderStatus={renderProjectStatus}
-          showCreateAction={false}
+          secondaryCreateAction={
+            <Button icon={<FolderAddOutlined />} data-testid="video-new-series" onClick={() => setSeriesOpen(true)}>
+              {t('video.series.newSeries')}
+            </Button>
+          }
           onCreate={() => {
             setEpisodeSeriesId(undefined);
             setCreateOpen(true);
@@ -335,34 +331,13 @@ const VideoView: React.FC = () => {
         />
       </div>
       <div className="video-view-main" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Top toolbar — two entries */}
-        <div className="video-view-toolbar" style={{
-          padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)',
-          display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
-        }}>
-          <Button type="primary"
-            icon={<VideoCameraOutlined />}
-            data-testid="video-new-video"
-            onClick={() => {
-              setEpisodeSeriesId(undefined);
-              setCreateOpen(true);
-            }}
-          >
-            {t('video.newProject')}
-          </Button>
-          <Button
-            icon={<FolderAddOutlined />}
-            data-testid="video-new-series"
-            onClick={() => setSeriesOpen(true)}
-          >
-            {t('video.series.newSeries')}
-          </Button>
-          {activeEpisodeSeries && (
-            <Button onClick={() => handleSelectProject(activeEpisodeSeries.id)}>
+        {activeEpisodeSeries && (
+          <div className="video-view-toolbar">
+            <Button size="small" type="text" icon={<ArrowLeftOutlined />} onClick={() => handleSelectProject(activeEpisodeSeries.id)}>
               {t('video.series.backToSeries', { title: activeEpisodeSeries.title })}
             </Button>
-          )}
-        </div>
+          </div>
+        )}
         <div className="video-view-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           {activeSeries ? (
             <VideoSeriesWorkspace
@@ -440,11 +415,8 @@ const VideoView: React.FC = () => {
             }}>
               <VideoCameraOutlined style={{ fontSize: 56, color: 'var(--accent-primary, #3b82f6)' }} />
               <div>
-                <Title level={4} style={{ margin: '0 0 6px 0', color: 'var(--text-primary, inherit)' }}>
-                  {t('video.series.consistencyTitle')}
-                </Title>
                 <Text type="secondary" style={{ maxWidth: 520, fontSize: 13, display: 'inline-block' }}>
-                  {t('video.series.descriptionFallback')}
+                {t('video.empty')}
                 </Text>
               </div>
 

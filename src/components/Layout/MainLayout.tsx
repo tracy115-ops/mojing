@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useState, useCallback, useEffect } from 'react';
-import { Button, Tooltip, Modal, Dropdown, Spin } from 'antd';
+import { Button, Tooltip, Modal, Spin } from 'antd';
 import {
   BookOutlined,
   PictureOutlined,
@@ -12,13 +12,11 @@ import {
   MoonOutlined,
   CrownOutlined,
   BlockOutlined,
-  PlusOutlined,
 } from '@ant-design/icons';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const tauriWin = () => getCurrentWindow() as any;
 import { useSettingsStore } from '@/stores/settingsStore';
-import { useVideoStudioStore } from '@/stores/videoStudioStore';
 import { useTranslation } from '@/i18n';
 import { CustomerServiceOutlined } from '@ant-design/icons';
 
@@ -29,7 +27,6 @@ const MusicView = lazy(() => import('@/components/Music/MusicView'));
 const SettingsPanel = lazy(() => import('@/components/Settings/SettingsPanel'));
 
 type ViewKey = 'novels' | 'comics' | 'videos' | 'music';
-type ProjectKind = 'novel' | 'comic' | 'video';
 
 interface NavTab {
   key: ViewKey | 'settings';
@@ -42,8 +39,6 @@ const MainLayout: React.FC = () => {
   const [activeView, setActiveView] = useState<ViewKey>('novels');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<string>();
-  const [createRequest, setCreateRequest] = useState<ProjectKind>();
-  const clearCreateRequest = useCallback(() => setCreateRequest(undefined), []);
   const { t } = useTranslation();
   const currentTheme = useSettingsStore((s) => s.currentTheme);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -111,25 +106,13 @@ const MainLayout: React.FC = () => {
 
   const renderContent = () => {
     switch (activeView) {
-      case 'novels': return <NovelView createRequested={createRequest === 'novel'} onCreateHandled={clearCreateRequest} />;
-      case 'comics': return <ComicView createRequested={createRequest === 'comic'} onCreateHandled={clearCreateRequest} />;
+      case 'novels': return <NovelView />;
+      case 'comics': return <ComicView />;
       case 'videos': return <VideoView />;
       case 'music': return <MusicView />;
       default: return <NovelView />;
     }
   };
-
-  const dispatchCreate = useCallback((type: ProjectKind) => {
-    if (type === 'video') {
-      useVideoStudioStore.getState().requestCreateProject();
-      setCreateRequest(undefined);
-      setActiveView('videos');
-    } else {
-      setCreateRequest(type);
-      setActiveView(type === 'novel' ? 'novels' : 'comics');
-    }
-    setSettingsOpen(false);
-  }, []);
 
   const handleTitlebarMouseDown = useCallback(async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -190,31 +173,6 @@ const MainLayout: React.FC = () => {
               </button>
             );
           })}
-        </div>
-
-        {/* New project — dropdown before window controls */}
-        <div className="ws-titlebar-project-actions" style={{ display: 'flex', alignItems: 'center', marginRight: 2 }}>
-          <Dropdown
-            menu={{
-              items: [
-                { key: 'novel', icon: <BookOutlined />, label: t('sidebar.novels'), onClick: () => dispatchCreate('novel') },
-                { key: 'comic', icon: <PictureOutlined />, label: t('sidebar.comics'), onClick: () => dispatchCreate('comic') },
-                { key: 'video', icon: <VideoCameraOutlined />, label: t('sidebar.videos'), onClick: () => dispatchCreate('video') },
-              ],
-            }}
-            trigger={['click']}
-          >
-            <Tooltip title={t('project.new')}>
-              <button
-                className="ws-titlebar-btn"
-                aria-label={t('project.new')}
-                onClick={(e) => e.stopPropagation()}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <PlusOutlined style={{ fontSize: 13 }} />
-              </button>
-            </Tooltip>
-          </Dropdown>
         </div>
 
         {/* Window controls */}

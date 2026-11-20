@@ -1,27 +1,20 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Typography, message, Button, List, Tag, Empty } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import React, { useState, useMemo } from 'react';
+import { Typography, List, Tag } from 'antd';
 import { useTranslation } from '@/i18n';
 import { useComicStore } from '@/stores/comicStore';
+import ProjectCreateBar from '@/components/Common/ProjectCreateBar';
 import CreateComicModal from './CreateComicModal';
 import ComicPipelinePanel from './ComicPipelinePanel';
 
 const { Text } = Typography;
 
-const ComicView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => void }> = ({ createRequested, onCreateHandled }) => {
+const ComicView: React.FC = () => {
   const { t } = useTranslation();
   const projectsMap = useComicStore((s) => s.projects);
   const activeProjectId = useComicStore((s) => s.activeProjectId);
   const setActiveProjectId = useComicStore((s) => s.setActiveProjectId);
-  const deleteProject = useComicStore((s) => s.deleteProject);
 
   const [createOpen, setCreateOpen] = useState(false);
-
-  useEffect(() => {
-    if (!createRequested) return;
-    setCreateOpen(true);
-    onCreateHandled?.();
-  }, [createRequested, onCreateHandled]);
 
   const projects = useMemo(
     () =>
@@ -37,43 +30,16 @@ const ComicView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
       {/* 项目列表 */}
       <div
         style={{
-          width: 220,
+          flex: '0 0 220px',
           borderRight: '1px solid var(--border-secondary)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
-        <div
-          style={{
-            padding: '8px 12px',
-            borderBottom: '1px solid var(--border-secondary)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <Text strong style={{ fontSize: 13 }}>
-            {t('comic.title')}
-          </Text>
-          {projects.length > 0 && <Button
-            size="small"
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setCreateOpen(true)}
-          >
-            {t('comic.newProject')}
-          </Button>}
-        </div>
+        <ProjectCreateBar label={t('comic.newProject')} testId="comic-new-project" onCreate={() => setCreateOpen(true)} />
         <div style={{ flex: 1, overflow: 'auto' }}>
-          {projects.length === 0 ? (
-            <div style={{ padding: 24 }}>
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={t('comic.empty')}
-              />
-            </div>
-          ) : (
+          {projects.length > 0 && (
             <List
               size="small"
               dataSource={projects}
@@ -134,9 +100,6 @@ const ComicView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
             }}
           >
             <Text type="secondary">{t('comic.empty')}</Text>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              {t('comic.newProject')}
-            </Button>
           </div>
         )}
       </div>
@@ -146,7 +109,6 @@ const ComicView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
         onOk={(id) => {
           setActiveProjectId(id);
           setCreateOpen(false);
-          message.success(t('common.success'));
         }}
         onCancel={() => setCreateOpen(false)}
       />

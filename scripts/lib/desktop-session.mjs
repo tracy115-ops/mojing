@@ -78,10 +78,18 @@ export async function desktopSession({ executable, profile, allowedOrigins = [],
   const textButton = (label, parent = 'body') => evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(parent + ' button')})].find(e=>e.textContent.replace(/\\s/g,'')===${JSON.stringify(label.replace(/\s/g, ''))});if(!e||e.disabled)throw new Error('Button unavailable: '+${JSON.stringify(label)});e.click();})()`);
   const fill = (selector, value) => evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Input unavailable');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   const clickTarget = async (target, label) => {
-    await evaluate(`(()=>{const e=${target};if(!e)throw new Error('Click target unavailable');e.scrollIntoView({block:'nearest',behavior:'instant'});})()`);
-    // A preceding dropdown can still cover the next control while its close
-    // animation runs. Wait for the real mouse hit target before sending input.
-    await waitFor(`(()=>{const e=${target};if(!e||e.disabled)return false;const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.width>0&&r.height>0&&!!hit&&e.contains(hit);})()`, 'unobstructed click target ' + label);
+    // Modal entrance transforms can move the hit target between measurement and input.
+    await waitFor(`(() => {
+      const e = ${target};
+      if (!e || e.disabled) return false;
+      const modal = e.closest('.ant-modal');
+      if (modal?.matches('.ant-zoom-appear, .ant-zoom-enter, .ant-zoom-leave')) return false;
+      if (modal?.getAnimations().some(animation => animation.playState === 'running')) return false;
+      e.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      const r = e.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return r.width > 0 && r.height > 0 && !!hit && e.contains(hit);
+    })()`, 'unobstructed click target ' + label);
     const point = await evaluate(`(()=>{const r=(${target}).getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
     await call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });

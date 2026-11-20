@@ -6,7 +6,7 @@
 //   - 「仅此步」runSingleStage / 「重跑及后续」runFromStage
 //   - 依赖检查:character_anchor 无前置;panel_script 无前置;panel_image 依赖 panel_script
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { Typography, Input, InputNumber, Button, Space, Popconfirm, Alert, message, Radio } from 'antd';
 import { ReloadOutlined, ForwardOutlined } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
@@ -14,7 +14,7 @@ import { useComicStore } from '@/stores/comicStore';
 import { COMIC_STAGE_INPUT_FIELDS, COMIC_PIPELINE_STAGES } from '@/types/comic';
 import type { ComicTrackedStage, ComicStageInput, ComicPipelineProject } from '@/types/comic';
 import { runSingleStage, runFromStage } from '@/services/comic/core/pipeline-runner';
-import { populateStageInput } from '@/services/comic/core/stage-handlers';
+import { getStageInputDefaults } from '@/services/comic/core/stage-handlers';
 
 const { Text } = Typography;
 
@@ -47,42 +47,15 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
   const setStageInput = useComicStore((s) => s.setStageInput);
   const fields = COMIC_STAGE_INPUT_FIELDS[stage] ?? [];
   const stageState = project.stages[stage];
-  const input = stageState?.input ?? {};
+  const input = stageState?.input;
+  const defaults = getStageInputDefaults(stage, {
+    workingSpec: project.spec,
+    sourceText: project.sourceText ?? '',
+    panelCount: project.panelCount,
+    style: project.spec.meta.style ?? project.style,
+  });
   const isRunning = stageState?.status === 'running';
   const [rerunning, setRerunning] = useState(false);
-
-  // 懒回填:对已经跑过的 stage,如果 input 字段为空,主动调 populateStageInput
-  // 让 UI 显示真实参数
-  const backfillRan = useRef(false);
-  const prevStageRef = useRef(stage);
-  const prevPidRef = useRef(project.id);
-  useEffect(() => {
-    // stage 或 project 切换 → 重置 ref,允许新 stage 触发回填
-    if (prevStageRef.current !== stage || prevPidRef.current !== project.id) {
-      backfillRan.current = false;
-      prevStageRef.current = stage;
-      prevPidRef.current = project.id;
-    }
-    if (backfillRan.current) return;
-    if (fields.length === 0) return;
-    const status = project.stages[stage]?.status;
-    if (status !== 'completed' && status !== 'error') return;
-    const hasAny = fields.some((f) => input[f.key] !== undefined && input[f.key] !== '');
-    if (hasAny) return;
-    backfillRan.current = true;
-    // populateStageInput 需要完整 ctx,但只需 sourceText/panelCount/style/workingSpec
-    populateStageInput(project.id, stage, {
-      pid: project.id,
-      workingSpec: project.spec,
-      sourceText: project.sourceText ?? '',
-      panelCount: project.panelCount,
-      enableCharacterAnchor: project.options.enableCharacterAnchor,
-      characterAnchorLimit: project.options.characterAnchorLimit,
-      style: project.style,
-      aspectRatio: project.aspectRatio,
-      panelLayout: project.spec.meta.panelLayout,
-    });
-  }, [project, stage, fields, input]);
 
   // 依赖检查
   const stageIdx = COMIC_PIPELINE_STAGES.indexOf(stage);
@@ -184,7 +157,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
         }}
       >
         {fields.map((f) => {
-          const value = input[f.key];
+          const value = input?.[f.key] ?? defaults[f.key];
           const label = t(f.label);
           const readOnly = !!f.readOnly;
           const disabled = isRunning || rerunning || readOnly;
@@ -200,6 +173,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
               </Text>
               {f.type === 'textarea' ? (
                 <Input.TextArea
+                  aria-label={label}
                   value={value ?? ''}
                   onChange={(e) =>
                     setStageInput(project.id, stage, {
@@ -213,6 +187,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
                 />
               ) : f.type === 'number' ? (
                 <InputNumber
+                  aria-label={label}
                   value={typeof value === 'number' ? value : undefined}
                   onChange={(v) =>
                     setStageInput(project.id, stage, {
@@ -229,6 +204,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
                 />
               ) : f.type === 'radio' ? (
                 <Radio.Group
+                  aria-label={label}
                   value={typeof value === 'string' ? value : (f.options?.[0]?.value ?? '')}
                   onChange={(e) =>
                     setStageInput(project.id, stage, {
@@ -247,6 +223,7 @@ const ComicStageInputEditor: React.FC<ComicStageInputEditorProps> = ({ stage, pr
                 </Radio.Group>
               ) : (
                 <Input
+                  aria-label={label}
                   value={typeof value === 'string' ? value : ''}
                   onChange={(e) =>
                     setStageInput(project.id, stage, {

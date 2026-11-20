@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { Card, Button, Tag, Empty, Typography, Input, Dropdown, message, Tooltip, Space } from 'antd';
+import { Card, Button, Tag, Empty, Typography, Input, Dropdown, message, Tooltip } from 'antd';
 import {
-  PlusOutlined,
   DeleteOutlined,
   StarOutlined,
   StarFilled,
@@ -18,6 +17,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { exportProjectPackage, importProjectPackage } from '@/services/project/project-package';
 import type { CreativeProject, CreativeProjectType, ProjectStatus } from '@/types';
+import ProjectCreateBar from './ProjectCreateBar';
 
 const { Text, Paragraph } = Typography;
 
@@ -47,7 +47,7 @@ interface ProjectListProps {
   onDelete: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onCreate: () => void;
-  showCreateAction?: boolean;
+  secondaryCreateAction?: React.ReactNode;
   onEditInfo?: (id: string) => void;
   onDuplicate?: (id: string) => void;
   onExport?: (id: string) => void;
@@ -68,7 +68,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
   onDelete,
   onToggleFavorite,
   onCreate,
-  showCreateAction = true,
+  secondaryCreateAction,
   onEditInfo,
   onDuplicate,
   onExport,
@@ -78,8 +78,12 @@ const ProjectList: React.FC<ProjectListProps> = ({
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
   const [searchText, setSearchText] = useState('');
 
-  const createLabel = type === 'novel' ? t('novel.newProject') : type === 'comic' ? t('comic.newProject') : t('video.newProject');
-  const emptyText = type === 'novel' ? t('novel.empty') : type === 'comic' ? t('comic.empty') : t('video.empty');
+  const createLabel = t(`${type}.newProject`);
+  const createBar = (
+    <ProjectCreateBar label={createLabel} onCreate={onCreate} testId={type === 'video' ? 'video-new-video' : `${type}-new-project`}>
+      {secondaryCreateAction}
+    </ProjectCreateBar>
+  );
 
   const filtered = useMemo(() => {
     let list = projects;
@@ -142,7 +146,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
 
   if (projects.length === 0) {
     return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
+      <div>
         <input
           type="file"
           ref={fileInputRef}
@@ -150,16 +154,12 @@ const ProjectList: React.FC<ProjectListProps> = ({
           style={{ display: 'none' }}
           onChange={handleFileImport}
         />
-        <Empty description={emptyText} image={Empty.PRESENTED_IMAGE_SIMPLE}>
-          <Space>
-            {showCreateAction && <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>
-              {createLabel}
-            </Button>}
-            <Button icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()}>
-              导入工程包
-            </Button>
-          </Space>
-        </Empty>
+        {createBar}
+        <div style={{ padding: '0 12px' }}>
+          <Button size="small" type="text" icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()}>
+            {t('project.importPackage')}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -174,6 +174,7 @@ const ProjectList: React.FC<ProjectListProps> = ({
         style={{ display: 'none' }}
         onChange={handleFileImport}
       />
+      {createBar}
 
       {/* Search */}
       <div style={{ padding: '6px 12px 0' }}>
@@ -218,12 +219,9 @@ const ProjectList: React.FC<ProjectListProps> = ({
         })}
 
         <div style={{ flex: 1 }} />
-        <Tooltip title="导入 .mojing 工程备份包">
-          <Button size="small" type="text" icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()} style={{ fontSize: 12, padding: '0 4px' }} />
+        <Tooltip title={t('project.importPackage')}>
+          <Button size="small" type="text" aria-label={t('project.importPackage')} icon={<ImportOutlined />} onClick={() => fileInputRef.current?.click()} style={{ fontSize: 12, padding: '0 4px' }} />
         </Tooltip>
-        {showCreateAction && <Tooltip title={createLabel}>
-          <Button size="small" type="text" icon={<PlusOutlined />} onClick={onCreate} style={{ fontSize: 12, padding: '0 4px' }} />
-        </Tooltip>}
       </div>
 
       {/* Project list */}

@@ -9,8 +9,6 @@ interface StudioState {
   hydrated: boolean;
   storageError?: string;
   eagleBaseUrl: string;
-  createProjectRequested: boolean;
-  requestCreateProject: () => void;
   page: StudioPage;
   assets: StudioAsset[];
   assetFolders: StudioAssetFolder[];
@@ -50,7 +48,7 @@ interface StudioState {
 const replace = <T extends { id: string }>(items: T[], item: T) => items.some((value) => value.id === item.id) ? items.map((value) => value.id === item.id ? item : value) : [...items, item];
 
 export const useVideoStudioStore = create<StudioState>()(persist((set, get) => ({
-  hydrated: false, eagleBaseUrl: 'http://127.0.0.1:41595', createProjectRequested: false, requestCreateProject: () => set({ page: 'projects', createProjectRequested: true }), page: 'home', assets: [], assetFolders: [], trashedAssets: [], jobs: [], uploadTasks: [], canvases: [], worlds: [], recipes: [], commerceProjects: [],
+  hydrated: false, eagleBaseUrl: 'http://127.0.0.1:41595', page: 'home', assets: [], assetFolders: [], trashedAssets: [], jobs: [], uploadTasks: [], canvases: [], worlds: [], recipes: [], commerceProjects: [],
   saveUploadTask: (task) => set((state) => ({ uploadTasks: replace(state.uploadTasks, task) })),
   saveAssetFolder: (folder) => {
     try { const assetFolders = saveLibraryFolder(get().assetFolders, folder); set({ assetFolders }); return true; } catch { return false; }

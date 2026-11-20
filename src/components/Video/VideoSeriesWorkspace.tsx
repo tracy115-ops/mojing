@@ -507,12 +507,15 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
   return (
     <div style={{ flex: 1, overflow: 'auto', padding: 20, background: 'var(--bg-layout)' }}>
       <div style={{ maxWidth: 1180, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
-          <div>
+        <div className="video-series-header">
+          <div className="video-series-header-copy">
             <Title level={3} style={{ margin: 0 }}>{series.title}</Title>
             <Paragraph type="secondary" style={{ margin: '6px 0 0' }}>
               {series.description || t('video.series.descriptionFallback')}
             </Paragraph>
+            <Button type="primary" icon={<PlusOutlined />} data-testid="video-new-episode" onClick={onCreateEpisode}>
+              {t('video.series.newEpisode')}
+            </Button>
           </div>
           <Space wrap>
             <Button icon={<EditOutlined />} onClick={openEditSeriesModal}>
@@ -530,9 +533,6 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
                 {t('common.delete')}系列
               </Button>
             </Popconfirm>
-            <Button type="primary" icon={<PlusOutlined />} data-testid="video-new-episode" onClick={onCreateEpisode}>
-              {t('video.series.newEpisode')}
-            </Button>
           </Space>
         </div>
 
@@ -630,12 +630,9 @@ const VideoSeriesWorkspace: React.FC<VideoSeriesWorkspaceProps> = ({
 
         <Card
           title={<Space><PlayCircleOutlined />{t('video.series.episodes')}<Tag>{episodes.length}</Tag></Space>}
-          extra={<Button type="link" icon={<PlusOutlined />} onClick={onCreateEpisode}>{t('video.series.newEpisode')}</Button>}
         >
           {sortedEpisodes.length === 0 ? (
-            <Empty description={t('video.series.episodeEmpty')} image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Button type="primary" data-testid="video-new-episode" onClick={onCreateEpisode}>{t('video.series.newEpisode')}</Button>
-            </Empty>
+            <Empty description={t('video.series.episodeEmpty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
           ) : (
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
               {sortedEpisodes.map((episode, index) => {

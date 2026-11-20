@@ -424,10 +424,10 @@ try {
   assert.equal(remoteAsset.storage,'remote'); assert.ok(remoteAsset.storageError); failMedia=false;
   console.log('Queue cancellation/retry, frozen prompt/provider selection and successful remote-output retention passed.');
 
-  await click('.ws-titlebar-project-actions button');
-  await waitFor('Boolean(document.querySelector(".ant-dropdown:not(.ant-dropdown-hidden)"))','new project menu');
-  await evaluate(`[...document.querySelectorAll('.ant-dropdown-menu-item')].find(el=>el.textContent==='视频工坊').click()`);
-  await waitFor('Boolean(document.querySelector(".video-create-episode-modal")) && studioTest.getState().page==="projects"','titlebar create-video bridge');
+  await click('[data-testid=studio-nav-projects]');
+  await waitFor('!!document.querySelector(".project-create-bar [data-testid=video-new-video]")','project list creation entry');
+  await click('[data-testid=video-new-video]');
+  await waitFor('Boolean(document.querySelector(".video-create-episode-modal")) && studioTest.getState().page==="projects"','project list video creation');
   await textButton('取消','.video-create-episode-modal');
 
   const beforeReload = await evaluate(`(async()=>{const s=studioTest.getState();s.addJob({id:'interrupted-fixture',name:'Restart fixture',status:'running',createdAt:new Date().toISOString(),input:{...s.jobs[0].input}}); const {videoStudioStorage}=await import('/src/services/video-studio/storage.ts');await videoStudioStorage.getItem('video-studio');return {assets:s.assets.length,canvases:s.canvases.length,worlds:s.worlds.length};})()`);

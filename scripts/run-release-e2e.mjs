@@ -144,6 +144,18 @@ const endpoints = [['llm', 'openai', 'gpt-4o-mini'], ['image', 'agnes-image', 'a
 const projectExpression = () => `JSON.parse(localStorage.getItem('mojing-video')).state.projects[${JSON.stringify(projectId)}]`;
 const project = () => desktop.evaluate(projectExpression());
 const start = () => desktopSession({ executable, profile: join(root, 'webview'), allowedOrigins: [modelOrigin], softwareRendering: process.env.MOJING_E2E_HARDWARE_RENDERING !== '1' });
+const resizeWindow = async (width, height, label) => {
+  const resize = `window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(${width},${height}))`;
+  const sizeMatches = `innerWidth === ${width} && innerHeight === ${height}`;
+  await desktop.evaluate(resize);
+  try {
+    await desktop.waitFor(sizeMatches, label, 3500);
+  } catch {
+    // Windows can acknowledge the request before the window size changes.
+    await desktop.evaluate(resize);
+    await desktop.waitFor(sizeMatches, label);
+  }
+};
 const stopGeneration = async () => {
   await desktop.nativeTextButton('停止生成', '.video-production-console-tools');
   const confirmStop = '.ant-modal-confirm-btns .ant-btn-dangerous';
@@ -230,8 +242,7 @@ try {
   await desktop.waitFor(`document.querySelector(${JSON.stringify(assetAction)})?.textContent.includes("生成缺少的角色和场景图")`, 'visible asset generation action');
   await desktop.nativeClick('.ws-titlebar-window-controls .ant-btn');
   await desktop.waitFor('document.documentElement.dataset.theme==="light"', 'asset view in light theme');
-  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(900,600))');
-  await desktop.waitFor('innerWidth===900&&innerHeight===600', 'minimum desktop window for assets');
+  await resizeWindow(900, 600, 'minimum desktop window for assets');
   assert.equal(await desktop.evaluate('document.querySelector(".video-production-console-steps").scrollWidth<=document.querySelector(".video-production-console-steps").clientWidth'), true, 'all four project steps remain visible');
   await desktop.screenshot(join(output, '01-assets-ready-to-start.png'));
   await desktop.nativeClick(assetAction);
@@ -250,8 +261,7 @@ try {
   const stopped = await project();
   assert.equal(stopped.stages.scene_image.status, 'error');
   assert.deepEqual(stopped.sceneSpec.characters, refsBeforeStop);
-  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(1280,800))');
-  await desktop.waitFor('innerWidth===1280&&innerHeight===800', 'overview at the regular desktop size');
+  await resizeWindow(1280, 800, 'overview at the regular desktop size');
   await desktop.screenshot(join(output, '01-assets-stopped.png'));
   await desktop.nativeClick('[data-phase=assets]');
   await desktop.waitFor('document.querySelector("[data-testid=video-phase-next-action-button]")?.textContent.includes("继续生成")', 'resume action also appears in Assets');
@@ -456,16 +466,14 @@ try {
   for (let i = 0; i < 3; i++) await desktop.click('.ws-titlebar-window-controls .ant-btn');
   await desktop.waitFor('document.documentElement.dataset.theme==="dark"', 'restored dark theme');
   await delay(350);
-  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(900,600))');
-  await desktop.waitFor('innerWidth===900&&innerHeight===600', 'minimum desktop window size');
+  await resizeWindow(900, 600, 'minimum desktop window size');
   await checkTimelineLayout();
   await desktop.screenshot(join(output, '05-timeline-small-window.png'));
   await desktop.evaluate('document.querySelector(".video-timeline-preview-grid").nextElementSibling.scrollIntoView({block:"end"})');
   await desktop.waitFor(`(()=>{const e=document.querySelector('.video-timeline-workspace [role=button][aria-label="第 1 镜"] button:has([aria-label=arrow-down])'),r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()`, 'timeline controls reachable by scrolling in the minimum window');
   await checkTimelineLayout();
   await desktop.screenshot(join(output, '05-timeline-small-window-tracks.png'));
-  await desktop.evaluate('window.__TAURI__.window.getCurrentWindow().setSize(new window.__TAURI__.dpi.LogicalSize(1280,800))');
-  await desktop.waitFor('innerWidth===1280&&innerHeight===800', 'restored desktop window size');
+  await resizeWindow(1280, 800, 'restored desktop window size');
   await desktop.evaluate('document.querySelector(".video-timeline-workspace").scrollTop=0');
 
   mark('export through actual native Save dialog');

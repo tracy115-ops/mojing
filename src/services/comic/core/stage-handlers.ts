@@ -97,45 +97,41 @@ async function safeRunStage<T>(
 
 // --- Stage input 工具函数 ---
 
-/**
- * 把「这次 stage 实际会用的参数」回填进 stage.input,让 UI 显示当前值而非空表单。
- * 策略:只填用户还没改过的字段(避免覆盖用户编辑)。
- */
+export function getStageInputDefaults(
+  stage: ComicTrackedStage,
+  { workingSpec, sourceText, panelCount, style }: Pick<StageContext, 'workingSpec' | 'sourceText' | 'panelCount' | 'style'>,
+): ComicStageInput {
+  switch (stage) {
+    case 'character_anchor': {
+      const firstCharacter = workingSpec.characters[0];
+      return {
+        anchorMode: 'turnaround',
+        style: style || 'manga',
+        prompt: firstCharacter ? buildSamplePortraitPrompt(firstCharacter, style) : undefined,
+      };
+    }
+    case 'panel_script':
+      return { prompt: sourceText, panelCount };
+    case 'panel_image':
+      return { style: style || 'manga' };
+    case 'dialogue_burn':
+      return { bubbleShape: 'oval', bubbleFontSize: 36 };
+    case 'page_compose':
+      return { pagePadding: 16 };
+  }
+}
+
+/** 保存本次使用的默认参数，保留用户已填写的字段。 */
 export function populateStageInput(pid: string, stage: ComicTrackedStage, ctx: StageContext): void {
   const store = useComicStore.getState();
   const proj = store.getProject(pid);
   if (!proj) return;
   const existing = proj.stages[stage]?.input ?? {};
-  const patch: Partial<ComicStageInput> = {};
-
-  switch (stage) {
-    case 'character_anchor': {
-      const firstChar = ctx.workingSpec.characters[0];
-      if (existing.anchorMode === undefined) patch.anchorMode = 'turnaround';
-      if (existing.style === undefined) patch.style = ctx.style || 'manga';
-      if (existing.prompt === undefined && firstChar) {
-        patch.prompt = buildSamplePortraitPrompt(firstChar, ctx.style);
-      }
-      break;
-    }
-    case 'panel_script':
-      if (existing.prompt === undefined) patch.prompt = ctx.sourceText;
-      if (existing.panelCount === undefined) patch.panelCount = ctx.panelCount;
-      break;
-    case 'panel_image':
-      if (existing.style === undefined) patch.style = ctx.style || 'manga';
-      break;
-    case 'dialogue_burn':
-      if (existing.bubbleShape === undefined) patch.bubbleShape = 'oval';
-      if (existing.bubbleFontSize === undefined) patch.bubbleFontSize = 36;
-      break;
-    case 'page_compose':
-      if (existing.pagePadding === undefined) patch.pagePadding = 16;
-      break;
-  }
-
-  if (Object.keys(patch).length > 0) {
-    store.setStageInput(pid, stage, patch);
+  const missing = Object.entries(getStageInputDefaults(stage, ctx)).filter(
+    ([key, value]) => value !== undefined && existing[key as keyof ComicStageInput] === undefined,
+  );
+  if (missing.length > 0) {
+    store.setStageInput(pid, stage, Object.fromEntries(missing));
   }
 }
 

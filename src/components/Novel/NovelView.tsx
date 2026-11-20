@@ -41,6 +41,8 @@ import ReaderPanel from './ReaderPanel';
 import NovelInfoModal from './NovelInfoModal';
 import VideoGeneratorModal from '@/components/Video/VideoGeneratorModal';
 
+const NARROW_NOVEL_WINDOW = '(max-width: 1100px)';
+
 const { Text } = Typography;
 
 // Target words per chapter for progress bar
@@ -259,7 +261,7 @@ const StoryTreeNodeRow: React.FC<{
   );
 };
 
-const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => void }> = ({ createRequested, onCreateHandled }) => {
+const NovelView: React.FC = () => {
   const { t } = useTranslation();
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
@@ -286,6 +288,9 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
   const [createOpen, setCreateOpen] = useState(false);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [showWorkbench, setShowWorkbench] = useState(true);
+  const [narrowWindow, setNarrowWindow] = useState(() => window.matchMedia(NARROW_NOVEL_WINDOW).matches);
+  const [showNarrowWorkbench, setShowNarrowWorkbench] = useState(false);
+  const workbenchVisible = narrowWindow ? showNarrowWorkbench : showWorkbench;
   const [exportOpen, setExportOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -301,6 +306,14 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
   }>({ triples: [], anchors: [], beats: [], foreshadowing: [] });
 
   const engineRef = useRef<AutopilotEngine | null>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia(NARROW_NOVEL_WINDOW);
+    const update = () => setNarrowWindow(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   const { width: workbenchWidth, handleProps: resizeHandleProps, isDragging: isResizing } = useResizable({
     minWidth: LAYOUT.workbenchMinWidth,
@@ -353,6 +366,7 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
 
   // Initialize narrative data from persisted project on mount / project change
   useEffect(() => {
+    setShowNarrowWorkbench(false);
     if (activeProject?.type === 'novel') {
       const meta = activeProject.metadata as NovelMetadata;
       const saved = meta.narrativeData;
@@ -368,12 +382,6 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
       }
     }
   }, [activeProjectId]);
-
-  useEffect(() => {
-    if (!createRequested) return;
-    setCreateOpen(true);
-    onCreateHandled?.();
-  }, [createRequested, onCreateHandled]);
 
   const handleWizardComplete = (result: {
     values: { title: string; description: string; genre: string; targetWordCount: number; style: string; language: string };
@@ -458,8 +466,6 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
       bible.timelineNotes = notes;
       repo.saveBible(bible);
     }
-
-    message.success(t('common.success'));
   };
 
   const handleSelectProject = (id: string) => {
@@ -511,7 +517,12 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
     createStoryNode(activeProjectId, { nodeType: 'chapter' });
     const nodes = useProjectStore.getState().getStoryNodes(activeProjectId);
     const chapters = nodes.filter((n) => n.nodeType === 'chapter').sort((a, b) => a.order - b.order);
-    if (chapters.length > 0) setActiveChapterId(chapters[chapters.length - 1].id);
+    if (chapters.length > 0) selectChapter(chapters[chapters.length - 1].id);
+  };
+
+  const selectChapter = (id: string) => {
+    setActiveChapterId(id);
+    setShowNarrowWorkbench(false);
   };
 
   // --- StoryNode tree helpers ---
@@ -796,7 +807,7 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {/* Left: Project list */}
-      <div style={{ width: LAYOUT.projectListWidth, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: `0 0 ${LAYOUT.projectListWidth}px`, borderRight: '1px solid var(--border-secondary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <ProjectList
           projects={novelProjects}
           type="novel"
@@ -804,7 +815,6 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
           onSelect={handleSelectProject}
           onDelete={deleteProject}
           onToggleFavorite={toggleFavorite}
-          showCreateAction={false}
           onCreate={() => setCreateOpen(true)}
           onEditInfo={() => setInfoOpen(true)}
           onDuplicate={(id) => {
@@ -822,9 +832,6 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 32, color: 'var(--text-tertiary)', textAlign: 'center' }}>
             <BookOutlined style={{ fontSize: 48, color: 'var(--accent-primary)' }} />
             <Text type="secondary">{t('novel.empty')}</Text>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              {t('novel.newProject')}
-            </Button>
           </div>
         ) : (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -846,14 +853,14 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
                       key={node.id}
                       node={node}
                       isActive={activeChapterId === node.id}
-                      onClick={() => setActiveChapterId(node.id)}
+                      onClick={() => selectChapter(node.id)}
                     />
                   ) : (
                     <StoryTreeNodeRow
                       key={node.id}
                       node={node}
                       activeChapterId={activeChapterId}
-                      onSelectChapter={(id) => setActiveChapterId(id)}
+                      onSelectChapter={selectChapter}
                       collapsed={collapsedVolumes}
                       onToggleCollapse={toggleCollapse}
                       editingId={editingVolumeId}
@@ -885,7 +892,7 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
                         globalChapterNumber: gi >= 0 ? gi : chapter.order,
                       }}
                       isActive={activeChapterId === chapter.id}
-                      onClick={() => setActiveChapterId(chapter.id)}
+                      onClick={() => selectChapter(chapter.id)}
                     />
                   );
                 })}
@@ -930,7 +937,7 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
 
               {/* Editor area + optional Narrative Workbench right panel */}
               <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                <div style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+                <div hidden={narrowWindow && workbenchVisible} style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
                   {activeChapter ? (
                     <ChapterEditor
                       key={`${activeProjectId}/${activeChapter.id}`}
@@ -948,9 +955,10 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
 
                 {/* Narrative Workbench right panel — animated collapse */}
                 {activeProjectId && (
-                  <div style={{
-                    width: showWorkbench ? workbenchWidth : 0,
-                    maxWidth: showWorkbench ? workbenchWidth : 0,
+                  <div id="novel-narrative-pane" hidden={narrowWindow && !workbenchVisible} style={{
+                    width: narrowWindow ? undefined : workbenchVisible ? workbenchWidth : 0,
+                    maxWidth: narrowWindow ? undefined : workbenchVisible ? 'calc(100% - 300px)' : 0,
+                    flexGrow: narrowWindow ? 1 : 0,
                     minWidth: 0,
                     borderLeft: '1px solid var(--border-secondary)',
                     overflowY: 'hidden',
@@ -958,21 +966,21 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
                     background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
                     position: 'relative',
                     flexShrink: 1,
-                    transition: showWorkbench ? 'none' : 'width 0.25s ease-out',
+                    transition: narrowWindow || workbenchVisible ? 'none' : 'width 0.25s ease-out',
                     opacity: 1,
                   }}>
-                    <div style={{ width: workbenchWidth, minWidth: LAYOUT.workbenchMinWidth, height: '100%', position: 'relative' }}>
-                      <ResizeHandle
+                    <div style={{ width: '100%', minWidth: LAYOUT.workbenchMinWidth, height: '100%', position: 'relative' }}>
+                      {!narrowWindow && <ResizeHandle
                         onPointerDown={resizeHandleProps.onPointerDown}
                         isDragging={isResizing}
                         position="left"
-                      />
+                      />}
                       <NarrativeWorkbench
                         key={activeProjectId}
                         novelId={activeProjectId}
                         totalChapters={chapters.length}
                         chapterIndex={activeChapter?.order ?? 0}
-                        onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) setActiveChapterId(chapter.id); }}
+                        onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) selectChapter(chapter.id); }}
                       />
                     </div>
                   </div>
@@ -991,12 +999,18 @@ const NovelView: React.FC<{ createRequested?: boolean; onCreateHandled?: () => v
                   <Tooltip title={t('workbench.toggleHint')}>
                     <Button
                       size="small"
-                      type={showWorkbench ? 'primary' : 'default'}
-                      ghost={showWorkbench}
+                      type={workbenchVisible ? 'primary' : 'default'}
+                      ghost={workbenchVisible}
                       icon={<ApartmentOutlined />}
-                      onClick={() => setShowWorkbench(!showWorkbench)}
+                      data-testid="novel-workbench-toggle"
+                      aria-controls="novel-narrative-pane"
+                      aria-expanded={workbenchVisible}
+                      onClick={() => {
+                        if (narrowWindow) setShowNarrowWorkbench(!showNarrowWorkbench);
+                        else setShowWorkbench(!showWorkbench);
+                      }}
                     >
-                      {t('workbench.toggle')}
+                      {t(narrowWindow && workbenchVisible ? 'novel.backToChapterEditor' : 'workbench.toggle')}
                     </Button>
                   </Tooltip>
                   <Tooltip title={chapters.filter((c) => c.content).length === 0 ? t('video.gen.needChaptersHint') : t('video.gen.title')}>

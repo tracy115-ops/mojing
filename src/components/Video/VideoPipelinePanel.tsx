@@ -423,7 +423,6 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
     setActivePhase(automatic ? 'flow' : phaseForStage(stage));
     const noticeKey = `video-workflow-run-${pipelineId}`;
     try {
-      let ok: boolean;
       if (automatic) {
         if (!useVideoStore.getState().getProject(pipelineId)?.sceneSpec?.shots.length) {
           const pipeline = VideoPipeline.forResume(pipelineId);
@@ -433,17 +432,14 @@ export const VideoPipelinePanel: React.FC<{ pipelineId?: string }> = ({ pipeline
         }
         if (workflowRuns.get(pipelineId) !== run) return;
         if (!approvePlanning(pipelineId)) throw new Error(t('video.workflow.planApprovalFailed'));
-        ok = await runFromStage(pipelineId, 'character_anchor', { force: false, automatic: true });
+        await runFromStage(pipelineId, 'character_anchor', { force: false, automatic: true });
       } else if (phaseForStage(stage) === 'script') {
         const pipeline = VideoPipeline.forResume(pipelineId);
         if (!pipeline) throw new Error(t('video.overview.inputRequired'));
         run.planning = pipeline;
-        ok = !!(await (stage === 'script_slicing' && sceneSpec ? pipeline.replan() : pipeline.run()));
+        await (stage === 'script_slicing' && sceneSpec ? pipeline.replan() : pipeline.run());
       } else {
-        ok = await runFromStage(pipelineId, stage, { force: false, endStage });
-      }
-      if (workflowRuns.get(pipelineId) === run && !ok && useVideoStore.getState().getProject(pipelineId)?.error) {
-        message.warning({ content: t('video.pipeline.batchGenerationIncomplete'), key: noticeKey });
+        await runFromStage(pipelineId, stage, { force: false, endStage });
       }
     } catch (error) {
       if (workflowRuns.get(pipelineId) !== run) return;

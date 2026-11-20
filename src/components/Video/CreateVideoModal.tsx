@@ -38,20 +38,21 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
   const projects = useProjectStore((s) => s.projects);
   const novelProjects = projects.filter((p) => p.type === 'novel');
   const videoProjects = projects.filter((p) => p.type === 'video');
+  const createLabel = t(seriesMode ? 'video.series.newEpisode' : 'video.newProject');
+  const needsScript = novelProjects.length === 0;
 
   return (
     <Modal
       className="video-create-episode-modal"
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 16, fontWeight: 600 }}>新建视频项目</span>
-        </div>
-      }
+      title={createLabel}
       open={open}
       onOk={() => {
         return form.validateFields().then((values) => {
           if (!values.novelId && !values.scriptText?.trim()) {
-            form.setFields([{ name: 'scriptText', errors: [t('video.series.episodeSourceRequired')] }]);
+            form.setFields([{
+              name: 'scriptText',
+              errors: [t(needsScript ? 'video.create.scriptRequired' : 'video.create.sourceRequired')],
+            }]);
             return;
           }
           onOk(values);
@@ -62,16 +63,16 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
         form.resetFields();
         onCancel();
       }}
-      okText={seriesMode ? t('video.series.newEpisode') : t('video.newProject')}
+      okText={createLabel}
       cancelText={t('common.cancel')}
       width={560}
       styles={{ body: { maxHeight: '72vh', overflowY: 'auto', paddingRight: 8 } }}
       destroyOnClose
       getContainer={() => document.getElementById('root')!}
     >
-      <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 12 }}>
-        剧集会继承本系列的角色、场景和视觉设定。请选择已有小说，或粘贴本集剧本后继续。
-      </Text>
+      {seriesMode && <Text type="secondary" style={{ display: 'block', marginBottom: 16, fontSize: 12 }}>
+        {t('video.series.episodeCreateHint')}
+      </Text>}
 
       <Form
         form={form}
@@ -113,11 +114,8 @@ const CreateVideoModal: React.FC<CreateVideoModalProps> = ({
             />
           </Form.Item>
         )}
-        <Form.Item name="scriptText" label="本集剧本（可选）">
-          <Input.TextArea
-            rows={4}
-            placeholder="粘贴本集故事、小说片段或短剧剧本；AI 将基于系列资产拆分角色与分镜。"
-          />
+        <Form.Item name="scriptText" label={t(seriesMode ? 'video.series.episodeScript' : 'video.create.script')} required={needsScript}>
+          <Input.TextArea rows={4} placeholder={t('video.create.scriptPlaceholder')} />
         </Form.Item>
 
         <div style={{ display: 'flex', gap: 16 }}>

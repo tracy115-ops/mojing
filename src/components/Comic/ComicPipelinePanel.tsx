@@ -197,6 +197,7 @@ const StageRow: React.FC<StageRowProps> = ({ stage, state, label, selected, onSe
 
   return (
     <div
+      data-testid={`comic-stage-${stage}`}
       onClick={onSelect}
       style={{
         padding: '6px 8px',

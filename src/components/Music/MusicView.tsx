@@ -155,30 +155,16 @@ const MusicView: React.FC = () => {
           </Text>
         </div>
 
-        <MusicEndpointSettings />
       </div>
 
       <div className="music-workspace-columns">
         {/* 左侧：创作控制台 (可独立滚动) */}
         <Card
-          title="🎛️ 音乐创作控制台"
+          title={t('music.createTitle')}
           size="small"
-          style={{
-            borderRadius: 12,
-            display: 'flex',
-            flexDirection: 'column',
-            height: '100%',
-            overflow: 'hidden',
-          }}
-          styles={{
-            body: {
-              overflowY: 'auto',
-              flex: 1,
-              padding: '16px',
-            },
-          }}
+          className="music-creation-panel"
         >
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space direction="vertical" size="middle" className="music-creation-fields">
             <div>
               <Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>创作模式</Text>
               <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} buttonStyle="solid">
@@ -258,24 +244,19 @@ const MusicView: React.FC = () => {
               </Radio.Group>
             </div>
 
+          </Space>
+          <div className="music-creation-actions">
             <Button
               type="primary"
-              block
-              size="large"
               icon={<ThunderboltOutlined />}
               loading={generating}
               data-testid="music-generate"
               onClick={handleGenerate}
-              style={{
-                height: 46,
-                fontSize: 16,
-                fontWeight: 'bold',
-                borderRadius: 8,
-              }}
             >
               {t('music.generate')}
             </Button>
-          </Space>
+            <MusicEndpointSettings />
+          </div>
         </Card>
 
         {/* 右侧：生成好的音乐列表与当前播放卡片 (高度自适应,内容独立滚动) */}
@@ -313,18 +294,9 @@ const MusicView: React.FC = () => {
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <Title level={4} style={{ margin: 0, flexShrink: 0, whiteSpace: 'nowrap' }}>
-                      {currentTrack.title}
-                    </Title>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, flex: 1, minWidth: 0 }}>
-                      {currentTrack.tags.map((t) => (
-                        <Tag color="purple" key={t} style={{ margin: 0 }}>
-                          {t}
-                        </Tag>
-                      ))}
-                    </div>
-                  </div>
+                  <Title level={4} style={{ margin: 0 }} ellipsis={{ tooltip: currentTrack.title }}>
+                    {currentTrack.title}
+                  </Title>
                   <Text
                     type="secondary"
                     ellipsis={{ tooltip: currentTrack.style }}
