@@ -50,18 +50,29 @@ export class ChapterReviewer {
     const contextFingerprint = textFingerprint(reference);
     const saved = this.repo.loadCustomData<{ ready: boolean; contextFingerprint: string; outlineFingerprint: string } | null>('chapter-outline:' + chapterIndex, null);
     if (saved?.ready && saved.contextFingerprint === contextFingerprint && saved.outlineFingerprint === textFingerprint(outline)) return outline;
-    const response = await this.generateEditorial({
+    const request: LLMGenerateRequest = {
       taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens: 12288, thinking: true,
       systemPrompt: `你是小说策划编辑，负责在正文写作前审读并修正章节方案。目标是好读、可信、确有推进的故事，而非符合模板的术语清单。
 ${NOVEL_WRITING_PRINCIPLES}
 检查人物目标与已有处境是否相接，冒险、隐瞒、违规或退让是否有具体动机及相称的代价；不能把性格标签当行动理由。确认关键线索有可获得的来源，角色不会因大纲透露就提前知道答案。职业、空间与时间细节须符合故事规则和常识。区分普通异常与已知危险，不强迫人物恐慌或报警来增加紧张。
 检查已有问题是否推进、场景是否改变处境；删除无变化的检查、来回搬动、装饰性景物和结尾突然闪现的人影等通用悬念。允许合理的等待、日常与心理，不能用动作配额或故作神秘替代内容。不要强制反转，不把伏笔暂未回收视为错误。
 把每个关键结论反过来核对：证据的可见范围和取得条件是什么，是否仍有常见的其他解释；不要把未看见、无记录、物品表面状态等写成排除其他来源的证据。新线索可以发生，但须来自人物本次行动，不能凭空追加新痕迹或失联人物。不要重复前章已经经历的申请、拒绝、转述过程。先前人物的处理条件仍然有效，本章若违背须有明确动机和后果。
-保留原始简介、作者本章意图和前文已发生事实。修正方案不能改前文、偷换核心谜题、额外塞入信物或未铺垫的关系。若关键矛盾无法在本章合理修正，ready=false并说明，不能假装已解决。
+保留原始简介、作者本章意图和前文已发生事实。修正方案不能改前文、偷换核心谜题、额外塞入信物或未铺垫的关系。unresolvedIssues只列出阻止当前章节落笔的具体矛盾；留到后续查证的线索和悬念不属于此列。能写时ready=true，outline包含完整方案，unresolvedIssues为空。若关键矛盾无法在本章合理修正，ready=false并说明。
 输出JSON：{"ready":true,"outline":"完整可写的修正大纲，约600～1000字；围绕重要场景说明人物目标、阻力、选择、后果及章末状态，不逐项规定比喻、手势和秒数","changes":["具体修正及阅读收益，没有则空数组"],"unresolvedIssues":[]}。不输出正文，不宣称文学质量达标。`,
       userPrompt: `${reference}\n\n【待审本章方案，是计划，不是已发生事实】\n${outline}`,
-    });
-    const result = parseOutlineAssessment(response.content);
+    };
+    const response = await this.generateEditorial(request);
+    let result: ReturnType<typeof parseOutlineAssessment>;
+    try {
+      result = parseOutlineAssessment(response.content);
+    } catch {
+      const repaired = await this.generateEditorial({
+        ...request,
+        temperature: 0.1,
+        userPrompt: request.userPrompt + '\n\n上次回复未通过格式检查。重新审读并只返回一个JSON对象，完整包含布尔值ready、字符串outline、字符串数组changes和unresolvedIssues。ready为true时outline必须有正文可用的完整大纲，unresolvedIssues必须为空数组。有阻止落笔的矛盾时返回ready=false并写明矛盾。不要输出代码围栏。',
+      });
+      result = parseOutlineAssessment(repaired.content);
+    }
     this.repo.saveCustomData('chapter-outline:' + chapterIndex, { ...result, originalOutline: outline, contextFingerprint, outlineFingerprint: textFingerprint(result.outline), timestamp: new Date().toISOString() });
     if (!result.ready) throw new Error('大纲仍需调整：' + (result.unresolvedIssues.join('；') || '未形成可写方案'));
     return result.outline;

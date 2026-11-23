@@ -81,6 +81,7 @@ const ChapterRow: React.FC<{
   const isDrafting = node.status === 'drafting';
   const globalIdx = node.globalChapterNumber ?? 0;
   const status = node.status ?? 'planned';
+  const statusLabel = node.content?.trim() ? status : node.outline?.trim() ? 'proseMissing' : 'outlineMissing';
 
   const statusColor = STATUS_TAG[status]?.color ?? 'var(--text-tertiary)';
 
@@ -120,7 +121,7 @@ const ChapterRow: React.FC<{
           fontSize: 9, padding: '0 4px', borderRadius: 3, flexShrink: 0,
           color: tag.color, background: tag.bg, lineHeight: '16px',
         }}>
-          {t(`novel.chapterStatus.${status}`)}
+          {t(`novel.chapterStatus.${statusLabel}`)}
         </span>
         <span style={{ fontSize: 9, color: 'var(--text-tertiary)', flexShrink: 0 }}>
           {wordCount > 0 ? `${(wordCount / 1000).toFixed(1)}k` : '-'}

@@ -10,6 +10,7 @@ const url = process.env.MOJING_SMOKE_URL || 'http://127.0.0.1:1420/';
 const origin = new URL(url).origin;
 const app = await chromeSession({ url, port: 9256 });
 const requests = [], external = [], blockedProbes = [];
+let outlineBeforeReview;
 const novelProse = '雨水敲着车窗。\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '\n\n林岚从黄色帆布包中取出旧票，走向车载摄像头。';
 const colors = ['#d93434', '#32b34d', '#3355d4', '#d4a834'];
 const tiles = await Promise.all(colors.map(background => sharp({ create: { width: 360, height: 640, channels: 3, background } }).png().toBuffer()));
@@ -63,7 +64,15 @@ app.onEvent(event => {
     } else if (body.messages[0].content.includes('漫画分镜师')) {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ characters: [{ id: 'char_0', name: '林岚', appearance: '30-year-old woman, black bob, dark blue bus uniform.' }], panels }) }, finish_reason: 'stop' }] });
     } else if (system.includes('你是小说策划编辑')) {
-      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ready:true,outline:'经审读：林岚收车发现黄色帆布包，核对旧票并登记失物；调查来自可验证的来源。',changes:['Remove unsupported planning details.'],unresolvedIssues:[]}) },finish_reason:'stop' }] });
+      const firstReview = outlineBeforeReview === undefined;
+      if (firstReview) outlineBeforeReview = await app.evaluate(`${novelExpr}.metadata.storyNodes[0].outline`);
+      const assessment = {
+        ready: true,
+        outline: '经审读：林岚收车发现黄色帆布包，核对旧票并登记失物；调查来自可验证的来源。',
+        changes: ['Remove unsupported planning details.'],
+        unresolvedIssues: firstReview ? ['Incorrectly reported a deferred clue as unresolved.'] : [],
+      };
+      result = JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) }, finish_reason:'stop' }] });
     } else if (system.includes('认真通读作品的小说编辑')) {
       const assessment = { dimensions: ['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name => ({ name, score: 80 })), summary: 'Fixture editorial response, not a live quality judgment.', findings: [], continuityNotes: [{ fact: '林岚取票走向摄像头。', quote: '林岚从黄色帆布包中取出旧票，走向车载摄像头。' }] };
       if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'major',basis:'craft',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved story problem.',suggestion:'Fixture correction direction.' });
@@ -175,18 +184,25 @@ try {
   await app.waitFor('[...document.querySelectorAll("button")].some(e=>e.textContent==="添加章节")', 'novel input project');
   await app.textButton('添加章节');
   await app.waitFor(`!!document.querySelector('textarea[placeholder="章节大纲..."]')`, 'chapter');
-  await app.textButton('生成 大纲');
-  await app.waitFor(`${novelExpr}.metadata.storyNodes[0].outline.length>20`, 'generated outline');
-  await app.evaluate('[...document.querySelectorAll(".ant-tabs-tab")].find(e=>e.textContent.includes("草稿")).click()');
+  assert.ok((await app.evaluate('document.body.innerText')).includes('待写大纲'));
+  await app.textButton('生成大纲', '.chapter-editor');
+  await app.waitFor(`${novelExpr}.metadata.storyNodes[0].outline.startsWith('经审读：')`, 'generated and reviewed outline');
+  assert.match(outlineBeforeReview, /^林岚收车检查/);
+  assert.ok((await app.evaluate('document.body.innerText')).includes('待写正文'));
+  await app.click('.chapter-editor [role=tab][id$="-tab-content"]');
   await app.textButton('写作设置', '[data-testid="chapter-actions"]');
   await app.waitFor('document.querySelector("[data-testid=chapter-writing-settings]")?.innerText.includes("悬疑")', 'project genre inherited');
   await app.textButton('写作设置', '[data-testid="chapter-actions"]');
-  await app.textButton('生成正文');
+  await app.click('.chapter-editor [role=tab][id$="-tab-outline"]');
+  await app.click('[data-testid="chapter-outline-next"]');
+  await app.waitFor('!!document.querySelector(\'.chapter-editor [aria-selected="true"][id$="-tab-content"]\')', 'next action opens prose');
   await app.waitFor(`${novelExpr}.metadata.storyNodes[0].content.length>20`, 'generated prose');
   await app.waitFor(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':chapter-reviews') || '[]').length===1`, 'automatic editorial review');
   const writing = requests.filter(r => /大纲规划师|你是一位小说作者/.test(r.body.messages?.[0]?.content || ''));
   assert.equal(writing.length, 2);
-  assert.equal(requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说策划编辑')).length,1,'review a new plan once and reuse it while context is unchanged');
+  const outlineReviews = requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说策划编辑'));
+  assert.equal(outlineReviews.length,2,'repair one rejected review and reuse the valid result while context is unchanged');
+  assert.match(outlineReviews[1].body.messages[1].content, /上次回复未通过格式检查/);
   assert.ok(writing[1].body.messages[1].content.includes('经审读：'),'write from the reviewed plan rather than the unexamined planning response');
   for (const { body } of writing) {
     assert.ok(body.messages[0].content.includes('保留交接簿原件'),'stage events reach the real writing request');
@@ -199,7 +215,7 @@ try {
     if (proseRequest) assert.ok(body.max_tokens >= 16000,'reasoning must leave sufficient budget for the complete prose');
   }
   const plotReviews = requests.filter(r => /你是小说策划编辑|你是一位认真通读作品的小说编辑/.test(r.body.messages?.[0]?.content || ''));
-  assert.equal(plotReviews.length,2,'check both outline assessment and automatic prose review');
+  assert.equal(plotReviews.length,3,'check outline assessment recovery and automatic prose review');
   for(const {body} of plotReviews) assert.ok(body.messages.map(m=>m.content).join('\n').includes('核实预盖日期并保留原始报告。'),'review retains author resolution');
   await app.screenshot('novel-context.png');
   assert.ok(novelProse.length > 4000);

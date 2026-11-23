@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select, Checkbox, Tag, Popover } from 'antd';
+import { Alert, Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select, Checkbox, Tag, Popover } from 'antd';
 import {
   ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined,
   ZoomInOutlined, ZoomOutOutlined, ExperimentOutlined,
@@ -42,6 +42,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const novelTitle = novel.title;
   const metadata = novel.metadata as NovelMetadata;
   const [generating, setGenerating] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState('');
   const [streamContent, setStreamContent] = useState('');
   const [outlineDraft, setOutlineDraft] = useState(chapter.outline);
   const [contentDraft, setContentDraft] = useState(chapter.content);
@@ -98,6 +99,7 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     if (pending) pending.save(pending.updates);
   }, []);
   const debouncedSave = useCallback((field: 'outline' | 'content', value: string) => {
+    setGenerationError('');
     if (field === 'outline') setOutlineDraft(value);
     else { setContentDraft(value); setStreamContent(''); }
     pendingSave.current = { save: onUpdate, updates: { ...pendingSave.current?.updates, [field]: value,
@@ -122,7 +124,9 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
       return;
     }
 
+    setGenerationError('');
     setGenerating('outline');
+    let savedOutline = outlineDraft.trim();
     try {
       const request: LLMGenerateRequest = {
         taskType: 'planning',
@@ -138,11 +142,20 @@ ${NOVEL_WRITING_PRINCIPLES}
       };
 
       const response = await generatePlanningResponse(maxTokens => providerRouter.generate({ ...request, maxTokens }));
-      const outline = await reviewer.prepareOutline(chapter.order, response.content, getReviewContext());
-      onUpdate({ outline, status: 'drafting' });
-      message.success(t('common.success'));
+      const candidate = response.content.trim();
+      if (!candidate) throw new Error(t('novel.editor.emptyGeneratedOutline'));
+      if (!savedOutline) {
+        savedOutline = candidate;
+        setOutlineDraft(candidate);
+        onUpdate({ outline: candidate });
+      }
+      setGenerating('outlineReview');
+      const outline = await reviewer.prepareOutline(chapter.order, candidate, getReviewContext());
+      setOutlineDraft(outline);
+      onUpdate({ outline });
     } catch (err) {
-      message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
+      const detail = err instanceof Error ? err.message : String(err);
+      setGenerationError(savedOutline ? t('novel.editor.outlineRetained', { detail }) : detail);
     } finally {
       setGenerating(null);
     }
@@ -150,16 +163,16 @@ ${NOVEL_WRITING_PRINCIPLES}
 
   const handleGenerateContent = async () => {
     flushSave();
+    if (!outlineDraft.trim()) {
+      setActiveTab('outline');
+      return;
+    }
     if (!hasEndpoint) {
       message.warning(t('provider.title') + ' — ' + t('provider.addEndpoint'));
       return;
     }
 
-    if (!outlineDraft.trim()) {
-      message.warning(t('novel.outline') + ' — ' + t('novel.empty'));
-      return;
-    }
-
+    setGenerationError('');
     setGenerating('content');
     setPreparingProse(true);
     setActiveTab('content');
@@ -224,7 +237,7 @@ ${NOVEL_WRITING_PRINCIPLES}
       }
     } catch (err) {
       if (!controller.signal.aborted) {
-        message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
+        setGenerationError(err instanceof Error ? err.message : String(err));
       }
     } finally {
       if (abortRef.current === controller) { setGenerating(null); setPreparingProse(false); abortRef.current = null; }
@@ -264,6 +277,7 @@ ${NOVEL_WRITING_PRINCIPLES}
 
   const runReview = async (content = contentRef.current, context = getReviewContext()) => {
     if (!content.trim() || !hasEndpoint) return;
+    setGenerationError('');
     setGenerating('review');
     const originalReference = reviewer.buildContext(chapter.order, context);
     try {
@@ -271,7 +285,8 @@ ${NOVEL_WRITING_PRINCIPLES}
       setReview(result);
       if (contentRef.current === content && reviewer.buildContext(chapter.order, reviewContextRef.current()) === originalReference) onUpdate({ status: result.status === 'needs-revision' ? 'revising' : 'drafting' });
     } catch (error) {
-      message.error(t('novel.editor.reviewFailed') + ': ' + (error instanceof Error ? error.message : String(error)));
+      const detail = error instanceof Error ? error.message : String(error);
+      setGenerationError(t('novel.editor.proseReviewRetry', { detail }));
     } finally { setGenerating(null); }
   };
 
@@ -398,9 +413,12 @@ ${NOVEL_WRITING_PRINCIPLES}
     </div>
   );
 
+  const hasOutline = Boolean(outlineDraft.trim());
+  const hasProse = Boolean(contentDraft.trim());
+  const planningOutline = generating === 'outline' || generating === 'outlineReview';
   const generationStatus = generating === 'content' ? (preparingProse ? 'preparingProse' : 'writingProse')
     : generating === 'review' ? 'reviewingProse' : generating === 'outline' ? 'planningOutline'
-    : generating ? 'preparingEdits' : undefined;
+    : generating === 'outlineReview' ? 'reviewingOutline' : generating ? 'preparingEdits' : undefined;
 
   return (
     <div className="chapter-editor" data-testid="chapter-editor">
@@ -424,8 +442,8 @@ ${NOVEL_WRITING_PRINCIPLES}
         </Space>
       </div>
 
-      <div className="chapter-editor__review">
-        <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'review'} disabled={!contentDraft.trim() || generating !== null || !hasEndpoint} onClick={() => { flushSave(); void runReview(); }}>{t('novel.editor.runReview')}</Button>
+      {(hasProse || generationStatus) && <div className="chapter-editor__review">
+        {hasProse && <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'review'} disabled={generating !== null || !hasEndpoint} onClick={() => { flushSave(); void runReview(); }}>{t('novel.editor.runReview')}</Button>}
         {currentReview ? <>
           {!generationStatus && <Tag color={currentReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(currentReview.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed')}</Tag>}
           <Button size="small" type="link" disabled={!!generating} onClick={() => showReview(currentReview)}>{t('novel.editor.viewReview')}</Button>
@@ -434,7 +452,9 @@ ${NOVEL_WRITING_PRINCIPLES}
         <Text type="secondary" role="status" className="chapter-editor__status">
           {generationStatus ? t('novel.editor.' + generationStatus) : !currentReview && t(review ? 'novel.editor.reviewStale' : 'novel.editor.unreviewed')}
         </Text>
-      </div>
+      </div>}
+      {generationError && <Alert className="chapter-editor__notice" type="warning" showIcon
+        message={generationError} closable onClose={() => setGenerationError('')} />}
       {/* Tabs: outline / content */}
       <Tabs
         size="small"
@@ -447,6 +467,20 @@ ${NOVEL_WRITING_PRINCIPLES}
             label: <span><AlignLeftOutlined /> {t('novel.outline')}</span>,
             children: (
               <div className="chapter-editor__page">
+                <div className="chapter-editor__toolbar">
+                  {hasOutline && <Button size="small" type="primary"
+                    icon={hasProse ? <FileTextOutlined /> : <ThunderboltOutlined />}
+                    disabled={generating !== null} data-testid="chapter-outline-next"
+                    onClick={hasProse ? () => setActiveTab('content') : handleGenerateContent}
+                  >
+                    {t(hasProse ? 'novel.editor.viewProse' : 'novel.editor.generateProse')}
+                  </Button>}
+                  <Button size="small" type={hasOutline ? 'default' : 'primary'} icon={<ThunderboltOutlined />}
+                    loading={planningOutline} disabled={generating !== null} onClick={handleGenerateOutline}
+                  >
+                    {t(hasOutline && !planningOutline ? 'novel.editor.regenerateOutline' : 'novel.editor.generateOutline')}
+                  </Button>
+                </div>
                 <Input.TextArea
                   value={outlineDraft}
                   onChange={(e) => debouncedSave('outline', e.target.value)}
@@ -456,28 +490,55 @@ ${NOVEL_WRITING_PRINCIPLES}
                   style={textareaStyle}
                   disabled={generating !== null}
                 />
-                <div className="chapter-editor__footer">
-                  <Button
-                    icon={<ThunderboltOutlined />}
-                    onClick={handleGenerateOutline}
-                    loading={generating === 'outline'}
-                    disabled={generating !== null}
-                    size="small"
-                    type="primary"
-                    ghost
-                  >
-                    {t('novel.generate') + ' ' + t('novel.outline')}
-                  </Button>
-                </div>
               </div>
             ),
           },
           {
             key: 'content',
-            label: <span><FileTextOutlined /> {t('novel.draft')}</span>,
+            label: <span><FileTextOutlined /> {t('novel.editor.manuscript')}</span>,
             children: (
               <div className="chapter-editor__page">
-                {outlineDraft && <div className="chapter-editor__outline">
+                <div className="chapter-editor__toolbar" data-testid="chapter-actions">
+                  {generating === 'content' ? (
+                    <Button size="small" danger onClick={handleStopGeneration}>
+                      {t('novel.stopGeneration')}
+                    </Button>
+                  ) : (
+                    <>
+                      <Button size="small" type="primary" icon={hasOutline ? <ThunderboltOutlined /> : <AlignLeftOutlined />}
+                        onClick={handleGenerateContent} disabled={generating !== null}
+                      >
+                        {t(hasOutline ? 'novel.editor.generateProse' : 'novel.editor.editOutline')}
+                      </Button>
+                      <Popover content={writingSettings} trigger="click" placement="bottomRight">
+                        <Button size="small" icon={<SettingOutlined />} disabled={!!generating} data-testid="chapter-writing-settings-toggle">
+                          {t('novel.editor.writingSettings')}
+                        </Button>
+                      </Popover>
+                      <Dropdown menu={{ items: aiToolItems }} trigger={['click']} disabled={!!generating || !hasProse}>
+                        <Button size="small" icon={<ExperimentOutlined />}>
+                          {t('editor.aiTools')}
+                        </Button>
+                      </Dropdown>
+                    </>
+                  )}
+                  <Button
+                    icon={<SaveOutlined />}
+                    size="small"
+                    onClick={() => {
+                      flushSave();
+                      onUpdate({
+                        content: streamContent || contentDraft,
+                        wordCount: (streamContent || contentDraft).length,
+                      });
+                      message.success(t('message.saved'));
+                    }}
+                  >
+                    {t('common.save')}
+                  </Button>
+                  <Text type="secondary" className="chapter-editor__count" data-testid="chapter-word-count">{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
+                </div>
+                {hasOutline && <div className="chapter-editor__outline">
                   <Button size="small" type="text" icon={<AlignLeftOutlined />} aria-expanded={showOutlineRef}
                     onClick={() => setShowOutlineRef(visible => !visible)}>{t('novel.outlineRef')}</Button>
                   {showOutlineRef && <div className="chapter-editor__outline-preview">
@@ -494,55 +555,6 @@ ${NOVEL_WRITING_PRINCIPLES}
                   className="chapter-editor__text"
                   style={textareaStyle}
                 />
-                <div className="chapter-editor__footer" data-testid="chapter-actions">
-                  <Text type="secondary" className="chapter-editor__count" data-testid="chapter-word-count">{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
-                  <div className="chapter-editor__actions">
-                    {generating === 'content' ? (
-                      <Button size="small" danger onClick={handleStopGeneration}>
-                        {t('novel.stopGeneration')}
-                      </Button>
-                    ) : (
-                      <>
-                        <Popover content={writingSettings} trigger="click" placement="topRight">
-                          <Button size="small" icon={<SettingOutlined />} disabled={!!generating} data-testid="chapter-writing-settings-toggle">
-                            {t('novel.editor.writingSettings')}
-                          </Button>
-                        </Popover>
-                        <Dropdown menu={{ items: aiToolItems }} trigger={['click']} disabled={!!generating || !contentDraft.trim()}>
-                          <Button size="small" icon={<ExperimentOutlined />}>
-                            {t('editor.aiTools')}
-                          </Button>
-                        </Dropdown>
-                        <Button
-                          icon={<ThunderboltOutlined />}
-                          onClick={handleGenerateContent}
-                          loading={generating === 'content'}
-                          disabled={generating !== null}
-                          size="small"
-                          type="primary"
-                        >
-                          {t('novel.editor.generateProse')}
-                        </Button>
-                      </>
-                    )}
-                    <Tooltip title={t('common.save')}>
-                      <Button
-                        icon={<SaveOutlined />}
-                        size="small"
-                        onClick={() => {
-                          flushSave();
-                          onUpdate({
-                            content: streamContent || contentDraft,
-                            wordCount: (streamContent || contentDraft).length,
-                          });
-                          message.success(t('message.saved'));
-                        }}
-                      >
-                        {t('common.save')}
-                      </Button>
-                    </Tooltip>
-                  </div>
-                </div>
               </div>
             ),
           },

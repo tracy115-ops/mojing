@@ -5,6 +5,21 @@
   overflow: hidden;
 }
 
+.novel-workspace__project-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-secondary);
+  background: var(--bg-container);
+}
+
+.novel-workspace__project-title {
+  min-width: 0;
+}
+
 .novel-workspace__editor {
   flex: 1;
   min-width: 0;
@@ -59,6 +74,12 @@
   display: none;
 }
 
+.chapter-editor__notice {
+  flex: none;
+  margin: 6px 12px;
+  overflow-wrap: anywhere;
+}
+
 .chapter-editor__tabs {
   flex: 1;
   min-height: 0;
@@ -110,26 +131,17 @@
   white-space: pre-wrap;
 }
 
-.chapter-editor__footer,
-.chapter-editor__actions {
+.chapter-editor__toolbar {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
 }
 
-.chapter-editor__footer {
-  flex: none;
-}
-
-.chapter-editor__actions {
-  justify-content: flex-end;
-  margin-inline-start: auto;
-  min-width: 0;
-}
-
 .chapter-editor__count {
   flex: none;
+  margin-inline-start: auto;
   white-space: nowrap;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
