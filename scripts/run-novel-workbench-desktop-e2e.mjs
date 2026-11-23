@@ -38,6 +38,10 @@ try {
   }
   await app.waitFor(`!!document.querySelector('button[aria-label="小说引擎"]')`, 'restored app');
   await app.nativeClick('button[aria-label="小说引擎"]');
+  await app.waitFor('!!document.querySelector("[data-testid=novel-workbench-toggle]")', 'workbench entry');
+  if (await app.evaluate('document.querySelector("[data-testid=novel-workbench-toggle]").getAttribute("aria-expanded")==="false"')) {
+    await app.nativeClick('[data-testid=novel-workbench-toggle]');
+  }
   await app.waitFor('!!document.querySelector("[data-testid=narrative-dashboard]")', 'workbench');
   assert.equal(await app.evaluate('window.__TAURI__.app.getVersion()'), version);
   const pane = '.narrative-workbench-tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane-active';

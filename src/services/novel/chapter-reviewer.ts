@@ -48,8 +48,8 @@ export class ChapterReviewer {
   async prepareOutline(chapterIndex: number, outline: string, context: ChapterReviewContext): Promise<string> {
     const reference = buildWritingContext(context.source, this.repo.loadBible(), context.chapters, chapterIndex, this.loadHistory(), 'writing', this.repo.loadWritingReferences());
     const contextFingerprint = textFingerprint(reference);
-    const saved = this.repo.loadCustomData<{ contextFingerprint: string; outlineFingerprint: string } | null>('chapter-outline:' + chapterIndex, null);
-    if (saved?.contextFingerprint === contextFingerprint && saved.outlineFingerprint === textFingerprint(outline)) return outline;
+    const saved = this.repo.loadCustomData<{ ready: boolean; contextFingerprint: string; outlineFingerprint: string } | null>('chapter-outline:' + chapterIndex, null);
+    if (saved?.ready && saved.contextFingerprint === contextFingerprint && saved.outlineFingerprint === textFingerprint(outline)) return outline;
     const response = await this.generateEditorial({
       taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens: 12288, thinking: true,
       systemPrompt: `你是小说策划编辑，负责在正文写作前审读并修正章节方案。目标是好读、可信、确有推进的故事，而非符合模板的术语清单。
@@ -69,6 +69,10 @@ ${NOVEL_WRITING_PRINCIPLES}
 
   async reviewChapter(chapterIndex: number, content: string, context: ChapterReviewContext, options: { persist?: boolean } = {}): Promise<ChapterReviewReport> {
     const reference = this.buildContext(chapterIndex, context);
+    const factSources = [context.source.description,
+      ...this.repo.loadBible().worldSettings.flatMap(setting => setting.constraints ?? []),
+      ...context.chapters.filter(chapter => chapter.order < chapterIndex).map(chapter => chapter.content),
+    ];
     const systemPrompt = `你是一位认真通读作品的小说编辑。判断阅读效果，分数只是辅助，不是文学质量证书。
 ${NOVEL_WRITING_PRINCIPLES}
 审读六个维度：
@@ -83,9 +87,11 @@ voice_quality：语言是否准确自然，是否重复意象、句式和身体�
 结合前文通读完整正文，重点检查章间衔接和结尾。原始简介优先；规划不等于已发生事实；人物猜想不等于事实。文风公约也要接受阅读效果检验，不能因为遵守了“白描”“微表情”“环境外化”等要求就给出好评。不能因只命中一个普通词、出现比喻或叙述较安静就判定“AI写作”。不得捏造漏洞、要求未提供的章节证据，或为了凑数量报错。悬念暂未解释不等于缺陷，不要建议增加神秘表情、回避动作、新比喻来替代真实的动机和推进；没有改善作用的换词不要报。
 必要的心理直述、平常的说明、人物在压力下偶尔反问，不违反“克制”或“冷静”。不要按旧文风公约或性格标签逐句执法；不得建议用捏手指、看窗外等无实质作用的动作替代清楚的心理。职业判断须有已提供的规则或可靠常识支持，不能臆造单位规章或断言照片等同实物鉴定。
 每个问题必须用 paragraphId 指向本章对应段落（例如C12）；涉及连续多段可用C12-C15，最多连续20段。如声称前后冲突，referenceId须指向对照原文：本章其他段落用C编号（如C7），前文/设定用R编号（如R3）；其他问题填空字符串。两种编号不能混为同一范围。引用由系统从段落编号提取，你不要重新抄写或改写引文。问题需要解释读者为何受到影响，并给出具体修订方向。
-critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的因果/人物/节奏/语言问题，minor 是可选的局部改善。重大问题不能被其他高分抵消。
+每条用 basis 标记依据。conflict 表示两处明确的表述不能同时成立，currentEvidence 和 referenceEvidence 分别逐字摘录各自段落里直接冲突的短句。对照只采用本章、前文、作者原始约束或明确的世界规则。推演的方案只用来讨论叙事，不能证明事实矛盾。
+uncertain 表示读者需要核对的疑点，说明尚缺的事实。保留人物口供和推测的归属。举例：23点45分到站，“二十分钟前”是相对转述时间。文中未写转述时刻，就不能先假定23:55再宣布23:35来访；也不能把两个未确认身份的人算成同一人。勿为修复疑点补造精确时刻、距离、证词。craft 用于有明确阅读影响的结构和文字建议。
+critical 用于有直接证据的硬事实矛盾或核心承诺被破坏，major 是影响阅读的因果、人物、节奏或语言问题，minor 是可选的局部改善。只在 summary 中写原文支持的阅读判断。
 只输出严格 JSON，最多8个确有依据且按影响排序的问题。summary指出具体阅读效果，不泛泛称赞氛围或细腻。提取本章最多10条对后文重要的已发生事实或未解问题；每条只写所指段落直接支持的一件事，区分推测与确认，不能把设定、大纲或其他段落的信息补进来，不凑数量：
-{"dimensions":[${EDITORIAL_DIMENSIONS.map(name => `{"name":"${name}","score":80}`).join(',')}],"summary":"具体的阅读判断，包含长处与仍存问题","findings":[{"dimension":"plot_coherence","severity":"major","paragraphId":"C12","referenceId":"R3","problem":"具体问题及影响","suggestion":"具体修订方向"}],"continuityNotes":[{"fact":"人物/时间/地点/道具/信息来源/未解问题，保持事实与推测的区别","paragraphId":"C2"}]}`;
+{"dimensions":[${EDITORIAL_DIMENSIONS.map(name => `{"name":"${name}","score":80}`).join(',')}],"summary":"具体的阅读判断，包含长处与仍存问题","findings":[{"dimension":"plot_coherence","severity":"major","basis":"craft","paragraphId":"C12","referenceId":"","currentEvidence":"","referenceEvidence":"","problem":"具体问题及影响","suggestion":"具体修订方向"}],"continuityNotes":[{"fact":"人物/时间/地点/道具/信息来源/未解问题，保持事实与推测的区别","paragraphId":"C2"}]}`;
     let correction = '';
     let failure: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -95,7 +101,7 @@ critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的�
         responseFormat: 'json', temperature: 0.2, maxTokens: 16384, thinking: true,
       });
       try {
-        const assessment = parseEditorialAssessment(response.content, content, reference);
+        const assessment = parseEditorialAssessment(response.content, content, reference, excerpt => factSources.some(source => source.includes(excerpt)));
         const report: ChapterReviewReport = {
           ...assessment, novelId: this.novelId, chapter: chapterIndex,
           overallScore: Math.round(assessment.dimensions.reduce((sum, d) => sum + d.score, 0) / assessment.dimensions.length),
@@ -115,6 +121,8 @@ critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的�
   }
 
   async proposeRevision(chapterIndex: number, content: string, context: ChapterReviewContext, mode: 'polish' | 'rewrite' | 'expand' | 'review', report?: ChapterReviewReport): Promise<EditorialEdit[]> {
+    const findings = report?.findings.filter(finding => finding.basis !== 'uncertain');
+    if (mode === 'review' && findings?.length === 0) return [];
     const purposes = {
       polish: '改善不准确、重复、解释过多或节奏机械的语言，保留有辨识度的表达。',
       rewrite: '修正影响阅读的叙事与表达问题，保留事件、人物立场、有效细节和章末承接。',
@@ -125,11 +133,12 @@ critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的�
       taskType: 'rewrite', responseFormat: 'json', temperature: 0.35, maxTokens: 16384, thinking: true,
       systemPrompt: `你是小说责任编辑。${purposes[mode]}\n${NOVEL_WRITING_PRINCIPLES}
 先通读本章与前文，独立判断审稿建议是否成立，再修复最影响内容的地方。审稿意见可能错漏，不要机械执行；优先动机与因果、实质推进、前后承接，再改语言。
+改动取证过程前核对谁在场、谁说过什么、事件和转述分别何时发生。正文只给相对时间或证人估计时，保留其范围。缺少证据时可以让人物保留疑问或删去武断判断，不补造具体时刻、记录、权限或人物身份。
 同一个问题若涉及相邻多段，应一起改清行动、反应与后果。例如人物已把物件交出，后文再次使用前须有取回过程；已经讲过的调查过程再次转述，只保留接收者的新反应及其造成的变化。修改后核对范围前后的站位、道具、时间、信息来源与指代，不让局部修订产生新矛盾。
 删掉冗余就是有效修订，无需用新比喻、更多环境或神秘动作补回字数。保留人物和作品本来的声音，不把全文改成整齐的短句或同一种腔调。不得靠增加错别字、随机口语、无关经历或替换同义词制造自然感。
 提出最多12处有明确阅读收益的修改；没有值得采用的修改就返回空edits。paragraphId可用单段C12或连续范围C12-C15，最多连续20段。每处after替换所指范围的全部正文，保留范围内仍有效的事件与细节，可用空字符串删除冗余。各范围不得重叠，也不得同时对一个范围和其内部单段提出修改。
 保持范围外的原文，不缩写整章、不丢结尾。不得修改原始故事约束，不能靠新增信物、失忆、幕后消息或超自然能力填补逻辑。reason说明具体问题和修改对阅读的帮助。只输出严格JSON：{"edits":[{"paragraphId":"C12-C15","after":"改后完整语段，段间保留换行","reason":"理由"}]}`,
-      userPrompt: `${this.buildContext(chapterIndex, context)}\n\n【本章完整正文，C编号】\n${labelEditorialParagraphs(content)}\n\n【审稿问题】\n${report ? JSON.stringify(report.findings) : '请通读全文，找出最影响阅读的具体语段。'}`,
+      userPrompt: `${this.buildContext(chapterIndex, context)}\n\n【本章完整正文，C编号】\n${labelEditorialParagraphs(content)}\n\n【审稿问题】\n${findings?.length ? JSON.stringify(findings) : '请通读全文，找出最影响阅读的具体语段。'}`,
     });
     return parseEditorialEdits(response.content, content);
   }

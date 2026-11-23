@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select, Checkbox, Tag } from 'antd';
+import { Input, Button, Space, Tabs, message, Tooltip, Typography, Dropdown, Modal, Select, Checkbox, Tag, Popover } from 'antd';
 import {
   ThunderboltOutlined, SaveOutlined, FileTextOutlined, AlignLeftOutlined,
   ZoomInOutlined, ZoomOutOutlined, ExperimentOutlined,
   ReloadOutlined, ExpandOutlined, FormatPainterOutlined,
-  FileSearchOutlined,
+  FileSearchOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
@@ -16,6 +16,7 @@ import { applyEditorialEdits, isReviewCurrent } from '@/services/novel/editorial
 import { generatePlanningResponse } from '@/services/novel/planning-generation';
 import type { NovelChapter, NovelMetadata, CreativeProject } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
+import './novel-workspace.css';
 
 const { Text } = Typography;
 
@@ -50,9 +51,8 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
   const [reviewer] = useState(() => new ChapterReviewer(novel.id));
   const [review, setReview] = useState<ChapterReviewReport | null>(() => reviewer.loadHistory().find(r => r.chapter === chapter.order) ?? null);
   const [autoReview, setAutoReview] = useState(true);
-  const [showOutlineRef, setShowOutlineRef] = useState(true);
-  const [editingRef, setEditingRef] = useState(false);
-  const [refText, setRefText] = useState(chapter.outline ?? '');
+  const [showOutlineRef, setShowOutlineRef] = useState(false);
+  const [preparingProse, setPreparingProse] = useState(false);
   const [novelGenre, setNovelGenre] = useState<string>(() => ({
     fantasy: 'xuanhuan', scifi: 'scifi', romance: 'urban_romance', mystery: 'suspense', literary: 'literary', wuxia: 'wuxia',
   }[metadata.genre] ?? metadata.genre ?? 'literary'));
@@ -115,12 +115,6 @@ const ChapterEditor: React.FC<ChapterEditorProps> = ({ chapter, onUpdate, allCha
     return () => { window.removeEventListener('pagehide', flushSave); window.removeEventListener('beforeunload', flushSave); flushSave(); };
   }, [flushSave]);
 
-  // Sync outline ref text when chapter changes
-  useEffect(() => {
-    setRefText(chapter.outline ?? '');
-    setEditingRef(false);
-  }, [chapter.id, chapter.outline]);
-
   const handleGenerateOutline = async () => {
     flushSave();
     if (!hasEndpoint) {
@@ -167,6 +161,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     }
 
     setGenerating('content');
+    setPreparingProse(true);
     setActiveTab('content');
     setStreamContent('');
     const controller = new AbortController();
@@ -175,6 +170,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     try {
       const writingOutline = await reviewer.prepareOutline(chapter.order, outlineDraft, getReviewContext());
       if (controller.signal.aborted) return;
+      setPreparingProse(false);
       setOutlineDraft(writingOutline);
       onUpdate({ outline: writingOutline });
       const genrePrompts: Record<string, string> = {
@@ -231,7 +227,7 @@ ${NOVEL_WRITING_PRINCIPLES}
         message.error(`${t('common.failed')}: ${err instanceof Error ? err.message : String(err)}`);
       }
     } finally {
-      if (abortRef.current === controller) { setGenerating(null); abortRef.current = null; }
+      if (abortRef.current === controller) { setGenerating(null); setPreparingProse(false); abortRef.current = null; }
     }
   };
 
@@ -255,7 +251,9 @@ ${NOVEL_WRITING_PRINCIPLES}
       <p>{report.summary}</p>
       <Text type="secondary">{t('novel.editor.reviewLimit')}</Text>
       {report.findings.map((f, i) => <div key={i} style={{ marginBottom: 16 }}>
-        <Tag color={f.severity === 'critical' ? 'error' : f.severity === 'major' ? 'warning' : 'default'}>{t('novel.editor.severity.' + f.severity)}</Tag>
+        <Tag color={f.basis === 'uncertain' ? 'default' : f.severity === 'critical' ? 'error' : f.severity === 'major' ? 'warning' : 'default'}>
+          {t(f.basis === 'uncertain' ? 'novel.editor.evidencePending' : 'novel.editor.severity.' + f.severity)}
+        </Tag>
         <strong>{f.problem}</strong>
         <blockquote style={{ borderLeft: '2px solid var(--border-secondary)', paddingLeft: 12, whiteSpace: 'pre-wrap' }}>{f.quote}</blockquote>
         {f.referenceQuote && <p><Text type="secondary">{t('novel.editor.reference')}: {f.referenceQuote}</Text></p>}
@@ -284,7 +282,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     const originalReference = reviewer.buildContext(chapter.order, getReviewContext());
     if (content.trim().length < 20) { message.warning(t('editor.noContent')); return; }
     if (mode === 'consistency_check') { await runReview(content); return; }
-    setGenerating(mode);
+    setGenerating(mode === 'review' ? 'revise' : mode);
     try {
       if (mode === 'summarize') {
         const response = await providerRouter.generate({ taskType: 'extraction',
@@ -338,8 +336,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     onUpdate({ content: backup.before, wordCount: backup.before.length, status: 'revising' });
   };
 
-  const wordCount = streamContent || contentDraft || '';
-  const wc = wordCount.length;
+  const wc = (streamContent || contentDraft).length;
 
   const textareaStyle: React.CSSProperties = {
     fontSize,
@@ -380,8 +377,33 @@ ${NOVEL_WRITING_PRINCIPLES}
     { key: 'restore_revision', icon: <ReloadOutlined />, label: t('novel.editor.restoreRevision'), onClick: restoreRevision },
   ];
 
+  const writingSettings = (
+    <div className="chapter-editor__settings" data-testid="chapter-writing-settings">
+      <label htmlFor="chapter-writing-genre">{t('novel.genre')}</label>
+      <Select id="chapter-writing-genre" size="small" value={novelGenre} onChange={setNovelGenre} options={[
+        { value: 'xuanhuan', label: t('novel.genre.fantasy') },
+        { value: 'urban_romance', label: t('novel.genre.romance') },
+        { value: 'suspense', label: t('novel.genre.mystery') },
+        { value: 'cyberpunk', label: t('novel.editor.cyberpunk') },
+        { value: 'scifi', label: t('novel.genre.scifi') },
+        { value: 'literary', label: t('novel.genre.literary') },
+        { value: 'wuxia', label: t('novel.genre.wuxia') },
+      ]} />
+      <label htmlFor="chapter-writing-pov">{t('novel.editor.pointOfView')}</label>
+      <Select id="chapter-writing-pov" size="small" value={novelPOV} onChange={setNovelPOV} options={[
+        { value: 'third_person', label: t('novel.editor.thirdPerson') },
+        { value: 'first_person', label: t('novel.editor.firstPerson') },
+      ]} />
+      <Checkbox checked={autoReview} onChange={e => setAutoReview(e.target.checked)}>{t('novel.editor.autoReview')}</Checkbox>
+    </div>
+  );
+
+  const generationStatus = generating === 'content' ? (preparingProse ? 'preparingProse' : 'writingProse')
+    : generating === 'review' ? 'reviewingProse' : generating === 'outline' ? 'planningOutline'
+    : generating ? 'preparingEdits' : undefined;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="chapter-editor" data-testid="chapter-editor">
       {/* Chapter title + zoom controls */}
       <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}>
         <Input
@@ -389,7 +411,7 @@ ${NOVEL_WRITING_PRINCIPLES}
           onChange={(e) => { onUpdate({ title: e.target.value }); }}
           placeholder={t('novel.chapterTitle')}
           variant="borderless"
-          style={{ flex: 1, fontSize: 15, fontWeight: 600, padding: '4px 0' }}
+          style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, padding: '4px 0' }}
         />
         <Space size={2}>
           <Tooltip title={t('editor.zoomOut')}>
@@ -402,36 +424,39 @@ ${NOVEL_WRITING_PRINCIPLES}
         </Space>
       </div>
 
-      <div style={{ padding: '6px 12px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--border-secondary)' }}>
-        <Checkbox checked={autoReview} onChange={e => setAutoReview(e.target.checked)}>{t('novel.editor.autoReview')}</Checkbox>
+      <div className="chapter-editor__review">
         <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'review'} disabled={!contentDraft.trim() || generating !== null || !hasEndpoint} onClick={() => { flushSave(); void runReview(); }}>{t('novel.editor.runReview')}</Button>
         {currentReview ? <>
-          <Tag color={currentReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(currentReview.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed')}</Tag>
-          <Button size="small" type="link" onClick={() => showReview(currentReview)}>{t('novel.editor.viewReview')}</Button>
-          <Button size="small" disabled={generating !== null || !currentReview.findings.length} onClick={() => handleAITool('review')}>{t('novel.editor.reviseIssues')}</Button>
-        </> : <Text type="secondary">{t(review ? 'novel.editor.reviewStale' : 'novel.editor.unreviewed')}</Text>}
+          {!generationStatus && <Tag color={currentReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(currentReview.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed')}</Tag>}
+          <Button size="small" type="link" disabled={!!generating} onClick={() => showReview(currentReview)}>{t('novel.editor.viewReview')}</Button>
+          {currentReview.findings.some(finding => finding.basis !== 'uncertain') && <Button size="small" loading={generating === 'revise'} disabled={generating !== null} onClick={() => handleAITool('review')}>{t('novel.editor.reviseIssues')}</Button>}
+        </> : null}
+        <Text type="secondary" role="status" className="chapter-editor__status">
+          {generationStatus ? t('novel.editor.' + generationStatus) : !currentReview && t(review ? 'novel.editor.reviewStale' : 'novel.editor.unreviewed')}
+        </Text>
       </div>
       {/* Tabs: outline / content */}
       <Tabs
         size="small"
+        className="chapter-editor__tabs"
         activeKey={activeTab}
         onChange={setActiveTab}
-        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
         items={[
           {
             key: 'outline',
             label: <span><AlignLeftOutlined /> {t('novel.outline')}</span>,
             children: (
-              <div style={{ padding: '0 12px', height: '100%' }}>
+              <div className="chapter-editor__page">
                 <Input.TextArea
                   value={outlineDraft}
                   onChange={(e) => debouncedSave('outline', e.target.value)}
                   onBlur={flushSave}
                   placeholder={t("novel.outlinePlaceholder")}
-                  style={{ height: 'calc(100% - 40px)', resize: 'vertical', ...textareaStyle }}
+                  className="chapter-editor__text"
+                  style={textareaStyle}
                   disabled={generating !== null}
                 />
-                <div style={{ marginTop: 8 }}>
+                <div className="chapter-editor__footer">
                   <Button
                     icon={<ThunderboltOutlined />}
                     onClick={handleGenerateOutline}
@@ -451,114 +476,40 @@ ${NOVEL_WRITING_PRINCIPLES}
             key: 'content',
             label: <span><FileTextOutlined /> {t('novel.draft')}</span>,
             children: (
-              <div style={{ padding: '0 12px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-                {/* Outline reference banner — collapsible */}
-                {chapter.outline && (
-                  <div style={{
-                    marginBottom: 6, borderRadius: 6,
-                    border: '1px solid var(--border-secondary)',
-                    background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
-                    overflow: 'hidden',
-                  }}>
-                    <div
-                      onClick={() => setShowOutlineRef(!showOutlineRef)}
-                      style={{
-                        padding: '4px 10px', display: 'flex', alignItems: 'center',
-                        justifyContent: 'space-between', cursor: 'pointer',
-                        fontSize: 11, color: 'var(--text-secondary)',
-                        userSelect: 'none',
-                      }}
-                    >
-                      <span><AlignLeftOutlined style={{ marginRight: 4 }} />{t('novel.outlineRef')}</span>
-                      <span style={{ fontSize: 9 }}>{showOutlineRef ? '▲' : '▼'}</span>
-                    </div>
-                    {showOutlineRef && (
-                      <div
-                        onDoubleClick={() => { setEditingRef(true); setRefText(chapter.outline ?? ''); }}
-                        style={{ padding: '0 10px 6px', fontSize: 11, lineHeight: 1.7, color: 'var(--text-secondary)', maxHeight: 120, overflowY: 'auto' }}
-                        title={t('novel.outlineRef.hint')}
-                      >
-                        {editingRef ? (
-                          <Input.TextArea
-                            value={refText}
-                            onChange={(e) => setRefText(e.target.value)}
-                            onBlur={() => { onUpdate({ outline: refText }); setEditingRef(false); }}
-                            onPressEnter={(e) => { if (!e.shiftKey) { onUpdate({ outline: refText }); setEditingRef(false); } }}
-                            autoSize={{ minRows: 2, maxRows: 6 }}
-                            style={{ fontSize: 11 }}
-                            autoFocus
-                          />
-                        ) : (
-                          <div style={{ whiteSpace: 'pre-wrap' }}>{chapter.outline}</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+              <div className="chapter-editor__page">
+                {outlineDraft && <div className="chapter-editor__outline">
+                  <Button size="small" type="text" icon={<AlignLeftOutlined />} aria-expanded={showOutlineRef}
+                    onClick={() => setShowOutlineRef(visible => !visible)}>{t('novel.outlineRef')}</Button>
+                  {showOutlineRef && <div className="chapter-editor__outline-preview">
+                    <div>{outlineDraft}</div>
+                    <Button size="small" type="link" onClick={() => setActiveTab('outline')}>{t('novel.editor.editOutline')}</Button>
+                  </div>}
+                </div>}
                 <Input.TextArea
                   value={streamContent || contentDraft}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
                   onBlur={flushSave}
                   disabled={generating === 'content'}
                   placeholder={t("novel.contentPlaceholder")}
-                  style={{ flex: 1, resize: 'vertical', minHeight: 300, ...textareaStyle }}
+                  className="chapter-editor__text"
+                  style={textareaStyle}
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                  <Space>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
-                  </Space>
-                  <Space>
+                <div className="chapter-editor__footer" data-testid="chapter-actions">
+                  <Text type="secondary" className="chapter-editor__count" data-testid="chapter-word-count">{t('novel.wordCount', { count: wc.toLocaleString() })}</Text>
+                  <div className="chapter-editor__actions">
                     {generating === 'content' ? (
                       <Button size="small" danger onClick={handleStopGeneration}>
                         {t('novel.stopGeneration')}
                       </Button>
                     ) : (
                       <>
-                        <Select
-                          size="small"
-                          value={novelGenre}
-                          onChange={(v) => setNovelGenre(v)}
-                          style={{ width: 110 }}
-                          options={[
-                            { value: 'xuanhuan', label: '🔥 玄幻热血' },
-                            { value: 'urban_romance', label: '🌸 都市细腻' },
-                            { value: 'suspense', label: '🔍 悬疑反转' },
-                            { value: 'cyberpunk', label: '⚡ 赛博朋克' },
-                            { value: 'scifi', label: t('novel.genre.scifi') },
-                            { value: 'literary', label: t('novel.genre.literary') },
-                            { value: 'wuxia', label: '🏮 古风武侠' },
-                          ]}
-                        />
-                        <Select
-                          size="small"
-                          value={novelPOV}
-                          onChange={(v) => setNovelPOV(v)}
-                          style={{ width: 90 }}
-                          options={[
-                            { value: 'third_person', label: '👁️ 第三人称' },
-                            { value: 'first_person', label: '🙋 第一人称' },
-                          ]}
-                        />
-                        <Button
-                          size="small"
-                          icon={<FormatPainterOutlined />}
-                          loading={generating === 'polish'}
-                          disabled={!chapter.content || generating !== null}
-                          onClick={() => handleAITool('polish')}
-                        >
-                          {t('editor.aiPolish')}
-                        </Button>
-                        <Button
-                          size="small"
-                          icon={<ReloadOutlined />}
-                          loading={generating === 'rewrite'}
-                          disabled={!chapter.content || generating !== null}
-                          onClick={() => handleAITool('rewrite')}
-                        >
-                          {t('editor.aiRewrite')}
-                        </Button>
-                        <Dropdown menu={{ items: aiToolItems }} trigger={['click']}>
-                          <Button size="small" icon={<ExperimentOutlined />} loading={generating !== null}>
+                        <Popover content={writingSettings} trigger="click" placement="topRight">
+                          <Button size="small" icon={<SettingOutlined />} disabled={!!generating} data-testid="chapter-writing-settings-toggle">
+                            {t('novel.editor.writingSettings')}
+                          </Button>
+                        </Popover>
+                        <Dropdown menu={{ items: aiToolItems }} trigger={['click']} disabled={!!generating || !contentDraft.trim()}>
+                          <Button size="small" icon={<ExperimentOutlined />}>
                             {t('editor.aiTools')}
                           </Button>
                         </Dropdown>
@@ -570,7 +521,7 @@ ${NOVEL_WRITING_PRINCIPLES}
                           size="small"
                           type="primary"
                         >
-                          {t('novel.generate')}
+                          {t('novel.editor.generateProse')}
                         </Button>
                       </>
                     )}
@@ -590,7 +541,7 @@ ${NOVEL_WRITING_PRINCIPLES}
                         {t('common.save')}
                       </Button>
                     </Tooltip>
-                  </Space>
+                  </div>
                 </div>
               </div>
             ),

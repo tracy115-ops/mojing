@@ -125,7 +125,7 @@ export function buildWritingContext(
 ): string {
   const previous = chapters.filter(c => c.order < chapterIndex && c.content.trim()).sort((a, b) => a.order - b.order);
   const sections = [
-    '【创作依据的使用边界】\n先核对已写事实、人物约定和信息来源，再展开本章。规划中的推断尚未得到证明；缺少观察不等于排除了其他可能，不能为了推进而补成唯一答案。',
+    '【创作依据的使用边界】\n先核对前文、人物约定和信息来源，再展开本章。保留口供与推测的归属，只有正文给出验证过程才能把猜测写成事实。规划不替代正文，缺少观察时保留其他可能。',
     `【作者原始设定，优先于推演规划】\n小说：《${source.title}》\n类型：${source.genre}\n风格：${source.style}\n语言：${source.language || '中文'}\n简介与创作约束：${source.description}`,
     `【文风偏好，服务于内容，不是事实或逐句禁令】\n${purpose === 'review' ? '审读以实际阅读效果为准，不能仅因心理直述、句子长短、缺少手势或人物偶尔偏离性格标签报错。只有确实造成阅读障碍才提出修改，并说明影响。' : '沿用作品的声音；不把偏好执行成动作、环境、比喻的配额。'}\n${bible.styleNotes.map(n => `${n.key}: ${n.value}`).join('\n')}`,
     ...bible.worldSettings.map(w => `【世界设定：${w.name}】\n${w.description}${w.constraints?.length ? `\n约束：${w.constraints.join('；')}` : ''}`),
@@ -138,9 +138,10 @@ export function buildWritingContext(
   for (const c of previous) {
     if (recentIds.has(c.id)) continue;
     const memory = memories.find(m => m.chapter === c.order && m.contentFingerprint === textFingerprint(c.content));
-    const notes = memory?.continuityNotes?.filter(n => c.content.includes(n.quote));
-    sections.push(notes?.length
-      ? `【第${c.order + 1}章已发生事实，附原文依据】\n${notes.map(n => `${n.fact}（原文：${n.quote}）`).join('\n')}`
+    const excerpts = [...new Set(memory?.continuityNotes?.map(note => note.quote).filter(quote => quote && c.content.includes(quote)))];
+    excerpts.sort((a, b) => c.content.indexOf(a) - c.content.indexOf(b));
+    sections.push(excerpts.length
+      ? `【第${c.order + 1}章原文片段，由审读选取】\n${excerpts.join('\n\n')}`
       : `【第${c.order + 1}章片段，尚无有效审稿记录，不能据此证明整章连续性】\n${c.content.slice(0, 350)}\n……\n${c.content.slice(-550)}`);
   }
   for (const c of previous.filter(c => recentIds.has(c.id))) {

@@ -8,6 +8,7 @@ export type EditorialDimension = typeof EDITORIAL_DIMENSIONS[number];
 export interface EditorialFinding {
   dimension: EditorialDimension;
   severity: 'minor' | 'major' | 'critical';
+  basis?: 'conflict' | 'uncertain' | 'craft';
   quote: string;
   referenceQuote: string;
   problem: string;
@@ -75,8 +76,16 @@ export function isReviewCurrent(report: { contentFingerprint?: string; contextFi
   return !!report && report.contentFingerprint === textFingerprint(content) && report.contextFingerprint === textFingerprint(context);
 }
 
-/** Reject invented evidence and incomplete scores rather than reporting a false pass. */
-export function parseEditorialAssessment(raw: string, content: string, context: string): EditorialAssessment {
+function clockTimes(text: string): string[] {
+  return Array.from(text.normalize('NFKC').matchAll(/\b([01]?\d|2[0-3])\s*[:点时]\s*([0-5]\d)(?!\d)/g),
+    ([, hour, minute]) => `${Number(hour)}:${minute}`);
+}
+
+/** Keep unsupported comparisons visible for the author without treating them as errors. */
+export function parseEditorialAssessment(
+  raw: string, content: string, context: string,
+  isFactReference?: (excerpt: string) => boolean,
+): EditorialAssessment {
   const value = record(JSON.parse(raw));
   if (!Array.isArray(value.dimensions) || value.dimensions.length !== EDITORIAL_DIMENSIONS.length || !Array.isArray(value.findings) || !Array.isArray(value.continuityNotes)) throw new Error('审稿维度或事实记录不完整');
   const dimensions = EDITORIAL_DIMENSIONS.map(name => {
@@ -92,7 +101,22 @@ export function parseEditorialAssessment(raw: string, content: string, context: 
     const referenceSource = referencePrefix === 'C' ? content : context;
     const referenceQuote = f.referenceId ? resolveEditorialCitation(referenceSource, f.referenceId, referencePrefix) : typeof f.referenceQuote === 'string' ? f.referenceQuote : '';
     if (!content.includes(quote) || (referenceQuote && !referenceSource.includes(referenceQuote))) throw new Error('审稿引用无法对应提供的原文或前文');
-    return { dimension: f.dimension as EditorialDimension, severity: f.severity as EditorialFinding['severity'], quote, referenceQuote, problem: nonempty(f.problem), suggestion: nonempty(f.suggestion) };
+    const problem = nonempty(f.problem);
+    const severity = f.severity as EditorialFinding['severity'];
+    let basis: EditorialFinding['basis'] = f.basis === 'uncertain' ? 'uncertain' : 'craft';
+    if (f.basis === 'conflict' || (severity === 'critical' && basis !== 'uncertain')) {
+      const currentEvidence = typeof f.currentEvidence === 'string' ? f.currentEvidence.trim() : '';
+      const referenceEvidence = typeof f.referenceEvidence === 'string' ? f.referenceEvidence.trim() : '';
+      const supported = currentEvidence && referenceEvidence && currentEvidence !== referenceEvidence
+        && quote.includes(currentEvidence) && referenceQuote.includes(referenceEvidence)
+        && (referencePrefix === 'C' || (isFactReference?.(referenceEvidence) ?? true));
+      basis = supported ? 'conflict' : 'uncertain';
+    }
+    if (f.dimension === 'timeline_consistency') {
+      const citedClocks = new Set(clockTimes(`${quote}\n${referenceQuote}`));
+      if (clockTimes(problem).some(time => !citedClocks.has(time))) basis = 'uncertain';
+    }
+    return { dimension: f.dimension as EditorialDimension, severity, basis, quote, referenceQuote, problem, suggestion: nonempty(f.suggestion) };
   });
   const continuityNotes = value.continuityNotes.map(input => {
     const note = record(input);
@@ -138,5 +162,5 @@ export function parseEditorialEdits(raw: string, content: string): EditorialEdit
 }
 
 export function needsEditorialRevision(assessment: EditorialAssessment): boolean {
-  return assessment.findings.some(f => f.severity !== 'minor');
+  return assessment.findings.some(f => f.severity !== 'minor' && f.basis !== 'uncertain');
 }

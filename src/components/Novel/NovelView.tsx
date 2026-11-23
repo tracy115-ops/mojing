@@ -40,8 +40,9 @@ import ExportPanel from './ExportPanel';
 import ReaderPanel from './ReaderPanel';
 import NovelInfoModal from './NovelInfoModal';
 import VideoGeneratorModal from '@/components/Video/VideoGeneratorModal';
+import './novel-workspace.css';
 
-const NARROW_NOVEL_WINDOW = '(max-width: 1100px)';
+const NARROW_NOVEL_WINDOW = '(max-width: 1300px)';
 
 const { Text } = Typography;
 
@@ -937,8 +938,8 @@ const NovelView: React.FC = () => {
               )}
 
               {/* Editor area + optional Narrative Workbench right panel */}
-              <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-                <div hidden={narrowWindow && workbenchVisible} style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
+              <div className="novel-workspace__regions">
+                <div className="novel-workspace__editor" hidden={narrowWindow && workbenchVisible}>
                   {activeChapter ? (
                     <ChapterEditor
                       key={`${activeProjectId}/${activeChapter.id}`}
@@ -954,23 +955,11 @@ const NovelView: React.FC = () => {
                   )}
                 </div>
 
-                {/* Narrative Workbench right panel — animated collapse */}
                 {activeProjectId && (
-                  <div id="novel-narrative-pane" hidden={narrowWindow && !workbenchVisible} style={{
-                    width: narrowWindow ? undefined : workbenchVisible ? workbenchWidth : 0,
-                    maxWidth: narrowWindow ? undefined : workbenchVisible ? 'calc(100% - 300px)' : 0,
-                    flexGrow: narrowWindow ? 1 : 0,
-                    minWidth: 0,
-                    borderLeft: '1px solid var(--border-secondary)',
-                    overflowY: 'hidden',
-                    overflowX: 'auto',
-                    background: 'var(--bg-secondary, rgba(0,0,0,0.02))',
-                    position: 'relative',
-                    flexShrink: 1,
-                    transition: narrowWindow || workbenchVisible ? 'none' : 'width 0.25s ease-out',
-                    opacity: 1,
-                  }}>
-                    <div style={{ width: '100%', minWidth: LAYOUT.workbenchMinWidth, height: '100%', position: 'relative' }}>
+                  <div id="novel-narrative-pane" hidden={!workbenchVisible}
+                    className={narrowWindow ? 'novel-workspace__workbench novel-workspace__workbench--full' : 'novel-workspace__workbench'}
+                    style={{ '--novel-workbench-width': `${workbenchWidth}px` } as React.CSSProperties}>
+                    <div style={{ height: '100%' }}>
                       {!narrowWindow && <ResizeHandle
                         onPointerDown={resizeHandleProps.onPointerDown}
                         isDragging={isResizing}
@@ -990,13 +979,7 @@ const NovelView: React.FC = () => {
 
               {/* Bottom toolbar with panel toggles */}
               {activeProjectId && (
-                <div style={{
-                  borderTop: '1px solid var(--border-secondary)',
-                  padding: '4px 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}>
+                <div className="novel-workspace__footer">
                   <Tooltip title={t('workbench.toggleHint')}>
                     <Button
                       size="small"

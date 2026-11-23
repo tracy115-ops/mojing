@@ -30,9 +30,11 @@ assert.match(reviewContext,/备用票日期栏手写。\n\n【世界设定：调
 
 const older = [...chapters.filter(c => c.order < 2), chapter(2, '第三章事实。'), chapter(3, '第四章事实。')];
 const memory = { chapter: 0, contentFingerprint: textFingerprint(older[0].content), continuityNotes: [{ fact: '缓存的保管状态', quote: '林岚把车票交给保安登记。' }] };
-assert.ok(buildWritingContext(source,bible,older,4,[memory]).includes('缓存的保管状态'));
+const archivedContext = buildWritingContext(source,bible,older,4,[memory]);
+assert.match(archivedContext, /第1章原文片段，由审读选取】\n林岚把车票交给保安登记。/);
+assert.ok(!archivedContext.includes('缓存的保管状态'), 'editorial paraphrases cannot become facts in later chapters');
 const changed = older.map(c => c.order === 0 ? { ...c, content: c.content + '作者修改。' } : c);
-assert.ok(!buildWritingContext(source,bible,changed,4,[memory]).includes('缓存的保管状态'), 'editing a chapter invalidates its cached facts');
+assert.ok(!buildWritingContext(source,bible,changed,4,[memory]).includes('第1章原文片段，由审读选取'), 'editing a chapter invalidates its cached excerpts');
 
 const metadata = { chapters: [chapter(9,'旧版正文')], storyNodes: [{ id:'b',nodeType:'chapter',order:20,content:'后章' }, { id:'v',nodeType:'volume',order:0 }, {id:'a',nodeType:'chapter',order:10,content:'前章'}] };
 assert.deepEqual(getNovelChapters(metadata).map(c => [c.id,c.order,c.content]), [['a',0,'前章'],['b',1,'后章']], 'reading tools share the current story tree rather than stale legacy chapters');
@@ -59,7 +61,7 @@ assert.equal(lastWrittenChapter([]),0);
 assert.deepEqual(getDueForeshadowing(threads,0),[]);
 
 const prose = '林岚把车票放回自己口袋。她没有问保安。';
-const assessment = { dimensions: EDITORIAL_DIMENSIONS.map(name => ({name,score:95})), summary:'道具归属冲突会破坏后续调查。', findings:[{dimension:'timeline_consistency',severity:'critical',quote:'林岚把车票放回自己口袋。',referenceQuote:'林岚把车票交给保安登记。',problem:'未交代取回车票。',suggestion:'补足取回手续，或仍由保安保管。'}],continuityNotes:[{fact:'林岚未询问保安。',quote:'她没有问保安。'}] };
+const assessment = { dimensions: EDITORIAL_DIMENSIONS.map(name => ({name,score:95})), summary:'道具归属冲突会破坏后续调查。', findings:[{dimension:'timeline_consistency',severity:'critical',basis:'conflict',quote:'林岚把车票放回自己口袋。',referenceQuote:'林岚把车票交给保安登记。',currentEvidence:'把车票放回自己口袋',referenceEvidence:'把车票交给保安登记',problem:'未交代取回车票。',suggestion:'补足取回手续，或仍由保安保管。'}],continuityNotes:[{fact:'林岚未询问保安。',quote:'她没有问保安。'}] };
 assert.equal(needsEditorialRevision(parseEditorialAssessment(JSON.stringify(assessment),prose,context)),true,'a hard contradiction cannot be averaged away by high scores');
 assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,findings:[{...assessment.findings[0],quote:'编造的引文'}]}),prose,context), /引用/);
 assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,findings:[{...assessment.findings[0],referenceQuote:'没有提供的前文'}]}),prose,context), /引用/);
@@ -67,6 +69,20 @@ assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,dimen
 assert.throws(() => parseEditorialAssessment(JSON.stringify({...assessment,dimensions:assessment.dimensions.map(d=>({...d,score:101}))}),prose,context), /有效评分/);
 assert.equal(needsEditorialRevision({...assessment,findings:[]}),false);
 assert.equal(needsEditorialRevision({...assessment,findings:[],dimensions:assessment.dimensions.map(d=>({...d,score:20}))}),false,'an unexplained number cannot invent a revision requirement');
+const nightProse = '23点45分，林岚拎包到总站。\n\n老吴说那人二十分钟前来过。';
+const timeFinding = { dimension:'timeline_consistency', severity:'major', basis:'conflict', paragraphId:'C2', referenceId:'C1',
+  currentEvidence:'二十分钟前', referenceEvidence:'23点45分', problem:'她在23:55下楼，所以来访者实际在23:35到站。', suggestion:'核对来访和转述的先后。' };
+const timeReview = parseEditorialAssessment(JSON.stringify({...assessment,findings:[timeFinding],continuityNotes:[]}),nightProse,'');
+assert.equal(timeReview.findings[0].basis,'uncertain','a cited relative time cannot verify an invented reporting time');
+assert.equal(needsEditorialRevision(timeReview),false,'an uncertain finding never triggers automated revision');
+const directProse = '23点45分，林岚拎包到总站。\n\n同一晚的登记写着她在22:40拎包到总站。';
+const directReview = parseEditorialAssessment(JSON.stringify({...assessment,findings:[{
+  ...timeFinding,currentEvidence:'22:40',problem:'同一次到站分别写为23:45和22:40。',
+}],continuityNotes:[]}),directProse,'');
+assert.equal(directReview.findings[0].basis,'conflict','numeric and localized spellings of the cited clock time match');
+assert.equal(needsEditorialRevision(directReview),true);
+const proposalOnly = parseEditorialAssessment(JSON.stringify(assessment),prose,context,()=>false);
+assert.equal(proposalOnly.findings[0].basis,'uncertain','a proposed story plan is not evidence of a past event');
 const numbered = {...assessment, findings:[{...assessment.findings[0],quote:undefined,referenceQuote:undefined,paragraphId:'C1',referenceId:'R1'}],continuityNotes:[{fact:'原文事实',paragraphId:'C1'}]};
 assert.ok(labelEditorialParagraphs(prose).startsWith('[C1]'));
 assert.equal(parseEditorialAssessment(JSON.stringify(numbered),prose,context).findings[0].quote,prose,'paragraph references quote the actual source rather than regenerated quotations');

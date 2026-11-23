@@ -82,7 +82,9 @@ const ChapterReviewPanel: React.FC<{ novelId: string; chapterIndex?: number; onS
             <Card size="small"><Text>{latestReview.summary}</Text></Card>
             {latestReview.findings.map((finding, index) => (
               <Card size="small" key={index}>
-                <Tag color={finding.severity === 'critical' ? 'error' : finding.severity === 'major' ? 'warning' : 'default'}>{t('novel.editor.severity.' + finding.severity)}</Tag>
+                <Tag color={finding.basis === 'uncertain' ? 'default' : finding.severity === 'critical' ? 'error' : finding.severity === 'major' ? 'warning' : 'default'}>
+                  {t(finding.basis === 'uncertain' ? 'novel.editor.evidencePending' : 'novel.editor.severity.' + finding.severity)}
+                </Tag>
                 <p><strong>{finding.problem}</strong></p>
                 <blockquote style={{ margin: '8px 0', borderLeft: '2px solid var(--border-secondary)', paddingLeft: 10, whiteSpace: 'pre-wrap' }}>{finding.quote}</blockquote>
                 {finding.referenceQuote && <p><Text type="secondary">{t('novel.editor.reference')}: {finding.referenceQuote}</Text></p>}

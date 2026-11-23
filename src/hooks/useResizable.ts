@@ -49,7 +49,8 @@ export function useResizable({
       e.stopPropagation();
 
       startXRef.current = e.clientX;
-      startWidthRef.current = width;
+      // Start the drag from the visible width when the layout has capped it.
+      startWidthRef.current = e.currentTarget.parentElement?.getBoundingClientRect().width ?? width;
       setIsDragging(true);
 
       // Prevent text selection during drag
@@ -69,11 +70,6 @@ export function useResizable({
         document.body.style.userSelect = '';
         document.body.style.cursor = '';
 
-        // Persist width
-        try {
-          localStorage.setItem(storageKey, String(width));
-        } catch {}
-
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
       };
@@ -81,7 +77,7 @@ export function useResizable({
       document.addEventListener('pointermove', onPointerMove);
       document.addEventListener('pointerup', onPointerUp);
     },
-    [width, minWidth, maxViewportFraction, storageKey],
+    [width, minWidth, maxViewportFraction],
   );
 
   // Persist width when it changes and not dragging (e.g. on toggle off/on)

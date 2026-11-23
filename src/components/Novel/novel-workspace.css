@@ -1,0 +1,147 @@
+.novel-workspace__regions {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.novel-workspace__editor {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.novel-workspace__workbench {
+  position: relative;
+  flex: none;
+  width: min(var(--novel-workbench-width), 42%, calc(100% - 510px));
+  min-width: 0;
+  border-left: 1px solid var(--border-secondary);
+  background: var(--bg-container);
+}
+
+.novel-workspace__workbench--full {
+  flex: 1;
+  width: auto;
+  border-left: none;
+}
+
+.novel-workspace__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-secondary);
+}
+
+.chapter-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+
+.chapter-editor__review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.chapter-editor__status {
+  font-size: 12px;
+}
+
+.chapter-editor__status:empty {
+  display: none;
+}
+
+.chapter-editor__tabs {
+  flex: 1;
+  min-height: 0;
+}
+
+.chapter-editor__tabs > .ant-tabs-nav {
+  padding-inline: 12px;
+  margin-bottom: 8px;
+}
+
+.chapter-editor__tabs > .ant-tabs-content-holder {
+  min-height: 0;
+  overflow: auto;
+}
+
+.chapter-editor__tabs > .ant-tabs-content-holder > .ant-tabs-content,
+.chapter-editor__tabs > .ant-tabs-content-holder > .ant-tabs-content > .ant-tabs-tabpane {
+  height: 100%;
+}
+
+.chapter-editor__page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-height: 162px;
+  padding: 0 12px 8px;
+}
+
+.chapter-editor textarea.chapter-editor__text {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+}
+
+.chapter-editor__outline {
+  flex: none;
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+.chapter-editor__outline-preview {
+  max-height: 115px;
+  padding: 2px 10px 6px;
+  overflow: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.chapter-editor__footer,
+.chapter-editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.chapter-editor__footer {
+  flex: none;
+}
+
+.chapter-editor__actions {
+  justify-content: flex-end;
+  margin-inline-start: auto;
+  min-width: 0;
+}
+
+.chapter-editor__count {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-editor__settings {
+  display: grid;
+  grid-template-columns: auto minmax(112px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.chapter-editor__settings .ant-checkbox-wrapper {
+  grid-column: 1 / -1;
+}

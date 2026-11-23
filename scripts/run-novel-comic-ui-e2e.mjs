@@ -66,7 +66,7 @@ app.onEvent(event => {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ready:true,outline:'经审读：林岚收车发现黄色帆布包，核对旧票并登记失物；调查来自可验证的来源。',changes:['Remove unsupported planning details.'],unresolvedIssues:[]}) },finish_reason:'stop' }] });
     } else if (system.includes('认真通读作品的小说编辑')) {
       const assessment = { dimensions: ['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name => ({ name, score: 80 })), summary: 'Fixture editorial response, not a live quality judgment.', findings: [], continuityNotes: [{ fact: '林岚取票走向摄像头。', quote: '林岚从黄色帆布包中取出旧票，走向车载摄像头。' }] };
-      if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'critical',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved hard problem.',suggestion:'Fixture correction direction.' });
+      if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'major',basis:'craft',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved story problem.',suggestion:'Fixture correction direction.' });
       if (/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
         if (body.messages[1].content.includes('雨水敲着车窗。')) assessment.findings.push({dimension:'plot_coherence',severity:'major',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture initial problem.',suggestion:'Fixture correction.'});
         if (body.messages[1].content.includes('AutopilotCandidateContract')) assessment.findings.push({dimension:'timeline_consistency',severity:'major',quote:'林岚从黄色帆布包中取出旧票，走向车载摄像头。',referenceQuote:'',problem:'Fixture remaining problem.',suggestion:'Requires author judgment.'});
@@ -178,8 +178,10 @@ try {
   await app.textButton('生成 大纲');
   await app.waitFor(`${novelExpr}.metadata.storyNodes[0].outline.length>20`, 'generated outline');
   await app.evaluate('[...document.querySelectorAll(".ant-tabs-tab")].find(e=>e.textContent.includes("草稿")).click()');
-  await app.waitFor('document.body.innerText.includes("悬疑反转")', 'project genre inherited');
-  await app.textButton('生成');
+  await app.textButton('写作设置', '[data-testid="chapter-actions"]');
+  await app.waitFor('document.querySelector("[data-testid=chapter-writing-settings]")?.innerText.includes("悬疑")', 'project genre inherited');
+  await app.textButton('写作设置', '[data-testid="chapter-actions"]');
+  await app.textButton('生成正文');
   await app.waitFor(`${novelExpr}.metadata.storyNodes[0].content.length>20`, 'generated prose');
   await app.waitFor(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':chapter-reviews') || '[]').length===1`, 'automatic editorial review');
   const writing = requests.filter(r => /大纲规划师|你是一位小说作者/.test(r.body.messages?.[0]?.content || ''));
@@ -201,8 +203,12 @@ try {
   for(const {body} of plotReviews) assert.ok(body.messages.map(m=>m.content).join('\n').includes('核实预盖日期并保留原始报告。'),'review retains author resolution');
   await app.screenshot('novel-context.png');
   assert.ok(novelProse.length > 4000);
-  await app.waitFor(`[...document.querySelectorAll('button')].some(b=>b.textContent==='润色'&&!b.disabled)`, 'editor ready after review');
-  await app.textButton('润色');
+  const openPolish = async () => {
+    await app.waitFor(`[...document.querySelectorAll('button')].some(b=>b.textContent==='AI工具'&&!b.disabled)`, 'editor ready for revision');
+    await app.textButton('AI工具', '[data-testid="chapter-actions"]');
+    await app.click('[data-menu-id$="-polish"]');
+  };
+  await openPolish();
   await app.waitFor('!!document.querySelector(".ant-modal-confirm")', 'editorial edit preview');
   assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`), novelProse, 'proposals do not replace the chapter before adoption');
   await app.evaluate(`document.querySelectorAll('.ant-modal-confirm input[type="checkbox"]')[1].click()`);
@@ -231,9 +237,8 @@ try {
   await app.waitFor(`document.body.innerText.split('正文、前文或设定已变更').length>=3`, 'editor invalidates the same report without reload');
   await app.textButton('审稿与连贯性');
   await app.waitFor(`${panel}.innerText.includes('已审读，待作者确认')&&!${panel}.innerText.includes('需重新审读')`, 'new editor review reaches sidebar');
-  await app.waitFor(`[...document.querySelectorAll('button')].some(b=>b.textContent==='润色'&&!b.disabled)`, 'fresh review finished');
   // A settings change while a preview is open must prevent adoption.
-  await app.textButton('润色');
+  await openPolish();
   await app.waitFor('!!document.querySelector(".ant-modal-confirm")', 'second revision preview');
   await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const repo=new NarrativeRepository(${novelExpr}.id);const bible=repo.loadBible();bible.worldSettings[0].description+=' 仅据提供的证据判断。';repo.saveBible(bible);})()`);
   await app.textButton('采用修订并重新审稿', '.ant-modal-confirm');
@@ -241,10 +246,48 @@ try {
   assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`),revisedProse,'stale proposals preserve the original draft and ending');
   await app.textButton('取消','.ant-modal-confirm');
   await app.screenshot('novel-stale-review.png');
+  await app.evaluate("localStorage.setItem('mojing-workbench-width', '1200')");
   await app.call('Page.reload');
   await app.waitFor(`!!document.querySelector('.ant-tabs-tab-active[data-node-key="content"]')`, 'existing chapters open their prose by default');
   await app.waitFor(`!!document.querySelector('textarea[placeholder="章节正文..."]')`, 'saved prose editor mounted');
   assert.equal(await app.evaluate('document.querySelector(\'textarea[placeholder="章节正文..."]\')?.value'),revisedProse);
+  const setViewport = (width, height) => app.call('Emulation.setDeviceMetricsOverride', {width,height,deviceScaleFactor:1,mobile:false});
+  const checkEditorLayout = async (narrow) => {
+    const layout = await app.evaluate(`(() => {
+      const editor = document.querySelector('.novel-workspace__editor');
+      const pane = document.querySelector('#novel-narrative-pane');
+      const count = document.querySelector('[data-testid=chapter-word-count]');
+      const range = new Range();
+      range.selectNodeContents(count);
+      const rect = editor.getBoundingClientRect();
+      const controls = [...editor.querySelectorAll('[data-testid=chapter-actions] button')];
+      return { editorWidth:rect.width, panelWidth:pane.getBoundingClientRect().width, countLines:range.getClientRects().length,
+        noHorizontalScroll:editor.scrollWidth<=editor.clientWidth, visibleActions:controls.length===4 && controls.every(button=>{
+          const r=button.getBoundingClientRect();
+          return r.left>=rect.left && r.right<=rect.right && r.top>=rect.top && r.bottom<=rect.bottom
+            && button.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));
+        }) };
+    })()`);
+    assert.equal(layout.countLines,1,'the word count stays on a single line');
+    assert.ok(layout.noHorizontalScroll && layout.visibleActions,JSON.stringify(layout));
+    if (narrow) assert.equal(layout.panelWidth,0,'the workbench gives the full area to the editor in a narrow window');
+    else assert.ok(layout.panelWidth>0 && layout.editorWidth>=510, 'a previously oversized workbench cannot squeeze the editor');
+  };
+  await setViewport(1900,1000);
+  await app.evaluate(`(async()=>{const {useSettingsStore}=await import('/src/stores/settingsStore.ts');useSettingsStore.getState().setTheme('light');})()`);
+  await app.waitFor('innerWidth===1900 && document.documentElement.dataset.theme==="light"', 'wide light workspace');
+  await checkEditorLayout(false);
+  await app.screenshot('novel-wide-light.png');
+  await setViewport(900,600);
+  await app.evaluate(`(async()=>{const {useSettingsStore}=await import('/src/stores/settingsStore.ts');useSettingsStore.getState().setTheme('dark');})()`);
+  await app.waitFor('innerWidth===900 && document.querySelector("#novel-narrative-pane").hidden', 'narrow chapter workspace');
+  await checkEditorLayout(true);
+  await app.screenshot('novel-compact-dark.png');
+  await app.click('[data-testid="novel-workbench-toggle"]');
+  await app.waitFor(`document.querySelector('.novel-workspace__editor').hidden && !document.querySelector('#novel-narrative-pane').hidden`, 'narrow workbench');
+  await app.click('[data-testid="novel-workbench-toggle"]');
+  assert.equal(await app.evaluate(`document.querySelector('textarea[placeholder="章节正文..."]').value`),revisedProse,'switching views preserves the active draft');
+  await setViewport(1600,1000);
   const autoStart = requests.length;
   const globalPlanContract=await app.evaluate(`(async()=>{
     const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
@@ -280,7 +323,7 @@ try {
   }
   assert.ok(beatRequests[1].body.messages[0].content.includes(novelProse), 'second beat receives the complete first beat');
   assert.ok(beatRequests[2].body.messages[0].content.includes([novelProse,novelProse].join('\n\n')), 'third beat receives all text already written in the chapter');
-  assert.equal(autoContract.status,'paused','an unresolved critical issue must pause automatic writing');
+  assert.equal(autoContract.status,'paused','an unresolved major story issue must pause automatic writing');
   assert.equal(autoContract.chapterStatus,'revising','failed review/revision must never mark the chapter complete');
   for (const [novelId,title,accepted] of [['candidate-contract','AutopilotCandidateContract',false],['passing-contract','AutopilotPassingContract',true]]) {
     const result = await app.evaluate(`(async()=>{
@@ -313,7 +356,7 @@ try {
     const reviewer = new ChapterReviewer('editorial-budget-contract');
     const context = {source:{title:'EditorialTruncationContract',description:'现实调查。',genre:'mystery',style:'克制'},chapters:[]};
     const report = await reviewer.reviewChapter(0,'林岚把车票交给保安。',context);
-    const edits = await reviewer.proposeRevision(0,'林岚把车票交给保安。',context,'review',report);
+    const edits = await reviewer.proposeRevision(0,'林岚把车票交给保安。',context,'rewrite',report);
     return {status:report.status,edits};
   })()`);
   assert.equal(budgetRecovery.status,'reviewed');
