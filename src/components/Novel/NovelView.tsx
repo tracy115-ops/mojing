@@ -454,8 +454,9 @@ const NovelView: React.FC = () => {
 
     repo.saveBible(bible);
 
-    // Save plot outline as a timeline note if available
+    // Keep the complete plan for writing and review; retain the summary for older projects and tools.
     if (plot) {
+      repo.saveCustomData('plot-outline', plot);
       const notes = bible.timelineNotes || [];
       notes.push({
         id: 'plot-outline',

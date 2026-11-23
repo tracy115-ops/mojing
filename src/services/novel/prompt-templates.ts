@@ -282,7 +282,7 @@ function getSensoryHint(beatIndex: number): string {
 const macroPlanning: PromptTemplate = {
   id: 'macro-planning',
   name: '宏观规划',
-  version: 4,
+  version: 5,
   variables: ['title', 'genre', 'style', 'prevChapters', 'phaseDirective', 'foreshadowingContext', 'chapterNumber'],
   buildSystem(vars) {
     return `你是一个资深小说策划师，擅长构思让人放不下的故事。你的任务是为下一章制定宏观方向。
@@ -307,7 +307,7 @@ ${vars.foreshadowingContext ?? ''}
   "title": "章节标题（有吸引力，不用"第X章"格式）",
   "direction": "本章发展方向：人物想要什么、遇到什么阻力、因此采取什么行动、付出什么代价，本章结束时处境如何改变；场景按因果连接，不强制凑反转和对抗",
   "conflictCore": "一句话概括本章核心冲突",
-  "endingHook": "结尾钩子描述",
+  "endingHook": "本章行动后实际改变的处境、关系或决定；不强制悬念",
   "target_word_count": 3000
 }`;
   },
@@ -327,17 +327,17 @@ ${vars.foreshadowingContext ?? ''}
 const actBeatPlanning: PromptTemplate = {
   id: 'act-beat-planning',
   name: '幕级大纲',
-  version: 3,
+  version: 4,
   variables: ['title', 'genre', 'style', 'prevSummary', 'macroDirection', 'chapterNumber', 'chapterTitle', 'factLock', 'beatLock', 'clueLock'],
   buildSystem(vars) {
     return `你是一个专业的小说大纲规划师。根据宏观方向，生成详细的章节大纲。
 
 大纲要求：
-- 3-5个叙事节拍（beat），每个有明确目的
+- 按场景需要安排叙事节拍（beat），每个有明确目的，不为凑数量拆散同一行动
 - 节拍之间有因果关系，不是松散拼接
-- 情绪弧线有起伏（不能一直平或一直高）
+- 写清人物如何取得信息、据此作出什么选择，以及选择引起的后果；情绪由事件产生
 - 按人物目标与场景需要安排对话、行动、思考，不为凑类型硬塞对抗
-- 最后一个节拍制造悬念或给出情感落点
+- 最后一个节拍落实本章行动的后果，不靠新来的人影、消息或无关危机强行续悬念
 
 小说：${vars.title}
 类型：${vars.genre}
@@ -360,10 +360,10 @@ ${vars.clueLock ?? ''}`;
 const beatMagnify: PromptTemplate = {
   id: 'beat-magnify',
   name: '大纲拆Beat',
-  version: 2,
+  version: 3,
   variables: ['outline', 'chapterNumber', 'targetWords', 'chapterIndex'],
   buildSystem() {
-    return `你是一个叙事节拍规划师。将章节大纲拆分为 3-6 个叙事节拍(beat)。
+    return `你是一个叙事节拍规划师。按大纲的场景与因果拆分为 2-5 个叙事节拍(beat)，不另外编造事件。
 
 每个 beat 必须指定：
 - "description": 节拍内容描述（具体场景/事件）
@@ -374,9 +374,9 @@ const beatMagnify: PromptTemplate = {
 分配规则：
 - 总 targetWords 之和等于 ${'$'}{targetWords}
 - hook 类型只能在第一个 beat 使用
-- 第一个 beat 负责承接上一章/建立悬念
-- 最后一个 beat 负责收束或制造悬念
-- action/suspense 类型的 beat 分配更多字数
+- 第一个 beat 负责承接上一章/建立场景
+- 最后一个 beat 落实大纲中行动的后果，不另造危机
+- 字数按关键选择与场景需要分配，不因类型自动增加
 
 输出严格JSON数组：
 [{"description":"...","targetWords":800,"focus":"action","sceneGoal":"..."}, ...]`;
@@ -385,9 +385,9 @@ const beatMagnify: PromptTemplate = {
     const chIdx = Number(vars.chapterIndex ?? 0);
     let special = '';
     if (chIdx === 0) {
-      special = '\n\n注意：这是小说第1章。第一个beat必须是hook类型，用于抓住读者。';
+      special = '\n\n注意：这是小说第1章。从人物正在面对的具体处境切入，不必先设悬念。';
     } else if (chIdx === 1) {
-      special = '\n\n注意：这是第2章。应包含感官描写和悬念建立。';
+      special = '\n\n注意：这是第2章。承接开篇行动的后果，避免重复发现同一异常。';
     }
     return `大纲：\n${vars.outline}\n\n目标总字数：${vars.targetWords}字\n请拆分为beats。${special}`;
   },
@@ -702,19 +702,20 @@ ${vars.characters}
 const plotOutline: PromptTemplate = {
   id: 'plot-outline',
   name: '剧情总纲',
-  version: 1,
+  version: 2,
   variables: ['title', 'genre', 'description', 'targetWordCount', 'worldbuilding', 'characters', 'locations'],
   buildSystem(vars) {
-    const totalChapters = Math.max(10, Math.ceil(Number(vars.targetWordCount) / 3000));
+    const totalChapters = Math.max(1, Math.ceil(Number(vars.targetWordCount) / 3000));
     return `你是一个专业的小说剧情规划师。根据小说的所有设定，生成完整的剧情总纲。
 
 目标字数：${vars.targetWordCount} 字（约 ${totalChapters} 章）
 
 要求：
-- 主线清晰，有明确的起承转合
-- 每个阶段有核心冲突和转折点
-- 合理分配章节进度
-- 预留伏笔空间
+- 先确定原始事件的真实原因、相关人物的动机与完整结局，再安排人物如何逐步发现；不以更大的阴谋或新谜题替换原始问题
+- 阶段之间形成因果链：人物目标、阻力、选择、后果。说明本阶段结束时什么发生了不可忽略的改变，避免只换地点反复调查同一问题
+- 关键线索交代来源、取得条件和其他合理解释；计划中的真相不是角色已知事实，不让巧合证人或突然出现的证据包办解决
+- 冲突规模符合题材与原始设定，允许关系、现实利益和错误判断造成阻力，不必升级为犯罪集团或幕后黑手
+- 章节进度由事件所需篇幅决定；伏笔有具体用途与回收方式，不为续篇留下未回答的核心问题
 - 使用中文描述
 
 输出严格 JSON 格式：
@@ -726,13 +727,13 @@ const plotOutline: PromptTemplate = {
     {
       "name": "阶段名（如：序幕/开局/发展/高潮/终局）",
       "chapterRange": "第X-Y章",
-      "description": "阶段概述（50字以内）",
-      "coreEvent": "核心事件",
+      "description": "人物目标与阻力、行动选择及其后果；说明与上一阶段的因果联系",
+      "coreEvent": "实际改变处境的关键事件，涉及线索时说明如何取得和验证",
       "tension": "张力等级（1-10）",
       "foreshadowSeeds": ["可埋设的伏笔1", "伏笔2"]
     }
   ],
-  "ending": "结局描述（50字以内）"
+  "ending": "完整解释原始异常的原因、相关人物动机、解决过程与主角承担的后果；说明前面哪些铺垫支持该结局，不以悬念代替答案"
 }`;
   },
   buildUser(vars) {
@@ -761,7 +762,7 @@ ${vars.locations}
 const globalPlanning: PromptTemplate = {
   id: 'global-planning',
   name: '全局规划',
-  version: 2,
+  version: 3,
   variables: ['title', 'genre', 'style', 'targetWordCount', 'targetChapterCount', 'worldbuilding', 'characters', 'locations', 'plotOutlineStages'],
   buildSystem(vars) {
     return `你是一个资深小说总架构师。根据小说的全部设定，规划完整的卷章结构。
@@ -777,10 +778,11 @@ ${vars.plotOutlineStages ? `已有剧情阶段参考：\n${vars.plotOutlineStage
 要求：
 1. 将全部 ${vars.targetChapterCount} 章分为 1-6 卷，短篇可只用一卷
 2. 每卷有清楚的主题与人物处境变化
-3. 每章有明确的大纲（2-3句话，说明本章核心事件和推进方向）
+3. 每章用2-3句话说明人物目标、行动与后果，下一章由此产生；连续几章不能只更换地点、重复询问或复述线索
 4. 按题材和人物行动安排节奏，允许安静场景，不强制安排冲突与反转
 5. 每卷结尾体现已经发生的变化，悬念须来自情节自身
 6. 伏笔须有可信铺垫与发展，既有正文和作者资料优先于新规划；不能重新安排已经写完的事实
+7. 承接作者总纲的阶段与结局，说明原始问题如何被解决；不要擅自换成更大的阴谋。揭示真相须安排获取信息和验证的行动，不能把作者知道的结局直接变成人物判断
 
 输出严格 JSON 格式：
 {
@@ -799,13 +801,13 @@ ${vars.plotOutlineStages ? `已有剧情阶段参考：\n${vars.plotOutlineStage
     {
       "order": 0,
       "title": "章节标题",
-      "outline": "本章核心事件和推进方向的简述（30-60字）",
+      "outline": "本章人物因何采取什么行动、遇到什么阻力、结果如何改变处境，并引出后续行动",
       "volumeIndex": 0,
       "keyEvents": ["关键事件1", "关键事件2"],
       "tensionHint": 7
     }
   ],
-  "ending": "结局方向（30字以内）"
+  "ending": "原始事件的真实原因、解决过程、人物选择与代价；与作者总纲一致"
 }
 
 关键：

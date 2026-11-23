@@ -392,7 +392,8 @@ export class AutopilotEngine {
       globalPlanContext = `【全局规划上下文】
 主线：${this.globalPlan.mainPlot}
 核心冲突：${this.globalPlan.coreConflict}
-主题：${this.globalPlan.themeMessage}${plannedChapter ? `
+主题：${this.globalPlan.themeMessage}
+预定结局（作者规划，角色尚未必知情）：${this.globalPlan.ending}${plannedChapter ? `
 本章规划标题：${plannedChapter.title}
 本章大纲：${plannedChapter.outline}
 本章关键事件：${plannedChapter.keyEvents.join('、')}` : ''}${vol ? `
@@ -428,7 +429,7 @@ export class AutopilotEngine {
       const parts: string[] = [];
       if (data.direction) parts.push(data.direction);
       if (data.conflictCore) parts.push(`核心冲突: ${data.conflictCore}`);
-      if (data.endingHook) parts.push(`结尾钩子: ${data.endingHook}`);
+      if (data.endingHook) parts.push(`章末处境: ${data.endingHook}`);
       return {
         title: data.title || `第${chapterIndex + 1}章`,
         direction: parts.length > 0 ? parts.join('\n') : '',
@@ -456,7 +457,7 @@ export class AutopilotEngine {
 
     // Load wizard plot outline if available
     const plotNote = bible.timelineNotes?.find((n) => n.id === 'plot-outline');
-    const plotOutlineStages = plotNote?.significance || '';
+    const plotOutlineStages = plotNote ? `${plotNote.event}\n${plotNote.significance || ''}` : '';
 
     const template = getTemplate('global-planning');
     const request: LLMGenerateRequest = {

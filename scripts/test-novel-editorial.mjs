@@ -13,6 +13,14 @@ assert.ok(context.indexOf('第1章《章0》') < context.indexOf('第2章《章1
 assert.ok(!context.includes('未来章节的秘密'), 'future prose must not leak into earlier chapters');
 assert.ok(!context.includes('计划拿回车票但尚未发生'), 'outlines are not summaries of events that occurred');
 assert.ok(context.includes('待实现的剧情规划，不是已发生事实'));
+const plotOutline = { mainPlot:'核对备用票的提前领用', coreConflict:'保护师傅还是保留真实记录', themeMessage:'善意不能替代事实', ending:'查明预盖日期，保留原始报告', stages:[{name:'留下报告',chapterRange:'第1-3章',description:'上报后被要求撤回',coreEvent:'林岚拒绝改日期',foreshadowSeeds:['交接簿上的预领栏']}] };
+for (const purpose of ['writing', 'review']) {
+  const plotContext = buildWritingContext(source,bible,chapters,2,[],purpose,{plotOutline});
+  for (const token of ['作者全书情节方案，尚待实现','查明预盖日期，保留原始报告','林岚拒绝改日期','交接簿上的预领栏','不能当作已经发生的事实','角色获知真相仍须有正文中的来源']) assert.ok(plotContext.includes(token), `${purpose}: ${token}`);
+  const editedContext = buildWritingContext(source,bible,chapters,2,[],purpose,{plotOutline:{...plotOutline,ending:'作者修改结局'}});
+  assert.notEqual(textFingerprint(plotContext),textFingerprint(editedContext),'changing the ending invalidates cached editorial context');
+}
+assert.equal(context.includes('作者全书情节方案，尚待实现'),false,'legacy projects without a full plot remain readable');
 const withStyle = {...bible,styleNotes:[{key:'文风公约',value:'心理描写全部外化'}],worldSettings:[{name:'车票',description:'备用票日期栏手写。'},{name:'调查',description:'照片不能替代实物检查。'}]};
 const reviewContext = buildWritingContext(source,withStyle,chapters,2,[],'review');
 assert.ok(reviewContext.includes('不能仅因心理直述'));

@@ -2,9 +2,24 @@ import type { NovelChapter, NovelMetadata } from '@/types';
 import type { StoryBible, Worldbuilding, Storyline, ChapterCast, Foreshadowing, RelationshipTriple } from '@/types/narrative';
 import type { Prop, PropEvent } from './prop-manager';
 
-export const WRITING_REFERENCE_KEYS = ['bible', 'worldbuilding', 'storylines', 'casts', 'foreshadowing', 'triples', 'props', 'prop-events', 'chapter-reviews'] as const;
+export const WRITING_REFERENCE_KEYS = ['bible', 'plot-outline', 'worldbuilding', 'storylines', 'casts', 'foreshadowing', 'triples', 'props', 'prop-events', 'chapter-reviews'] as const;
+
+export interface AuthorPlotOutline {
+  mainPlot?: string;
+  coreConflict?: string;
+  themeMessage?: string;
+  ending?: string;
+  stages?: Array<{
+    name?: string;
+    chapterRange?: string;
+    description?: string;
+    coreEvent?: string;
+    foreshadowSeeds?: string[];
+  }>;
+}
 
 export interface WritingReferences {
+  plotOutline?: AuthorPlotOutline | null;
   worldbuilding?: Worldbuilding;
   storylines?: Storyline[];
   casts?: ChapterCast[];
@@ -16,6 +31,10 @@ export interface WritingReferences {
 
 function referenceSections(bible: StoryBible, chapterIndex: number, refs: WritingReferences): string[] {
   const sections: string[] = [];
+  const plot = refs.plotOutline;
+  if (plot) {
+    sections.push(`【作者全书情节方案，尚待实现】\n主线：${plot.mainPlot || '未填写'}\n核心矛盾：${plot.coreConflict || '未填写'}\n主题：${plot.themeMessage || '未填写'}\n预定结局：${plot.ending || '未填写'}\n${(plot.stages || []).map(stage => `阶段：${stage.name || ''} ${stage.chapterRange || ''}\n${stage.description || ''}\n关键事件：${stage.coreEvent || ''}\n预备铺垫：${(stage.foreshadowSeeds || []).join('；')}`).join('\n\n')}\n这些是作者安排后续因果和回收的规划，不能当作已经发生的事实。角色获知真相仍须有正文中的来源；读者随人物的行动逐步发现，不能提前照抄结局。既有正文与原始设定优先，冲突时调整未写部分的方案。`);
+  }
   const name = (id: string) => bible.characters.find(c => c.id === id || c.name === id)?.name || id;
   if (refs.worldbuilding) {
     const labels = { coreRules: '核心法则', geography: '地理生态', society: '社会结构', culture: '历史文化', dailyLife: '日常生活' };
