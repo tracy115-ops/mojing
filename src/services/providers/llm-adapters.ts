@@ -54,6 +54,11 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         body.thinking = { type: request.thinking === true ? 'enabled' : 'disabled' };
       }
     }
+    // GLM reasoning models also default to thinking. Honor the explicit task
+    // setting even when they are configured through a custom compatible endpoint.
+    if (/^glm-(?:4\.[5-9]|5(?:[.-]|$))/i.test(String(request.model)) && request.thinking !== undefined) {
+      body.thinking = { type: request.thinking ? 'enabled' : 'disabled' };
+    }
 
     const isKnownTextOnly =
       this.endpoint.baseUrl.includes('deepseek.com') ||

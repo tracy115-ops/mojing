@@ -66,5 +66,20 @@ try {
   assert.equal(timeouts.at(-1),360000,'reasoning editorial requests can outlast the former two-minute deadline');
   await provider.generate({...request,thinking:false});
   assert.equal(timeouts.at(-1),120000);
+  const custom = new OpenAICompatibleProvider({...endpoint,provider:'custom'},'custom');
+  source = event('{"ready":true}', 'stop') + 'data: [DONE]\n';
+  for (const model of ['glm-4.5','glm-4.6','glm-4.7','glm-5','glm-5.2','glm-5.3-flash']) {
+    let text='';
+    for await (const chunk of custom.stream({...request,model,thinking:false})) text+=chunk.delta;
+    assert.equal(text,'{"ready":true}');
+    assert.deepEqual(requests.at(-1).thinking,{type:'disabled'},`${model}: explicitly disable reasoning through custom endpoints`);
+  }
+  source = JSON.stringify({choices:[{message:{content:'Complete chapter.'},finish_reason:'stop'}]});
+  await custom.generate({...request,model:'glm-5.2',thinking:true});
+  assert.deepEqual(requests.at(-1).thinking,{type:'enabled'},'editorial tasks can explicitly enable GLM reasoning');
+  for(const model of ['glm-4-flash','gpt-4o']) {
+    await custom.generate({...request,model,thinking:false});
+    assert.equal(requests.at(-1).thinking,undefined,'do not send GLM reasoning options to unrelated or older models');
+  }
   console.log('LLM streaming passed: fragmented UTF-8 SSE, JSON mode, bounded DeepSeek writing, truncation, empty output, interrupted EOF, provider errors and reader cancellation.');
 } finally { globalThis.fetch = originalFetch; }
