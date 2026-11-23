@@ -20,6 +20,8 @@ import { parseLLMJson } from './llm-json';
 import { ChapterReviewer, type ChapterReviewContext } from './chapter-reviewer';
 import { applyEditorialEdits, isReviewCurrent } from './editorial-review';
 import { textFingerprint } from './writing-context';
+import { generatePlanningResponse } from './planning-generation';
+import { reviewStoryPlan } from './story-plan-review';
 import {
   magnifyOutlineToBeats,
   getConductorSignal,
@@ -486,13 +488,13 @@ export class AutopilotEngine {
       }),
       responseFormat: 'json',
       temperature: 0.7,
-      maxTokens: 4096,
+      maxTokens: 8192,
     };
 
-    const response = await providerRouter.generate(request);
+    const response = await generatePlanningResponse(maxTokens => providerRouter.generate({ ...request, maxTokens, thinking: false }, this.abortController?.signal));
     try {
-      const data = parseLLMJson<Record<string, any>>(response.content);
-      if (!data) throw new Error('global plan parse failed');
+      const reviewed = await reviewStoryPlan(this.readingContext(this.state.currentChapterNumber), response.content, this.abortController?.signal);
+      const data = reviewed.plan as Record<string, any>;
       const plan: GlobalPlan = {
         mainPlot: data.mainPlot || '',
         coreConflict: data.coreConflict || '',
@@ -518,6 +520,7 @@ export class AutopilotEngine {
           || !Number.isInteger(c.volumeIndex) || c.volumeIndex < 0 || c.volumeIndex >= plan.volumes.length || !Array.isArray(c.keyEvents))
         || new Set(plan.chapters.map(c => c.order)).size !== plan.chapters.length) throw new Error('规划缺少可用主线、章节大纲或存在重复章节');
       this.repo.saveGlobalPlan(plan);
+      this.repo.saveCustomData('global-plan-review', { changes: reviewed.changes, reviewedAt: new Date().toISOString() });
       return plan;
     } catch (error) {
       throw new Error('全书规划未完成，已有正文与资料已保留：' + String(error));

@@ -16,6 +16,9 @@ import {
 import { useTranslation } from '@/i18n';
 import { providerRouter } from '@/services/providers';
 import { getTemplate } from '@/services/novel/prompt-templates';
+import { collectPlanningText } from '@/services/novel/planning-generation';
+import { reviewStoryPlan } from '@/services/novel/story-plan-review';
+import { validateWizardPlot } from '@/services/novel/story-plan-contract';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -63,6 +66,9 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
   const [genStatus, setGenStatus] = useState<GenerationStatus>('idle');
   const [genError, setGenError] = useState('');
   const [streamText, setStreamText] = useState('');
+  const [budgetRetry, setBudgetRetry] = useState(false);
+  const [reviewingPlot, setReviewingPlot] = useState(false);
+  const [plotChanges, setPlotChanges] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   // Cleanup on close
@@ -75,6 +81,8 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       setCharacters([]);
       setLocations([]);
       setPlotOutline(null);
+      setPlotChanges([]);
+      setReviewingPlot(false);
       setGenStatus('idle');
       setGenError('');
       setStreamText('');
@@ -94,32 +102,18 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       : '');
     const userPrompt = template.buildUser(vars);
 
-    abortRef.current = new AbortController();
-
-    // Use streaming for real-time feedback, then parse JSON from full output
-    let fullContent = '';
-
-    try {
-      for await (const chunk of providerRouter.stream({
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBudgetRetry(false);
+    return collectPlanningText(maxTokens => providerRouter.stream({
         taskType: 'generation',
         systemPrompt,
         userPrompt,
         temperature: 0.85,
-        maxTokens: 8192,
+        maxTokens,
         responseFormat: 'json',
         thinking: false,
-      })) {
-        if (abortRef.current?.signal.aborted) break;
-        fullContent += chunk.delta;
-        // Update streaming text for UI feedback (show last 500 chars)
-        setStreamText(fullContent);
-      }
-    } catch (err) {
-      if (!abortRef.current?.signal.aborted) throw err;
-    }
-
-    if (abortRef.current?.signal.aborted) return '';
-    return fullContent;
+      }), { signal: controller.signal, onText: setStreamText, onRetry: () => setBudgetRetry(true) });
   }, []);
 
   const parseJSON = useCallback((text: string): any => {
@@ -250,6 +244,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
     setGenStatus('generating');
     setGenError('');
     setStreamText('');
+    setPlotChanges([]);
     try {
       const wbStr = Object.entries(worldbuilding)
         .map(([dim, items]) => `${dim}:\n${items.map((i) => `- ${i.key}: ${i.value}`).join('\n')}`)
@@ -266,11 +261,18 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         locations: locStr,
       });
       const parsed = parseJSON(result);
-      setPlotOutline(parsed);
+      validateWizardPlot(parsed);
+      setReviewingPlot(true);
+      const reviewed = await reviewStoryPlan(`原始简介：${basicValues.description}\n题材：${basicValues.genre}；目标字数：${basicValues.targetWordCount}\n待推演的世界设定：${wbStr}\n人物：${charStr}\n地点：${locStr}`, JSON.stringify(parsed), abortRef.current?.signal);
+      validateWizardPlot(reviewed.plan);
+      setPlotOutline(reviewed.plan);
+      setPlotChanges(reviewed.changes);
       setGenStatus('done');
     } catch (err) {
       setGenStatus('error');
       setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReviewingPlot(false);
     }
   }, [basicValues, worldbuilding, characters, locations, generateWithStream, parseJSON]);
 
@@ -364,7 +366,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
           <Space direction="vertical" style={{ width: '100%' }}>
             <Space>
               <Spin size="small" />
-              <Text style={{ fontSize: 12 }}>{t('wizard.generating')}</Text>
+              <Text style={{ fontSize: 12 }}>{t(reviewingPlot ? 'wizard.reviewingPlot' : budgetRetry ? 'wizard.retryOutputBudget' : 'wizard.generating')}</Text>
             </Space>
             {streamText && (
               <div style={{
@@ -535,6 +537,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         <>
           {plotOutline && (
             <>
+              {plotChanges.length > 0 && <Card size="small" title={t('wizard.plotChanges')}>{plotChanges.map((change, index) => <Paragraph key={index}>{change}</Paragraph>)}</Card>}
               {plotOutline.mainPlot && (
                 <Card size="small" title={<Space><ReadOutlined /> {t('wizard.mainPlot')}</Space>}>
                   <TextArea rows={3} value={plotOutline.mainPlot} style={{ fontSize: 12 }}
@@ -622,7 +625,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         </Button>
         <Space>
           {current > 0 && (
-            <Button onClick={() => { setCurrent(current - 1); setGenStatus('idle'); setStreamText(''); }}>
+            <Button disabled={genStatus === 'generating'} onClick={() => { setCurrent(current - 1); setGenStatus('idle'); setStreamText(''); }}>
               {t('common.back')}
             </Button>
           )}

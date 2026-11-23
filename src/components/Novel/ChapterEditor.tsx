@@ -13,6 +13,7 @@ import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chapter-reviewer';
 import { NOVEL_WRITING_PRINCIPLES, textFingerprint, WRITING_REFERENCE_KEYS } from '@/services/novel/writing-context';
 import { applyEditorialEdits, isReviewCurrent } from '@/services/novel/editorial-review';
+import { generatePlanningResponse } from '@/services/novel/planning-generation';
 import type { NovelChapter, NovelMetadata, CreativeProject } from '@/types';
 import type { LLMGenerateRequest } from '@/types/providers';
 
@@ -142,7 +143,7 @@ ${NOVEL_WRITING_PRINCIPLES}
         thinking: false,
       };
 
-      const response = await providerRouter.generate(request);
+      const response = await generatePlanningResponse(maxTokens => providerRouter.generate({ ...request, maxTokens }));
       const outline = await reviewer.prepareOutline(chapter.order, response.content, getReviewContext());
       onUpdate({ outline, status: 'drafting' });
       message.success(t('common.success'));

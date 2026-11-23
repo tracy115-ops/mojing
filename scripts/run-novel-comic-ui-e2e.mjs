@@ -30,6 +30,10 @@ app.onEvent(event => {
     requests.push({ path: target.pathname, body });
     let result, type = 'application/json';
     const system = body.messages?.[0]?.content || '';
+    if (system.includes('小说剧情规划师') && body.max_tokens===8192) {
+      const sse='data: '+JSON.stringify({choices:[{delta:{content:'{"mainPlot":"incomplete'},finish_reason:null}]})+'\n\ndata: '+JSON.stringify({choices:[{delta:{},finish_reason:'length'}]})+'\n\n';
+      await app.call('Fetch.fulfillRequest',{requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'text/event-stream'}],body:Buffer.from(sse).toString('base64')});return;
+    }
     let content;
     const editorialContract = /Editorial(?:Truncation|AlwaysTruncated)Contract/.test(body.messages?.[1]?.content || '');
     if (editorialContract && /小说责任编辑|认真通读作品的小说编辑/.test(system)) {
@@ -44,7 +48,15 @@ app.onEvent(event => {
     if (system.includes('小说世界观设计师')) content = { 'style公约': '克制的现实悬疑。', '核心法则': [{ key: '现实约束', value: '线索必须可以验证' }], '地理生态': [{ key: '总站', value: '雨夜的公交总站' }], '社会结构': [], '历史文化': [], '日常细节': [] };
     else if (system.includes('小说角色设计师')) content = { characters: [{ name: '林岚', importance: 'protagonist', description: '30岁女公交司机', appearance: '齐肩短发、深蓝制服', relationships: [] }] };
     else if (system.includes('小说场景设计师')) content = { locations: [{ name: '总站', description: '雨夜公交总站' }] };
-    else if (system.includes('小说剧情规划师')) content = { mainPlot: '林岚发现黄色帆布包，调查日期为明天的车票。', stages: [{name:'预领核对',chapterRange:'第1-3章',description:'上报后核对原始交接记录',coreEvent:'保留交接簿原件',foreshadowSeeds:['次日预领栏']}], ending: '核实预盖日期并保留原始报告。' };
+    else if (system.includes('小说剧情规划师')) content = { mainPlot: '林岚发现黄色帆布包，调查日期为明天的车票。', stages: [{name:'预领核对',chapterRange:'第1-3章',description:'上报后核对原始交接记录',coreEvent:'未审稿：在包里添加第二张票',foreshadowSeeds:['次日预领栏']}], ending: '核实预盖日期并保留原始报告。' };
+    else if (system.includes('资深小说总架构师')) content={mainPlot:'核实异常车票来源',coreConflict:'核对记录',themeMessage:'事实与猜测',volumes:[{title:'卷一',startChapter:0,endChapter:0,theme:'核对'}],chapters:[{order:0,title:'原始规划',outline:'未审读的全局方案',volumeIndex:0,keyEvents:[],tensionHint:5}],ending:'查清日期来源'};
+    else if (system.includes('你是小说情节编辑')) {
+      const draft=JSON.parse(body.messages[1].content.split('【待审全书方案，尚未发生】\n')[1]);
+      if(draft.stages)draft.stages[0].coreEvent='保留交接簿原件';
+      else draft.chapters[0].outline='全书审读后：留下原始登记，再核对可取得的记录。';
+      const denied=body.messages[1].content.includes('DenyGlobalStoryPlanContract');
+      content={ready:!denied,plan:draft,changes:['删除违背原始设定的推断，保留可核对的交接事件。'],unresolvedIssues:denied?['日期矛盾仍未解决']:[]};
+    }
     if (target.pathname.includes('images')) {
       const index = Number(body.prompt.match(/Panel marker (\d)/)?.[1] ?? 0);
       result = JSON.stringify({ data: [{ b64_json: tiles[index].toString('base64') }] });
@@ -75,7 +87,7 @@ app.onEvent(event => {
       type = 'text/event-stream';
       result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
     } else {
-      result = JSON.stringify({ choices: [{ message: { content: '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
+      result = JSON.stringify({ choices: [{ message: { content: content ? JSON.stringify(content) : '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
     }
     await app.call('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }], body: Buffer.from(result).toString('base64') });
   })().catch(error => app.errors.push(String(error)));
@@ -132,13 +144,19 @@ try {
   const savedPlot = await app.evaluate(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':plot-outline'))`);
   assert.equal(savedPlot.ending,'核实预盖日期并保留原始报告。');
   assert.equal(savedPlot.stages[0].coreEvent,'保留交接簿原件');
+  assert.equal(JSON.stringify(savedPlot).includes('未审稿：在包里添加第二张票'),false,'adopt the reviewed story plan, not the raw generation');
+  const storyPlanReviews=requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说情节编辑'));
+  assert.equal(storyPlanReviews.length,1);
+  assert.ok(storyPlanReviews[0].body.messages[1].content.includes(description));
+  assert.ok(storyPlanReviews[0].body.messages[1].content.includes('未审稿：在包里添加第二张票'));
   await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const p=${novelExpr};window.__reloadedPlot=new NarrativeRepository(p.id).loadWritingReferences().plotOutline;})()`);
   assert.deepEqual(await app.evaluate('window.__reloadedPlot'),savedPlot,'reconstructed repository loads the full saved plot');
   const snapshotPlot = await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const source=new NarrativeRepository(${novelExpr}.id);const target=new NarrativeRepository('plot-roundtrip-test');try{target.importAll(source.exportAll());return target.loadWritingReferences().plotOutline;}finally{target.clearAll();}})()`);
   assert.deepEqual(snapshotPlot,savedPlot,'repository snapshot export/import preserves the full plot');
   assert.equal(await app.evaluate(`localStorage.getItem('mojing-narrative:plot-roundtrip-test:plot-outline')`),null,'clearAll removes the copied plot');
   const wizardRequests = requests.filter(r => /小说世界观设计师|小说角色设计师|小说场景设计师|小说剧情规划师/.test(r.body.messages?.[0]?.content || ''));
-  assert.equal(wizardRequests.length, 4);
+  assert.equal(wizardRequests.length, 5,'truncated plot retries once without repeating world, characters or locations');
+  assert.deepEqual(wizardRequests.filter(r=>r.body.messages[0].content.includes('小说剧情规划师')).map(r=>r.body.max_tokens),[8192,16384]);
   for (const { body } of wizardRequests) {
     assert.ok(body.messages[1].content.includes(description), 'every setup step retains the original premise');
     assert.deepEqual(body.response_format, { type: 'json_object' });
@@ -218,6 +236,21 @@ try {
   await app.waitFor(`!!document.querySelector('textarea[placeholder="章节正文..."]')`, 'saved prose editor mounted');
   assert.equal(await app.evaluate('document.querySelector(\'textarea[placeholder="章节正文..."]\')?.value'),revisedProse);
   const autoStart = requests.length;
+  const globalPlanContract=await app.evaluate(`(async()=>{
+    const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+    const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');
+    const results=[];
+    for(const title of ['GlobalStoryPlanContract','DenyGlobalStoryPlanContract']){
+      const chapters=[];const engine=new AutopilotEngine({novelId:title,title,description:'包内只有一张车票。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:()=>{},onAddChapter:()=>'',onAddVolume:()=>'',onUpdateMetadata:()=>{}});
+      try{const plan=await engine.doGlobalPlanning();results.push({plan,saved:new NarrativeRepository(title).loadGlobalPlan()});}
+      catch(error){results.push({error:String(error),saved:new NarrativeRepository(title).loadGlobalPlan()});}
+    }
+    return results;
+  })()`);
+  assert.equal(globalPlanContract[0].plan.chapters[0].outline,'全书审读后：留下原始登记，再核对可取得的记录。');
+  assert.deepEqual(globalPlanContract[0].saved,globalPlanContract[0].plan,'save the reviewed global plan');
+  assert.match(globalPlanContract[1].error,/日期矛盾仍未解决/);
+  assert.equal(globalPlanContract[1].saved,null,'an unresolved global plan cannot become a resume checkpoint');
   const autoContract = await app.evaluate(`(async()=>{
     const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
     const chapters=[{id:'auto-0',order:0,title:'Contract',outline:'林岚调查旧票。',content:'',status:'planned',wordCount:0}];

@@ -50,7 +50,7 @@ export class ChapterReviewer {
     const contextFingerprint = textFingerprint(reference);
     const saved = this.repo.loadCustomData<{ contextFingerprint: string; outlineFingerprint: string } | null>('chapter-outline:' + chapterIndex, null);
     if (saved?.contextFingerprint === contextFingerprint && saved.outlineFingerprint === textFingerprint(outline)) return outline;
-    const response = await providerRouter.generate({
+    const response = await this.generateEditorial({
       taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens: 12288, thinking: true,
       systemPrompt: `你是小说策划编辑，负责在正文写作前审读并修正章节方案。目标是好读、可信、确有推进的故事，而非符合模板的术语清单。
 ${NOVEL_WRITING_PRINCIPLES}

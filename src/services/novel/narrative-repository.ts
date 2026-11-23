@@ -424,7 +424,7 @@ export class NarrativeRepository {
   // --- Clear all narrative data ---
 
   clearAll(): void {
-    const suffixes = ['bible', 'plot-outline', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts', 'global-plan'];
+    const suffixes = ['bible', 'plot-outline', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts', 'global-plan', 'global-plan-review'];
     for (const s of suffixes) {
       localStorage.removeItem(key(this.novelId, s));
     }

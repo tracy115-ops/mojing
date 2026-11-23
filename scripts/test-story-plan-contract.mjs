@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {parseStoryPlanAssessment,validateWizardPlot} from '../src/services/novel/story-plan-contract.ts';
+const plan={mainPlot:'发现异常车票后上报并核对来源。',ending:'查清日期印制来源。',stages:[{description:'上报并当面核对',coreEvent:'留下原始登记'}]};
+const result={ready:true,plan,changes:['保留原始票据数量。'],unresolvedIssues:[]};
+assert.deepEqual(parseStoryPlanAssessment(JSON.stringify(result)).plan,plan);
+validateWizardPlot(plan);
+for(const p of [{...plan,mainPlot:''},{...plan,ending:''},{...plan,stages:[]},{...plan,stages:[{description:'仅有描述'}]}]) assert.throws(()=>validateWizardPlot(p),/缺少/);
+assert.throws(()=>parseStoryPlanAssessment(JSON.stringify({...result,ready:false,unresolvedIssues:['购票时间早于亡妻去世，却声称是忌日购票']})),/购票时间/);
+assert.throws(()=>parseStoryPlanAssessment(JSON.stringify({...result,unresolvedIssues:['包内新增物品']})),/包内新增物品/,'a ready flag cannot hide unresolved contradictions');
+for(const override of [{ready:'true'},{changes:'修好了'},{plan:[]},{plan:null},{unresolvedIssues:[null]}]) assert.throws(()=>parseStoryPlanAssessment(JSON.stringify({...result,...override})),/不完整|完整方案/);
+console.log('Story plan contracts: complete plans only, unresolved plot contradictions block adoption, valid plans retained.');

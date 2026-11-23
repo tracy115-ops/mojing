@@ -67,6 +67,13 @@ try {
   await provider.generate({...request,thinking:false});
   assert.equal(timeouts.at(-1),120000);
   const custom = new OpenAICompatibleProvider({...endpoint,provider:'custom'},'custom');
+  for (const model of ['deepseek-v4-pro','deepseek-v4.1-flash']) {
+    source = JSON.stringify({choices:[{message:{content:'{"ready":true}'},finish_reason:'stop'}]});
+    await custom.generate({...request,model,thinking:false});
+    assert.deepEqual(requests.at(-1).thinking,{type:'disabled'},`${model}: reasoning control survives a custom gateway`);
+    await custom.generate({...request,model,thinking:true});
+    assert.deepEqual(requests.at(-1).thinking,{type:'enabled'});
+  }
   source = event('{"ready":true}', 'stop') + 'data: [DONE]\n';
   for (const model of ['glm-4.5','glm-4.6','glm-4.7','glm-5','glm-5.2','glm-5.3-flash']) {
     let text='';

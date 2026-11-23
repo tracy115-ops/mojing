@@ -49,7 +49,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     // V4 shares max_tokens between reasoning and text. Structured output and
     // explicitly bounded writing tasks reserve their budget for the result.
-    if (this.endpoint.provider === 'deepseek' && /^deepseek-v4-/.test(String(request.model))) {
+    if (/^deepseek-v4(?:[.-]|$)/i.test(String(request.model))) {
       if (request.thinking !== undefined || request.responseFormat === 'json') {
         body.thinking = { type: request.thinking === true ? 'enabled' : 'disabled' };
       }
