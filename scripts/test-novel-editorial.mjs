@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildWritingContext, getNovelChapters, textFingerprint } from '../src/services/novel/writing-context.ts';
-import { EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits, labelEditorialParagraphs, parseOutlineAssessment, resolveEditorialCitation, resolveEditorialParagraph, isReviewCurrent } from '../src/services/novel/editorial-review.ts';
+import { EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits, parseEditorialEdits, labelEditorialParagraphs, parseOutlineAssessment, resolveEditorialCitation, resolveEditorialParagraph, isReviewCurrent } from '../src/services/novel/editorial-review.ts';
 import { getDueForeshadowing, lastWrittenChapter } from '../src/services/novel/workbench-state.ts';
 
 const source = { title: '末班车之后', description: '包里只有一张日期为明天的车票，禁止超自然。', genre: 'mystery', style: '克制现实叙事' };
@@ -90,4 +90,14 @@ assert.throws(() => applyEditorialEdits(longProse,[{before:'保留完整中段�
 assert.throws(() => applyEditorialEdits(longProse,[...edits,{before:'需要修改。',after:'改文',reason:'重叠'}]), /重叠/);
 assert.throws(() => applyEditorialEdits(longProse,[{before:'模型臆造原文',after:'改文',reason:'无效'}]), /不存在/);
 assert.throws(() => applyEditorialEdits('全文',[{before:'全文',after:'',reason:'误删'}]), /清空/);
+const structuralDraft = '林岚进了值班室。\r\n \r\n她把票夹交给保安。\r\n \r\n她取出票夹里的车票。\r\n \r\n保安等她签字。';
+const structuralEdits = parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId: 'C2-C3', after: '她请保安翻开票夹，指着相邻的两个票号，请他在登记簿上记下。', reason: '票夹由保安持有，核对由双方当面完成。' }] }), structuralDraft);
+assert.equal(structuralEdits[0].before, '她把票夹交给保安。\r\n \r\n她取出票夹里的车票。');
+assert.equal(applyEditorialEdits(structuralDraft, structuralEdits), '林岚进了值班室。\r\n \r\n她请保安翻开票夹，指着相邻的两个票号，请他在登记簿上记下。\r\n \r\n保安等她签字。', 'repair related paragraphs while preserving the opening, ending and original separators');
+assert.deepEqual(parseEditorialEdits('{"edits":[]}', structuralDraft), []);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'C2-C3',after:'新段落',reason:'跨段修改' },{paragraphId:'C3',after:'另一修改',reason:'重复修改'}] }),structuralDraft), /重叠/);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'C2-C9',after:'新段落',reason:'越界'}] }),structuralDraft), /未提供/);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'R2-R3',after:'改前文',reason:'越权'}] }),structuralDraft), /无效/);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'C1-C4',after:'',reason:'误删全文'}] }),structuralDraft), /清空/);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [null] }),structuralDraft), /有效对象/);
 console.log('Novel editorial contracts passed: chronological source text, no future/outline facts, stale-memory rejection, current story tree, grounded review, hard-conflict gate, exact edits and full ending preservation.');

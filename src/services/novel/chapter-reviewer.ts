@@ -1,10 +1,11 @@
 import { NarrativeRepository } from './narrative-repository';
 import { providerRouter } from '@/services/providers';
 import type { NovelChapter } from '@/types';
+import type { LLMGenerateRequest } from '@/types/providers';
 import { buildWritingContext, NOVEL_WRITING_PRINCIPLES, textFingerprint, type NovelWritingSource } from './writing-context';
 import {
-  EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits,
-  labelEditorialParagraphs, resolveEditorialParagraph, parseOutlineAssessment,
+  EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, parseEditorialEdits,
+  labelEditorialParagraphs, parseOutlineAssessment,
   type EditorialAssessment, type EditorialEdit,
 } from './editorial-review';
 
@@ -28,6 +29,16 @@ export interface ChapterReviewReport extends EditorialAssessment {
 export class ChapterReviewer {
   private repo: NarrativeRepository;
   constructor(private novelId: string) { this.repo = new NarrativeRepository(novelId); }
+
+  private async generateEditorial(request: LLMGenerateRequest) {
+    try {
+      return await providerRouter.generate(request);
+    } catch (error) {
+      const outputBudget = request.maxTokens ?? 16384;
+      if (!(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=') || outputBudget >= 32768) throw error;
+      return providerRouter.generate({ ...request, maxTokens: Math.min(outputBudget * 2, 32768) });
+    }
+  }
 
   buildContext(chapterIndex: number, context: ChapterReviewContext, purpose: 'writing' | 'review' = 'review'): string {
     return buildWritingContext(context.source, this.repo.loadBible(), context.chapters, chapterIndex, this.loadHistory(), purpose, this.repo.loadWritingReferences())
@@ -78,7 +89,7 @@ critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的�
     let correction = '';
     let failure: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const response = await providerRouter.generate({
+      const response = await this.generateEditorial({
         taskType: 'review', systemPrompt,
         userPrompt: `【创作约束与前文，R编号】\n${labelEditorialParagraphs(reference, 'R')}\n\n【待审第${chapterIndex + 1}章完整正文，C编号】\n${labelEditorialParagraphs(content)}${correction}`,
         responseFormat: 'json', temperature: 0.2, maxTokens: 16384, thinking: true,
@@ -110,17 +121,17 @@ critical 是硬事实矛盾或核心承诺被破坏，major 是影响阅读的�
       expand: '只补足缺失的动机、行动过程或对话反应，不为增加字数而补环境、身体反应和重复心理。',
       review: '逐条修复审稿发现的具体问题，不能引入新的事实矛盾。',
     };
-    const response = await providerRouter.generate({
+    const response = await this.generateEditorial({
       taskType: 'rewrite', responseFormat: 'json', temperature: 0.35, maxTokens: 16384, thinking: true,
-      systemPrompt: `你是小说责任编辑。${purposes[mode]}\n${NOVEL_WRITING_PRINCIPLES}\n先通读本章与前文，独立判断审稿建议是否成立，再修复最影响内容的地方。审稿意见可能错漏，不要机械执行；优先动机与因果、实质推进、前后承接，再改语言。修正行动时检查相邻段落的站位、道具和动作，不让局部修订产生新矛盾。删掉冗余就是有效修订，无需用新比喻、更多环境或神秘动作补回字数。保留人物和作品本来的声音，不把全文改成整齐的短句或同一种腔调。\n只对确能改善阅读的完整段落提出最多12处局部修改；没有值得采用的修改就返回空edits。保持全文其余内容不动，不缩写整章、不丢结尾。不得修改原始故事约束，不能靠新增信物、失忆、幕后消息或超自然能力填补逻辑。paragraphId是本章需要修改的C段落编号，每段最多修改一次；after是替换后的完整段落，可为空以删除冗余。reason解释对阅读的帮助。只输出严格JSON：{"edits":[{"paragraphId":"C12","after":"改后完整段落","reason":"理由"}]}`,
+      systemPrompt: `你是小说责任编辑。${purposes[mode]}\n${NOVEL_WRITING_PRINCIPLES}
+先通读本章与前文，独立判断审稿建议是否成立，再修复最影响内容的地方。审稿意见可能错漏，不要机械执行；优先动机与因果、实质推进、前后承接，再改语言。
+同一个问题若涉及相邻多段，应一起改清行动、反应与后果。例如人物已把物件交出，后文再次使用前须有取回过程；已经讲过的调查过程再次转述，只保留接收者的新反应及其造成的变化。修改后核对范围前后的站位、道具、时间、信息来源与指代，不让局部修订产生新矛盾。
+删掉冗余就是有效修订，无需用新比喻、更多环境或神秘动作补回字数。保留人物和作品本来的声音，不把全文改成整齐的短句或同一种腔调。不得靠增加错别字、随机口语、无关经历或替换同义词制造自然感。
+提出最多12处有明确阅读收益的修改；没有值得采用的修改就返回空edits。paragraphId可用单段C12或连续范围C12-C15，最多连续20段。每处after替换所指范围的全部正文，保留范围内仍有效的事件与细节，可用空字符串删除冗余。各范围不得重叠，也不得同时对一个范围和其内部单段提出修改。
+保持范围外的原文，不缩写整章、不丢结尾。不得修改原始故事约束，不能靠新增信物、失忆、幕后消息或超自然能力填补逻辑。reason说明具体问题和修改对阅读的帮助。只输出严格JSON：{"edits":[{"paragraphId":"C12-C15","after":"改后完整语段，段间保留换行","reason":"理由"}]}`,
       userPrompt: `${this.buildContext(chapterIndex, context)}\n\n【本章完整正文，C编号】\n${labelEditorialParagraphs(content)}\n\n【审稿问题】\n${report ? JSON.stringify(report.findings) : '请通读全文，找出最影响阅读的具体语段。'}`,
     });
-    const proposals = JSON.parse(response.content).edits as Array<EditorialEdit & { paragraphId?: string }>;
-    if (!Array.isArray(proposals)) throw new Error('修订结果缺少具体段落');
-    if (!proposals.length) return [];
-    const edits = proposals.map(p => ({ before: p.paragraphId ? resolveEditorialParagraph(content, p.paragraphId) : p.before, after: p.after, reason: p.reason }));
-    applyEditorialEdits(content, edits);
-    return edits;
+    return parseEditorialEdits(response.content, content);
   }
 
   saveReview(report: ChapterReviewReport): void {

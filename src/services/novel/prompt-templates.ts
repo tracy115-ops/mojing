@@ -65,9 +65,11 @@ export function applyAntiAILayer1(text: string): { text: string; replacements: n
 // Layer 2: Scene-based Anti-AI Protocols (P1-P5 + scene-specific rules)
 // ============================================================================
 
-type SceneType = 'combat' | 'dialogue' | 'suspense' | 'daily' | 'romance' | 'exploration';
+type SceneType = 'action' | 'emotion' | 'combat' | 'dialogue' | 'suspense' | 'daily' | 'romance' | 'exploration';
 
 const SCENE_PROTOCOLS: Record<SceneType, string> = {
+  action: '【行动场景】写清人物要做什么、遇到什么阻力、如何选择以及结果。调查、劳动、赶路等行动沿用作品题材，不因行动标签添加打斗。',
+  emotion: '【情绪场景】情绪来自人物的具体经历、关系和损益，影响其判断或选择。悲伤、羞愧、恐惧、释然等按当下处境展开，不因情绪标签添加恋爱、暧昧或肢体接触。',
   combat: '【动作场景】让空间、行动意图、能力限制与身体代价清楚，后果延续到后文。',
   dialogue: '【对话场景】人物因立场、所知信息与当下目的而说话，避免人人同一腔调或替作者说明。',
   suspense: '【悬疑场景】线索有来源，推论有边界，人物发现信息需要行动和代价；不强制反转与线索配额。',
@@ -94,10 +96,10 @@ export function buildSceneProtocol(sceneType?: SceneType): string {
  */
 export function detectSceneType(focus: string): SceneType {
   const mapping: Record<string, SceneType> = {
-    action: 'combat',
+    action: 'action',
     dialogue: 'dialogue',
     suspense: 'suspense',
-    emotion: 'romance',
+    emotion: 'emotion',
     hook: 'suspense',
     sensory: 'exploration',
     character_intro: 'daily',
@@ -398,7 +400,7 @@ const beatMagnify: PromptTemplate = {
 const beatGeneration: PromptTemplate = {
   id: 'beat-generation',
   name: '单Beat生成',
-  version: 4,
+  version: 5,
   variables: ['title', 'genre', 'style', 'phaseDirective', 'context', 'outline', 'beatDescription', 'beatFocus', 'targetWords', 'conductorSignal', 'beatIndex', 'totalBeats', 'sensoryHint'],
   buildSystem(vars) {
     const isFirst = vars.beatIndex === '0';
@@ -410,7 +412,7 @@ const beatGeneration: PromptTemplate = {
 
     const beatSpecific = [
       isFirst ? '\n【开篇指令】这是章节开头。承接上章的最终处境，用当前行动或关系进入场景，必要背景简明交代。' : '',
-      isLast ? '\n【结尾指令】这是章节最后一段。必须收束当前情绪，要么制造悬念，要么给出情感落点。禁止开放式结尾后继续展开。禁止总结。' : '',
+      isLast ? '\n【结尾指令】这是本章最后一个节拍。完成已经展开的关键选择及其可见后果，停在本章形成的新处境。允许自然留白，不为结尾另加反转、陌生来电或情感总结。' : '',
     ].join('');
 
     return `你是一位小说作者。按照本书题材、人物和既有情节续写当前场景，保留作者已经形成的声音。

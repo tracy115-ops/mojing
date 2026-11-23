@@ -10,7 +10,7 @@ const url = process.env.MOJING_SMOKE_URL || 'http://127.0.0.1:1420/';
 const origin = new URL(url).origin;
 const app = await chromeSession({ url, port: 9256 });
 const requests = [], external = [], blockedProbes = [];
-const novelProse = '雨水敲着车窗。' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '林岚从黄色帆布包中取出旧票，走向车载摄像头。';
+const novelProse = '雨水敲着车窗。\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '\n\n林岚从黄色帆布包中取出旧票，走向车载摄像头。';
 const colors = ['#d93434', '#32b34d', '#3355d4', '#d4a834'];
 const tiles = await Promise.all(colors.map(background => sharp({ create: { width: 360, height: 640, channels: 3, background } }).png().toBuffer()));
 const panels = colors.map((_, i) => ({ description: `Panel marker ${i}: Lin Lan inspects the yellow bag on the bus.`, dialogue: i === 3 ? '车票上的日期，是明天。' : '', characterIds: ['char_0'], shotType: i === 0 ? 'wide' : 'medium' }));
@@ -31,6 +31,16 @@ app.onEvent(event => {
     let result, type = 'application/json';
     const system = body.messages?.[0]?.content || '';
     let content;
+    const editorialContract = /Editorial(?:Truncation|AlwaysTruncated)Contract/.test(body.messages?.[1]?.content || '');
+    if (editorialContract && /小说责任编辑|认真通读作品的小说编辑/.test(system)) {
+      const truncated = body.max_tokens <= 16384 || body.messages[1].content.includes('EditorialAlwaysTruncatedContract');
+      const complete = system.includes('小说责任编辑') ? {edits:[]} : {
+        dimensions:['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name=>({name,score:80})),
+        summary:'Fixture complete review.', findings:[], continuityNotes:[],
+      };
+      await app.call('Fetch.fulfillRequest', {requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/json'}],body:Buffer.from(JSON.stringify({choices:[{message:{content:truncated?'{"edits":[':JSON.stringify(complete)},finish_reason:truncated?'length':'stop'}]})).toString('base64')});
+      return;
+    }
     if (system.includes('小说世界观设计师')) content = { 'style公约': '克制的现实悬疑。', '核心法则': [{ key: '现实约束', value: '线索必须可以验证' }], '地理生态': [{ key: '总站', value: '雨夜的公交总站' }], '社会结构': [], '历史文化': [], '日常细节': [] };
     else if (system.includes('小说角色设计师')) content = { characters: [{ name: '林岚', importance: 'protagonist', description: '30岁女公交司机', appearance: '齐肩短发、深蓝制服', relationships: [] }] };
     else if (system.includes('小说场景设计师')) content = { locations: [{ name: '总站', description: '雨夜公交总站' }] };
@@ -55,7 +65,11 @@ app.onEvent(event => {
     } else if (system.includes('小说责任编辑')) {
       const alreadyRevised = body.messages[1].content.includes('雨点敲着车顶。');
       const edits = [{ before: alreadyRevised ? '雨点敲着车顶。' : '雨水敲着车窗。', after: alreadyRevised ? '雨声落在车顶。' : '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }];
-      if (!/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) edits.push({before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'});
+      if (!/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
+        // Exercise a cross-paragraph response through the actual preview and adoption controls.
+        edits[0] = { paragraphId:'C1-C2', after:edits[0].after + '\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350), reason:'Fixture cross-paragraph edit.' };
+        edits.push({before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'});
+      }
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits }) }, finish_reason: 'stop' }] });
     } else if (body.stream) {
       type = 'text/event-stream';
@@ -79,6 +93,21 @@ try {
   await app.call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
   await app.call('Page.navigate', { url });
   await app.waitFor('!!document.querySelector(".ws-titlebar")', 'application');
+  const sceneGuides = await app.evaluate(`(async () => {
+    const { getTemplate } = await import('/src/services/novel/prompt-templates.ts');
+    const template = getTemplate('beat-generation');
+    const vars = { title:'末班车之后', genre:'mystery', style:'现实悬疑', beatIndex:'0', totalBeats:'2', targetWords:'900', beatDescription:'核对票号' };
+    return {
+      action: template.buildSystem({ ...vars, beatFocus:'action' }),
+      emotion: template.buildSystem({ ...vars, beatFocus:'emotion' }),
+      ending: template.buildSystem({ ...vars, beatFocus:'dialogue', beatIndex:'1' }),
+    };
+  })()`);
+  assert.ok(sceneGuides.action.includes('【行动场景】'));
+  assert.equal(sceneGuides.action.includes('【动作场景】'), false, 'ordinary action does not select the combat protocol');
+  assert.ok(sceneGuides.emotion.includes('【情绪场景】'));
+  assert.equal(sceneGuides.emotion.includes('【情感场景】'), false, 'emotion does not select the romance protocol');
+  assert.equal(sceneGuides.ending.includes('要么制造悬念'), false, 'the chapter ending is not forced into a formula');
   // Seed only user input/configuration. All generated outputs go through the
   // UI, production router/adapters, pipeline, image decoder and Canvas.
   await app.evaluate(`(async()=>{
@@ -221,6 +250,30 @@ try {
       assert.equal(result.chapterStatus,'revising');
     }
   }
+  const budgetStart = requests.length;
+  const budgetRecovery = await app.evaluate(`(async () => {
+    const {ChapterReviewer} = await import('/src/services/novel/chapter-reviewer.ts');
+    const reviewer = new ChapterReviewer('editorial-budget-contract');
+    const context = {source:{title:'EditorialTruncationContract',description:'现实调查。',genre:'mystery',style:'克制'},chapters:[]};
+    const report = await reviewer.reviewChapter(0,'林岚把车票交给保安。',context);
+    const edits = await reviewer.proposeRevision(0,'林岚把车票交给保安。',context,'review',report);
+    return {status:report.status,edits};
+  })()`);
+  assert.equal(budgetRecovery.status,'reviewed');
+  assert.deepEqual(budgetRecovery.edits,[]);
+  assert.deepEqual(requests.slice(budgetStart).map(r=>r.body.max_tokens),[16384,32768,16384,32768],'review and revision each retry a truncated response once with more output room');
+  const failureStart = requests.length;
+  const exhaustedBudget = await app.evaluate(`(async () => {
+    const {ChapterReviewer} = await import('/src/services/novel/chapter-reviewer.ts');
+    const reviewer = new ChapterReviewer('editorial-exhausted-budget-contract');
+    try {
+      await reviewer.reviewChapter(0,'林岚把车票交给保安。',{source:{title:'EditorialAlwaysTruncatedContract',description:'现实调查。',genre:'mystery',style:'克制'},chapters:[]});
+      throw new Error('A truncated report was accepted');
+    } catch (error) { return {error:String(error),reports:reviewer.loadHistory().length}; }
+  })()`);
+  assert.match(exhaustedBudget.error,/truncated/);
+  assert.equal(exhaustedBudget.reports,0,'incomplete output must not become a successful review');
+  assert.deepEqual(requests.slice(failureStart).map(r=>r.body.max_tokens),[16384,32768],'a persistent truncation stops at the output budget limit');
   await app.click('button[aria-label="漫画工坊"]');
   await app.waitFor('[...document.querySelectorAll("button")].some(e=>e.textContent==="新建漫画")', 'comic page');
   await app.textButton('新建漫画');

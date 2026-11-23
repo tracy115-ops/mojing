@@ -52,7 +52,7 @@ export function resolveEditorialParagraph(text: string, id: unknown, prefix = 'C
   return paragraph;
 }
 
-/** Review evidence may span adjacent paragraphs; revision anchors remain single paragraphs. */
+/** Resolve a single paragraph or adjacent paragraphs without changing source separators. */
 export function resolveEditorialCitation(text: string, id: unknown, prefix = 'C'): string {
   if (typeof id !== 'string') throw new Error('审稿段落编号无效');
   const match = new RegExp(`^${prefix}([1-9]\\d*)(?:-${prefix}([1-9]\\d*))?$`).exec(id);
@@ -118,6 +118,23 @@ export function applyEditorialEdits(content: string, edits: EditorialEdit[]): st
   for (const span of spans.reverse()) result = result.slice(0, span.start) + span.edit.after + result.slice(span.end);
   if (!result.trim()) throw new Error('修订不能清空章节');
   return result;
+}
+
+/** Resolve model-selected paragraph spans against the actual draft before preview or adoption. */
+export function parseEditorialEdits(raw: string, content: string): EditorialEdit[] {
+  const value = record(JSON.parse(raw));
+  if (!Array.isArray(value.edits)) throw new Error('修订结果缺少具体段落');
+  if (!value.edits.length) return [];
+  const edits = value.edits.map(input => {
+    const edit = record(input);
+    return {
+      before: edit.paragraphId ? resolveEditorialCitation(content, edit.paragraphId) : nonempty(edit.before),
+      after: typeof edit.after === 'string' ? edit.after : nonempty(edit.after),
+      reason: nonempty(edit.reason),
+    };
+  });
+  applyEditorialEdits(content, edits);
+  return edits;
 }
 
 export function needsEditorialRevision(assessment: EditorialAssessment): boolean {
