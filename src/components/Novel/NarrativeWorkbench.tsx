@@ -64,8 +64,8 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
       { key: 'dialogue', icon: <MessageOutlined />, content: <DialogueGeneratorPanel novelId={novelId} chapterIndex={chapterIndex} /> },
     ],
     plot: [
-      { key: 'foreshadow', icon: <AimOutlined />, content: <ForeshadowLedgerPanel novelId={novelId} chapterIndex={chapterIndex} /> },
       { key: 'storyline', icon: <BranchesOutlined />, content: <StorylinePanel novelId={novelId} totalChapters={totalChapters} /> },
+      { key: 'foreshadow', icon: <AimOutlined />, content: <ForeshadowLedgerPanel novelId={novelId} chapterIndex={chapterIndex} /> },
       { key: 'worldbuilding', icon: <GlobalOutlined />, content: <WorldbuildingPanel novelId={novelId} /> },
       { key: 'props', icon: <ToolOutlined />, content: <PropsPanel novelId={novelId} /> },
       { key: 'knowledgeGraph', icon: <NodeIndexOutlined />, content: <KnowledgeGraphView novelId={novelId} /> },

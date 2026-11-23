@@ -14,6 +14,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { Storyline, StorylineType, StorylineStatus } from '@/types/narrative';
+import StoryPlanOverview from './StoryPlanOverview';
 
 interface StorylinePanelProps {
   novelId: string;
@@ -214,10 +215,11 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '4px 12px', fontWeight: 600, fontSize: 13, borderBottom: '1px solid var(--border-secondary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span><BranchesOutlined style={{ marginRight: 6 }} />{t('storyline.title')} ({lines.length})</span>
+        <span><BranchesOutlined style={{ marginRight: 6 }} />{t('storyPlan.workspace')}</span>
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 8px' }}>
+        <StoryPlanOverview novelId={novelId} />
         <Tabs items={tabItems} size="small" />
       </div>
 

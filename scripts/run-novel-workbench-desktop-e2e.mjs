@@ -49,6 +49,16 @@ try {
       await app.waitFor(`document.querySelector(${JSON.stringify(pane)})?.id===${JSON.stringify(tab.id.replace('-tab-', '-panel-'))}`, 'selected workbench data panel');
       const text = await app.evaluate(`document.querySelector(${JSON.stringify(pane)}).innerText`);
       assert.ok(text.trim(), 'selected workbench panel has content or its own empty-state message');
+      if (category === 'plot' && tab.id.endsWith('-tab-storyline') && narrative['mojing-narrative:' + input.project.id + ':plot-outline']) {
+        const saved = narrative['mojing-narrative:' + input.project.id + ':plot-outline'];
+        const plan = typeof saved === 'string' ? JSON.parse(saved) : saved;
+        await app.waitFor(`!!document.querySelector('[data-testid="story-plan-overview"]')`, 'saved plot overview');
+        await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('阶段与关键事件')).click()`);
+        await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('结局')).click()`);
+        await app.waitFor(`document.querySelector('[data-testid="story-plan-overview"]').innerText.includes(${JSON.stringify(plan.ending)})`, 'complete ending in saved plan');
+        const visible = await app.evaluate(`document.querySelector('[data-testid="story-plan-overview"]').innerText`);
+        for (const value of [plan.mainPlot, plan.ending, ...plan.stages.flatMap(s => [s.description, s.coreEvent])]) assert.ok(visible.includes(value), 'every saved stage and ending is readable in the real panel');
+      }
       const name = category + '-' + tab.id.split('-tab-').at(-1);
       await writeFile(join(output, name + '.txt'), text);
       await app.screenshot(join(output, name + '.png'));

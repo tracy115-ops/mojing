@@ -149,6 +149,16 @@ try {
   assert.equal(storyPlanReviews.length,1);
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(description));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes('未审稿：在包里添加第二张票'));
+  await app.evaluate(`document.querySelector('[data-workbench-category="plot"]').click()`);
+  await app.waitFor(`!!document.querySelector('[data-testid="story-plan-overview"]')`,'saved full plot visible');
+  await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('阶段与关键事件')).click()`);
+  await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('结局')).click()`);
+  await app.waitFor(`document.querySelector('[data-testid="story-plan-overview"]').innerText.includes('核实预盖日期并保留原始报告。')`,'ending visible');
+  const visiblePlan=await app.evaluate(`document.querySelector('[data-testid="story-plan-overview"]').innerText`);
+  assert.ok(visiblePlan.includes(savedPlot.mainPlot));
+  assert.ok(visiblePlan.includes(savedPlot.stages[0].coreEvent));
+  assert.ok(visiblePlan.includes(savedPlot.ending));
+  await app.evaluate(`document.querySelector('[data-workbench-category="overview"]').click()`);
   await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const p=${novelExpr};window.__reloadedPlot=new NarrativeRepository(p.id).loadWritingReferences().plotOutline;})()`);
   assert.deepEqual(await app.evaluate('window.__reloadedPlot'),savedPlot,'reconstructed repository loads the full saved plot');
   const snapshotPlot = await app.evaluate(`(async()=>{const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');const source=new NarrativeRepository(${novelExpr}.id);const target=new NarrativeRepository('plot-roundtrip-test');try{target.importAll(source.exportAll());return target.loadWritingReferences().plotOutline;}finally{target.clearAll();}})()`);
