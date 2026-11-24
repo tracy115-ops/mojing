@@ -13,8 +13,10 @@ assert.throws(()=>apply({unresolvedIssues:['包内新增物品']}),/包内新增
 for(const override of [{ready:'true'},{edits:undefined,plan,changes:['声称已经修改']},{unresolvedIssues:[null]}]) assert.throws(()=>apply(override),/不完整/);
 assert.throws(()=>apply({},[]),/不完整/);
 const [edit]=result.edits;
-for(const invalid of [{...edit,path:['stages',2,'coreEvent']},{...edit,path:['__proto__','toString']},{...edit,replacement:plan.stages[0].coreEvent}]) {
-  assert.throws(()=>apply({edits:[invalid]}),/未能应用/);
+for(const invalid of [{...edit,path:['stages',2,'coreEvent']},{...edit,path:['__proto__','toString']}]) {
+  assert.throws(()=>apply({edits:[invalid]}),/找不到/);
 }
-assert.throws(()=>apply({edits:[edit,{...edit,path:['stages','0','coreEvent']}]}),/未能应用/);
+assert.deepEqual(apply({edits:[{...edit,replacement:plan.stages[0].coreEvent}]}),{plan,changes:[]});
+assert.deepEqual(apply({edits:[edit,edit]}),apply());
+assert.throws(()=>apply({edits:[edit,{...edit,path:['stages','0','coreEvent'],replacement:'另一处冲突修订'}]}),/同一大纲字段/);
 console.log('Story plan contracts: edits reach the selected fields, unresolved contradictions and unapplied edits block adoption.');

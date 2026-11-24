@@ -1,11 +1,11 @@
 import { providerRouter } from '@/services/providers';
 import { NOVEL_WRITING_PRINCIPLES } from './writing-context';
 import { generatePlanningResponse } from './planning-generation';
-import { applyStoryPlanAssessment } from './story-plan-contract';
+import { applyStoryPlanAssessment, InvalidStoryPlanEdits } from './story-plan-contract';
 
 export async function reviewStoryPlan(context: string, plan: string, signal?: AbortSignal) {
   // Reserve the model's output budget for the proposed edits.
-  const response = await generatePlanningResponse(maxTokens => providerRouter.generate({
+  const ask = (correction = '') => generatePlanningResponse(maxTokens => providerRouter.generate({
     taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens, thinking: false,
     timeoutMs: 360_000,
     systemPrompt: `你是小说情节编辑，在正文动笔前审读整部故事方案。目标是值得读下去、人物可信、因果成立的故事；不是用评分替代阅读，也不是承诺签约或通过AI检测。
@@ -17,7 +17,14 @@ ${NOVEL_WRITING_PRINCIPLES}
 修订未写的方案，保留题材与作者意图，不修改已写事实。不要用增加微表情、句式配额、替换普通词语来冒充情节改进。没有实质收益就保留原文。不能修复时ready=false，说明具体矛盾，禁止假装已解决。
 输出严格 JSON：{"ready":true,"edits":[{"path":["stages",0,"description"],"replacement":"修订后的完整字段文字","reason":"说明具体改动及其阅读收益"}],"unresolvedIssues":[]}。
 系统会将 edits 中的替换文字直接写入大纲。path 从待审方案根节点起，数组位置从 0 开始，每条定位到一个现有文字字段。每个字段最多修订一次。连同结局、阶段描述、关键事件或章节大纲中受同一改动影响的文字一起修订。保留原有章节范围、顺序和数组数量。无需修改时返回空 edits。`,
-    userPrompt: `【创作依据，原始简介与正文优先】\n${context}\n\n【待审全书方案，尚未发生】\n${plan}`,
+    userPrompt: `【创作依据，原始简介与正文优先】\n${context}${correction}\n\n【待审全书方案，尚未发生】\n${plan}`,
   }, signal), 16384);
-  return applyStoryPlanAssessment(response.content, plan);
+  const response = await ask();
+  try {
+    return applyStoryPlanAssessment(response.content, plan);
+  } catch (error) {
+    if (!(error instanceof InvalidStoryPlanEdits)) throw error;
+    const corrected = await ask(`\n\n上次修订未通过格式检查。原因如下。\n${error.message}\n请从这份待审方案重新生成一份完整的修订列表，使用实际存在的字段与从 0 开始的数组位置。同一字段的改动请合并到一条。`);
+    return applyStoryPlanAssessment(corrected.content, plan);
+  }
 }
