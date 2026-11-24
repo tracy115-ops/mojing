@@ -971,7 +971,7 @@ const NovelView: React.FC = () => {
                         novelId={activeProjectId}
                         totalChapters={chapters.length}
                         chapterIndex={activeChapter?.order ?? 0}
-                        onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) selectChapter(chapter.id); }}
+                        onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) setActiveChapterId(chapter.id); }}
                       />
                     </div>
                   </div>

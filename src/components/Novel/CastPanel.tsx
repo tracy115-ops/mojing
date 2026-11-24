@@ -21,6 +21,7 @@ interface CastPanelProps {
   novelId: string;
   totalChapters: number;
   currentChapter: number;
+  onOpenBible: () => void;
 }
 
 const importanceColor: Record<string, string> = {
@@ -30,7 +31,7 @@ const importanceColor: Record<string, string> = {
   minor: 'default',
 };
 
-const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentChapter }) => {
+const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentChapter, onOpenBible }) => {
   const { t } = useTranslation();
   const [repo] = useState(() => new NarrativeRepository(novelId));
 
@@ -270,7 +271,7 @@ const CastPanel: React.FC<CastPanelProps> = ({ novelId, totalChapters, currentCh
         {characters.length === 0 ? (
           <div style={{ padding: 20 }}>
             <Empty description={t('cast.noCharacters')} image={Empty.PRESENTED_IMAGE_SIMPLE}>
-              <Button type="primary" size="small" onClick={() => message.info(t('cast.gotoBible'))}>
+              <Button type="primary" size="small" onClick={onOpenBible}>
                 {t('cast.gotoBible')}
               </Button>
             </Empty>

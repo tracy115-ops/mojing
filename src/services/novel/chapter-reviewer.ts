@@ -82,6 +82,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     const reference = this.buildContext(chapterIndex, context);
     const factSources = [context.source.description,
       ...this.repo.loadBible().worldSettings.flatMap(setting => setting.constraints ?? []),
+      ...Object.values(this.repo.loadWorldbuilding().dimensions.coreRules?.fields ?? {}),
       ...context.chapters.filter(chapter => chapter.order < chapterIndex).map(chapter => chapter.content),
     ];
     const systemPrompt = `你是一位认真通读作品的小说编辑。判断阅读效果，分数只是辅助，不是文学质量证书。

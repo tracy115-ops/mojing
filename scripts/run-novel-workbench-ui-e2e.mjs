@@ -15,8 +15,10 @@ const novelId = 'workbench-ui-contract';
 const projectExpr = `JSON.parse(localStorage.getItem('mojing-projects')).state.projects.find(p=>p.id===${JSON.stringify(novelId)})`;
 const stored = suffix => `JSON.parse(localStorage.getItem(${JSON.stringify('mojing-narrative:' + novelId + ':' + suffix)}))`;
 const requests = [], external = [], pages = [], assertions = [];
-let failDialogue = false, streamIndex = 0, holdStream;
+let failDialogue = false, streamIndex = 0, holdStream, holdRevision;
 const drafts = ['林岚把登记簿放在值班桌上。', '保安核对编号后签了字。', '林岚收好回执，离开值班室。'];
+const signedAlone = '本次由保安一人签收回执。';
+const countersignRule = '值班室内回执必须由两人共同签收。';
 const review = {
   dimensions: ['premise_fidelity', 'character_consistency', 'timeline_consistency', 'plot_coherence', 'foreshadowing_usage', 'voice_quality'].map(name => ({ name, score: 80 })),
   summary: 'Fixture review of the selected manuscript; not a live quality result.', findings: [],
@@ -39,7 +41,22 @@ app.onEvent(event => {
     if (system.includes('角色对话生成器')) {
       if (failDialogue) { responseCode = 400; content = { error: { message: 'Fixture dialogue unavailable' } }; }
       else content = '记录里没有，不代表实物不存在。先去核对。';
-    } else if (system.includes('认真通读作品的小说编辑')) content = review;
+    } else if (system.includes('认真通读作品的小说编辑')) {
+      const user = body.messages[1].content;
+      content = user.includes(signedAlone) && user.includes(countersignRule) ? { ...review, findings: [{
+        dimension: 'timeline_consistency', severity: 'minor', basis: 'conflict',
+        quote: signedAlone, referenceQuote: countersignRule,
+        currentEvidence: signedAlone, referenceEvidence: countersignRule,
+        problem: '本次只有一人签收，违反值班室两人签收的规则。', suggestion: '核对签收现场。',
+      }] } : review;
+    } else if (system.includes('小说责任编辑')) {
+      content = holdRevision ? { edits: [{ before: signedAlone, after: '本次两人共同签收回执。', reason: '按世界规则签收。' }] } : { edits: [] };
+      if (holdRevision) await holdRevision;
+    }
+    else if (system.includes('你是小说情节编辑')) {
+      const plan = JSON.parse(body.messages[1].content.split('【待审全书方案，尚未发生】\n')[1]);
+      content = { ready: true, plan, changes: [], unresolvedIssues: [] };
+    }
     else if (system.includes('小说总架构师')) content = {
       mainPlot: '按前文继续核对登记。', coreConflict: '登记与实物须对照。', themeMessage: '尊重证据。',
       volumes: [{ title: '核对', startChapter: 0, endChapter: 4, theme: '追查凭据' }],
@@ -95,8 +112,12 @@ try {
     const repo=new NarrativeRepository(id), bible=repo.loadBible();
     bible.characters=['林岚','陈默','许安'].map((name,i)=>({id:['driver','colleague','unmentioned'][i],name,aliases:[''],description:'职业与信息需要核实。',appearance:'工作制服',personality:'谨慎',backstory:'原始经历',importance:i?'supporting':'protagonist',status:'active',currentState:'',firstAppearChapter:0,lastUpdateChapter:0,relationships:i===0?[{targetCharacterId:'colleague',type:'同事',description:'作者关系',sinceChapter:0}]:[]}));
     repo.saveBible(bible);
+    repo.saveCustomData('plot-outline',{mainPlot:'林岚核对票务登记。',coreConflict:'台账与实物不符。',stages:[{name:'查证',chapterRange:'第1～5章',description:'先核对回执再查票源。',coreEvent:'保留原始回执。',foreshadowSeeds:['遗失一页']}],ending:'证据与口供互相印证。'});
     repo.saveForeshadowing([{id:'future-ledger',novelId:id,description:'未来才埋设的线索',plantedInChapter:9,suggestedResolveChapter:10,status:'planted',relatedCharacters:[],urgency:'medium',narrativeWeight:5}]);
-    repo.saveTriples([{subject:'未确认甲',predicate:'未确认关系',object:'未确认乙',sinceChapter:0,source:'extracted'}]);
+    repo.saveTriples([
+      {subject:'未确认甲',predicate:'未确认关系',object:'未确认乙',sinceChapter:0,source:'extracted'},
+      {subject:'林岚',predicate:'模型猜测师徒',object:'陈默',sinceChapter:0,source:'extracted'}
+    ]);
     useProjectStore.setState({projects:[project],activeProjectId:id});
     const p=useProviderStore.getState();
     useProviderStore.setState({config:{...p.config,llm:{...p.config.llm,primary:'deepseek',endpointId:'workbench-llm',defaultModel:'deepseek-v4-pro',models:{}}},endpoints:[{id:'workbench-llm',provider:'deepseek',category:'llm',baseUrl:${JSON.stringify(origin)},apiKey:'fixture',models:['deepseek-v4-pro'],enabled:true}]});
@@ -138,13 +159,19 @@ try {
   await app.textButton('保存', pane);
   assert.match(await app.evaluate(stored('worldbuilding') + '.dimensions.coreRules.fields.coreLaws'), /作者规则标记/);
   await open('plot', 'storyline');
+  const plotOverview = '[data-testid=story-plan-overview]';
+  assert.match(await text(), /林岚核对票务登记。/);
+  await app.evaluate(`document.querySelectorAll('${plotOverview} .ant-collapse-header')[1].click()`);
+  assert.match(await text(), /保留原始回执。/);
+  await app.evaluate(`document.querySelectorAll('${plotOverview} .ant-collapse-header')[2].click()`);
+  assert.match(await text(), /证据与口供互相印证。/);
   await app.textButton('添加故事线', pane);
   await app.waitFor('!!document.querySelector(".ant-modal #chapterStart")', 'storyline editor');
   await fill('.ant-modal #name', '登记副线'); await fill('.ant-modal #description', '副线标记：核对签收人与登记次序。');
   await fill('.ant-modal #chapterStart', '2'); await fill('.ant-modal #chapterEnd', '5');
   await saveModal();
   assert.deepEqual(await app.evaluate(stored('storylines') + '[0].chapterRange'), [1, 4]);
-  check('World rules save; storyline chapter numbers convert from displayed 1-based to stored 0-based');
+  check('The full plot displays its actual stage and ending; side plots use the author’s one-based chapter range; world rules save');
 
   await open('characters', 'cast');
   await app.click(pane + ' button:has(.anticon-unlock)');
@@ -155,6 +182,12 @@ try {
   assert.match(await app.evaluate(`document.querySelector(${JSON.stringify(pane + ' [data-row-key="unmentioned"]')}).innerText`), /0%/);
   assert.match(await app.evaluate(`document.querySelector(${JSON.stringify(pane + ' [data-row-key="driver"]')}).innerText`), /75%/);
   check('Cast plans persist for the selected chapter but never count as name mentions; empty chapters are excluded');
+
+  await open('characters', 'relationGraph');
+  await app.waitFor(`!!document.querySelector(${JSON.stringify(pane + ' canvas')})?.width`, 'relationship chart renders');
+  const relationCounts = await app.evaluate(`[...document.querySelectorAll(${JSON.stringify(pane + ' .ant-badge-count')})].map(e=>Number(e.getAttribute('title')||e.textContent))`);
+  assert.deepEqual(relationCounts, [3, 1], 'three saved characters and their one confirmed relationship');
+  check('Character graph keeps the confirmed Bible edge and excludes the unconfirmed relationship between the same two characters');
 
   await open('plot', 'foreshadow');
   assert.match(await text(), /建议复看 0 条/);
@@ -172,12 +205,15 @@ try {
   await app.textButton('添加道具', pane);
   await fill('.ant-modal #name', '值班登记簿'); await fill('.ant-modal #description', '道具标记：蓝色封面，保留原始签字。');
   await fill('.ant-modal #introducedChapter', '2');
+  await fill('.ant-modal #stateAsOfChapter', '6');
   await choose('.ant-modal #lifecycleState', '使用中');
   await choose('.ant-modal #holderCharacterId', '陈默');
   await saveModal();
   assert.equal(await app.evaluate(stored('props') + '[0].lifecycleState'), 'active');
   assert.equal(await app.evaluate(stored('props') + '[0].introducedChapter'), 2);
-  check('Prop form persists author-selected state, holder and first chapter');
+  assert.equal(await app.evaluate(stored('props') + '[0].stateAsOfChapter'), 6);
+  assert.equal(await app.evaluate(stored('props') + '[0].holderCharacterId'), 'colleague');
+  check('Prop form persists its first chapter, state chapter and stable holder identity');
 
   await open('plot', 'knowledgeGraph');
   assert.match(await text(), /待核对/);
@@ -194,7 +230,7 @@ try {
   const firstReviewRequest = requests.at(-1);
   const wholeRequest = JSON.stringify(firstReviewRequest.messages);
   for (const marker of ['作者确认经历', '作者规则标记', '副线标记', '作者本章出场计划', '许安', '伏笔标记', '道具标记', '存放地点', '林岚和陈默在二楼核对登记。']) assert.ok(wholeRequest.includes(marker), 'review includes saved reference: ' + marker);
-  for (const marker of ['错误的旧正文', '未确认关系', '未来才埋设的线索']) assert.ok(!wholeRequest.includes(marker), 'exclude unsupported or future data: ' + marker);
+  for (const marker of ['错误的旧正文', '未确认关系', '未来才埋设的线索', '截至第6章台账状态', '持有者：陈默']) assert.ok(!wholeRequest.includes(marker), 'exclude unsupported or future data: ' + marker);
   await choose(pane + ' .ant-select input', '第1章 · 作者章节1');
   await app.textButton('运行评审', pane);
   await app.waitFor(`${stored('chapter-reviews')}.some(r=>r.chapter===0)`, 'first chapter review');
@@ -243,7 +279,7 @@ try {
   let releaseStream;
   holdStream = new Promise(resolveStream => { releaseStream = resolveStream; });
   const beforeAutopilot = requests.length;
-  await app.textButton('开始生成');
+  await app.textButton('自动写多章');
   const writingDeadline = Date.now() + 20000;
   while (streamIndex === 0 && Date.now() < writingDeadline) await app.delay(100);
   assert.equal(streamIndex, 1, 'automatic writing reaches the real streaming adapter');
@@ -287,8 +323,8 @@ try {
   }
   await app.waitFor(`!!document.querySelector('button[aria-label="小说引擎"]')`, 'reload');
   await app.click('button[aria-label="小说引擎"]');
-  await app.waitFor('document.body.innerText.includes("开始生成")', 'resume entry');
-  await app.textButton('开始生成');
+  await app.waitFor('document.body.innerText.includes("自动写多章")', 'resume entry');
+  await app.textButton('自动写多章');
   await app.waitFor('document.body.innerText.includes("已完成")', 'resume completion');
   assert.equal(requests.length, beforeResume);
   assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").content'), drafts.join('\n\n'));
@@ -296,17 +332,60 @@ try {
 
   await open('quality', 'chapterReview');
   await choose(pane + ' .ant-select input', '第5章 · 回执');
-  const authorDraft = drafts.join('\n\n') + '\n\n作者手动补记：她将签收回执留在登记簿封底。';
+  const authorDraft = drafts.join('\n\n') + '\n\n' + signedAlone;
   await fill('textarea[placeholder="章节正文..."]', authorDraft);
   await app.waitFor(`${projectExpr}.metadata.storyNodes.find(n=>n.id==="chapter-4").status==='drafting'`, 'manual edit invalidates completion');
   const beforeDraftResume = requests.length;
-  await app.textButton('开始生成');
+  await app.textButton('自动写多章');
   await app.waitFor(`${projectExpr}.metadata.storyNodes.find(n=>n.id==="chapter-4").status==='complete'`, 'review existing draft');
   await app.waitFor('document.body.innerText.includes("已完成")', 'draft resume completion');
   assert.equal(requests.length, beforeDraftResume + 1);
   assert.ok(requests.at(-1).messages[0].content.includes('认真通读作品的小说编辑'));
   assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").content'), authorDraft);
   check('Editing completed prose invalidates completion; recovery reviews the saved author draft instead of rewriting it, even when its checkpoint points later');
+
+  await open('plot', 'worldbuilding');
+  await fill(worldInput, countersignRule);
+  await app.textButton('保存', pane);
+  const beforeRuleChange = requests.length;
+  await app.textButton('自动写多章');
+  await app.waitFor(`${stored('chapter-reviews')}.find(r=>r.chapter===4)?.findings[0]?.basis==='conflict'`, 'stale review is replaced with a cited conflict', 30000);
+  await app.waitFor('document.body.innerText.includes("已保留草稿并暂停")', 'automatic writing pause');
+  const gateRequests = requests.slice(beforeRuleChange);
+  assert.ok(gateRequests.some(body => body.messages[0].content.includes('认真通读作品的小说编辑')));
+  assert.equal(gateRequests.some(body => body.stream), false, 'stale completion must not generate new prose');
+  assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").status'), 'revising');
+  assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").content'), authorDraft);
+  await open('quality', 'chapterReview');
+  await choose(pane + ' .ant-select input', '第5章 · 回执');
+  assert.match(await text(), /事实或核心冲突/);
+  assert.ok((await text()).includes(countersignRule));
+  check('Changing an explicit world rule re-audits completed prose and pauses on a verified conflict despite the model calling it minor');
+
+  let releaseRevision;
+  holdRevision = new Promise(resolveRevision => { releaseRevision = resolveRevision; });
+  const beforeStop = requests.length;
+  await app.textButton('继续');
+  const revisionDeadline = Date.now() + 10000;
+  while (requests.length === beforeStop && Date.now() < revisionDeadline) await app.delay(100);
+  assert.match(requests.at(-1).messages[0].content, /小说责任编辑/);
+  await app.textButton('停止');
+  releaseRevision();
+  holdRevision = undefined;
+  await app.delay(500);
+  assert.equal(requests.length, beforeStop + 1, 'a stopped revision does not launch its candidate review');
+  assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").content'), authorDraft);
+  check('A revision response arriving after Stop cannot replace saved prose or continue the writing pipeline');
+
+  await app.call('Emulation.setDeviceMetricsOverride', { width: 900, height: 600, deviceScaleFactor: 1, mobile: false });
+  if (await app.evaluate('document.querySelector("#novel-narrative-pane").hidden')) await app.click('[data-testid=novel-workbench-toggle]');
+  await open('overview', 'dashboard');
+  await app.textButton('第5章 · 回执', pane);
+  await app.waitFor('!!document.querySelector("[data-testid=chapter-review-panel]") && !document.querySelector("#novel-narrative-pane").hidden', 'dashboard link stays in review at 900px');
+  assert.match(await text(), /第5章 · 回执/);
+  check('The chapter review link opens the selected chapter at 900px without switching away from the workbench');
+  await app.call('Emulation.clearDeviceMetricsOverride');
+  if (await app.evaluate('document.querySelector("#novel-narrative-pane").hidden')) await app.click('[data-testid=novel-workbench-toggle]');
 
   for (const theme of ['light', 'dark']) {
     await app.evaluate(`(async()=>{(await import('/src/stores/settingsStore.ts')).useSettingsStore.getState().setTheme(${JSON.stringify(theme)})})()`);

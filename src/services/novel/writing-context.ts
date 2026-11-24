@@ -66,8 +66,9 @@ function referenceSections(bible: StoryBible, chapterIndex: number, refs: Writin
     if (p.introducedChapter !== undefined && p.introducedChapter > chapterIndex + 1) continue;
     const events = (refs.propEvents || []).filter(e => e.propId === p.id && e.chapterNumber <= chapterIndex).sort((a, b) => a.chapterNumber - b.chapterNumber);
     const hasLaterEvent = (refs.propEvents || []).some(e => e.propId === p.id && e.chapterNumber > chapterIndex);
+    const hasPriorState = p.stateAsOfChapter !== undefined && p.stateAsOfChapter <= chapterIndex && !hasLaterEvent;
     const attributes = Object.entries(p.attributes).map(([k, v]) => `${k}: ${v}`).join('；');
-    sections.push(`【道具资料：${p.name}，状态须与前文核对】\n${p.description}${attributes ? `\n${attributes}` : ''}${!hasLaterEvent ? `\n台账状态：${p.lifecycleState}${p.holderCharacterId ? `；持有者：${name(p.holderCharacterId)}` : ''}` : ''}${events.length ? `\n前文事件记录：${events.map(e => `第${e.chapterNumber}章 ${e.description}${e.toHolderId ? `；交给${name(e.toHolderId)}` : ''}`).join('\n')}` : ''}`);
+    sections.push(`【道具资料：${p.name}，状态须与前文核对】\n${p.description}${attributes ? `\n${attributes}` : ''}${hasPriorState ? `\n截至第${p.stateAsOfChapter}章台账状态：${p.lifecycleState}${p.holderCharacterId ? `；持有者：${name(p.holderCharacterId)}` : ''}` : ''}${events.length ? `\n前文事件记录：${events.map(e => `第${e.chapterNumber}章 ${e.description}${e.toHolderId ? `；交给${name(e.toHolderId)}` : ''}`).join('\n')}` : ''}`);
   }
   return sections;
 }

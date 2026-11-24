@@ -116,7 +116,7 @@ export function parseEditorialAssessment(
       const citedClocks = new Set(clockTimes(`${quote}\n${referenceQuote}`));
       if (clockTimes(problem).some(time => !citedClocks.has(time))) basis = 'uncertain';
     }
-    return { dimension: f.dimension as EditorialDimension, severity, basis, quote, referenceQuote, problem, suggestion: nonempty(f.suggestion) };
+    return { dimension: f.dimension as EditorialDimension, severity: basis === 'conflict' ? 'critical' : severity, basis, quote, referenceQuote, problem, suggestion: nonempty(f.suggestion) };
   });
   const continuityNotes = value.continuityNotes.map(input => {
     const note = record(input);
@@ -162,5 +162,5 @@ export function parseEditorialEdits(raw: string, content: string): EditorialEdit
 }
 
 export function needsEditorialRevision(assessment: EditorialAssessment): boolean {
-  return assessment.findings.some(f => f.severity !== 'minor' && f.basis !== 'uncertain');
+  return assessment.findings.some(f => f.basis === 'conflict' || (f.severity !== 'minor' && f.basis !== 'uncertain'));
 }

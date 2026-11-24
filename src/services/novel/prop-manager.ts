@@ -51,6 +51,7 @@ export interface Prop {
   category: PropCategory;
   lifecycleState: LifecycleState;
   introducedChapter?: number;
+  stateAsOfChapter?: number;
   resolvedChapter?: number;
   holderCharacterId?: string;
   attributes: Record<string, string>;

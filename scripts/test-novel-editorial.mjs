@@ -53,6 +53,14 @@ const referenceContext = buildWritingContext(source,referenceBible,chapters,2,[]
 for(const token of ['上报缺票必须留存编号','库存核对','作者本章出场计划','林岚','未核实的票号','方票务','073801—073840','保安登记票夹']) assert.ok(referenceContext.includes(token),token);
 for(const token of ['不可信的自动提取','不可提前发生的结局','台账记为第9章已回收','未来转交','持有者：未来持有人']) assert.equal(referenceContext.includes(token),false,token);
 assert.ok(referenceContext.includes('不强制本章闭合'));
+const datedProp = { ...refs.props[0], stateAsOfChapter: 3 };
+for (const prop of [refs.props[0], datedProp]) {
+  const earlier = buildWritingContext(source, referenceBible, chapters, 2, [], 'writing', { props: [prop] });
+  assert.equal(earlier.includes('未来持有人'), false, 'undated and later prop custody cannot influence an earlier chapter');
+  assert.ok(earlier.includes('40张连号票'), 'timeless prop description remains available');
+}
+const confirmedProp = buildWritingContext(source, referenceBible, chapters, 3, [], 'writing', { props: [datedProp] });
+assert.match(confirmedProp, /截至第3章台账状态：active；持有者：未来持有人/);
 const fourOfThirtyFour = Array.from({length:34},(_,i)=>chapter(i,i<4?'已写正文':''));
 assert.equal(lastWrittenChapter(fourOfThirtyFour),4,'empty planned chapters do not advance the written position');
 const threads=[{id:'future',status:'planted',plantedInChapter:2,suggestedResolveChapter:10},{id:'due',status:'planted',plantedInChapter:1,suggestedResolveChapter:4},{id:'resolved',status:'resolved',plantedInChapter:1,suggestedResolveChapter:2},{id:'notYetPlanted',status:'planted',plantedInChapter:6,suggestedResolveChapter:4}];
@@ -81,6 +89,11 @@ const directReview = parseEditorialAssessment(JSON.stringify({...assessment,find
 }],continuityNotes:[]}),directProse,'');
 assert.equal(directReview.findings[0].basis,'conflict','numeric and localized spellings of the cited clock time match');
 assert.equal(needsEditorialRevision(directReview),true);
+const minorConflict = parseEditorialAssessment(JSON.stringify({ ...assessment, findings: [{
+  ...timeFinding, severity: 'minor', currentEvidence: '22:40', problem: '同一次到站分别写为23:45和22:40。',
+}], continuityNotes: [] }), directProse, '');
+assert.equal(minorConflict.findings[0].severity, 'critical');
+assert.equal(needsEditorialRevision(minorConflict), true, 'a valid evidence pair blocks the gate even if the model rated it minor');
 const proposalOnly = parseEditorialAssessment(JSON.stringify(assessment),prose,context,()=>false);
 assert.equal(proposalOnly.findings[0].basis,'uncertain','a proposed story plan is not evidence of a past event');
 const numbered = {...assessment, findings:[{...assessment.findings[0],quote:undefined,referenceQuote:undefined,paragraphId:'C1',referenceId:'R1'}],continuityNotes:[{fact:'原文事实',paragraphId:'C1'}]};

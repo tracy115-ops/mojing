@@ -78,9 +78,10 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
         name: prop.name, description: prop.description,
         aliases: prop.aliases.join(', '),
         category: prop.category,
-        holderCharacterId: prop.holderCharacterId,
+        holderCharacterId: bibleCharacters.find(c => c.id === prop.holderCharacterId || c.name === prop.holderCharacterId)?.id ?? prop.holderCharacterId,
         lifecycleState: prop.lifecycleState,
         introducedChapter: prop.introducedChapter,
+        stateAsOfChapter: prop.stateAsOfChapter,
       });
     } else {
       setEditingProp(null);
@@ -93,8 +94,11 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
   const saveProp = async () => {
     let values;
     try { values = await form.validateFields(); } catch { return; }
-    const state = { lifecycleState: values.lifecycleState as LifecycleState,
-      introducedChapter: values.introducedChapter ? Number(values.introducedChapter) : undefined };
+    const state = {
+      lifecycleState: values.lifecycleState as LifecycleState,
+      introducedChapter: values.introducedChapter ? Number(values.introducedChapter) : undefined,
+      stateAsOfChapter: values.stateAsOfChapter ? Number(values.stateAsOfChapter) : undefined,
+    };
     if (editingProp) {
       manager.updateProp(editingProp.id, {
         name: values.name,
@@ -275,7 +279,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
                 placeholder={t('props.holderPlaceholder')}
                 allowClear
                 showSearch
-                options={bibleCharacters.map((c) => ({ value: c.name, label: c.name }))}
+                options={bibleCharacters.map((c) => ({ value: c.id, label: c.name }))}
               />
             </Form.Item>
           </div>
@@ -290,6 +294,16 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
               <Input type="number" min={1} />
             </Form.Item>
           </div>
+          <Form.Item name="stateAsOfChapter" label={t('workbench.props.stateChapter')}
+            extra={t('workbench.props.stateChapterHint')} dependencies={['introducedChapter']}
+            rules={[({ getFieldValue }) => ({ validator: (_, value) => {
+              if (!value || (Number.isInteger(Number(value)) && Number(value) >= Math.max(1, Number(getFieldValue('introducedChapter')) || 1))) {
+                return Promise.resolve();
+              }
+              return Promise.reject(new Error(t('workbench.props.stateChapterInvalid')));
+            } })]}>
+            <Input type="number" min={1} step={1} />
+          </Form.Item>
           <Form.Item name="aliases" label={t('props.aliasesLabel')}>
             <Input placeholder={t('props.aliasesPlaceholder')} />
           </Form.Item>

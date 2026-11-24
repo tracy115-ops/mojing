@@ -59,7 +59,7 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
       { key: 'bible', icon: <BookOutlined />, content: <StoryBiblePanel novelId={novelId} /> },
     ],
     characters: [
-      { key: 'cast', icon: <TeamOutlined />, content: <CastPanel novelId={novelId} totalChapters={totalChapters} currentChapter={chapterIndex} /> },
+      { key: 'cast', icon: <TeamOutlined />, content: <CastPanel novelId={novelId} totalChapters={totalChapters} currentChapter={chapterIndex} onOpenBible={() => open('bible')} /> },
       { key: 'relationGraph', icon: <UsergroupDeleteOutlined />, content: <CharacterRelationGraph novelId={novelId} /> },
       { key: 'dialogue', icon: <MessageOutlined />, content: <DialogueGeneratorPanel novelId={novelId} chapterIndex={chapterIndex} /> },
     ],

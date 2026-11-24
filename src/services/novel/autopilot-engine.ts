@@ -17,7 +17,7 @@ import { KnowledgeGraphEngine } from './knowledge-graph';
 import { GovernanceEngine } from './governance-engine';
 import { NarrativeRepository } from './narrative-repository';
 import { parseLLMJson } from './llm-json';
-import { ChapterReviewer, type ChapterReviewContext } from './chapter-reviewer';
+import { ChapterReviewer, type ChapterReviewContext, type ChapterReviewReport } from './chapter-reviewer';
 import { applyEditorialEdits, isReviewCurrent } from './editorial-review';
 import { textFingerprint } from './writing-context';
 import { generatePlanningResponse } from './planning-generation';
@@ -99,7 +99,7 @@ export class AutopilotEngine {
     this.knowledgeGraph = new KnowledgeGraphEngine(config.novelId);
     this.governance = new GovernanceEngine(config.novelId);
     this.reviewer = new ChapterReviewer(config.novelId);
-    const startingChapter = config.existingChapters.find(c => c.status !== 'complete' || !c.content.trim())?.order ?? config.existingChapters.length;
+    const startingChapter = this.firstUnfinishedChapter(config.existingChapters) ?? config.existingChapters.length;
     this.state = {
       novelId: config.novelId,
       status: 'idle',
@@ -165,7 +165,13 @@ export class AutopilotEngine {
   async start(): Promise<void> {
     if (this.state.status === 'running') return;
 
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
+    const firstUnfinished = this.firstUnfinishedChapter(this.config.getChapters());
+    if (firstUnfinished !== undefined) {
+      this.state.currentChapterNumber = Math.min(this.state.currentChapterNumber, firstUnfinished);
+      this.state.progress = Math.min(1, this.state.currentChapterNumber / Math.max(1, this.state.targetChapterCount));
+    }
     this.state.lastError = undefined;
     this.updateStatus('running');
     this.emit('status_change', { status: 'running' });
@@ -180,13 +186,14 @@ export class AutopilotEngine {
         this.setStage('global_planning');
         this.emit('stage_change', { stage: 'global_planning' });
         const plan = await this.doGlobalPlanning();
+        if (controller.signal.aborted) return;
         this.globalPlan = plan;
         await this.executeGlobalPlan(plan);
       }
 
       await this.runLoop();
     } catch (err) {
-      if (!this.abortController.signal.aborted) {
+      if (!controller.signal.aborted) {
         this.state.lastError = err instanceof Error ? err.message : String(err);
         this.updateStatus('error');
         this.emit('error', { error: this.state.lastError });
@@ -217,11 +224,12 @@ export class AutopilotEngine {
   // --- Main loop ---
 
   private async runLoop(): Promise<void> {
+    const signal = this.abortController?.signal;
     const startChapter = this.state.currentChapterNumber;
     const targetChapter = this.state.targetChapterCount;
 
     for (let ch = startChapter; ch < targetChapter; ch++) {
-      if (this.abortController?.signal.aborted) return;
+      if (signal?.aborted) return;
       if (this.state.status === 'paused') return;
       if (this.breaker.state === 'open') {
         this.updateStatus('paused');
@@ -235,13 +243,14 @@ export class AutopilotEngine {
 
       try {
         await this.generateChapter(ch);
-        if (!this.isRunning() || this.abortController?.signal.aborted) return;
+        if (!this.isRunning() || signal?.aborted) return;
         this.state.consecutiveFailures = 0;
         this.state.currentWordCount = this.config.getChapters().reduce(
           (s, c) => s + c.wordCount,
           0,
         );
       } catch (err) {
+        if (signal?.aborted) return;
         this.state.consecutiveFailures++;
         this.breaker.failureCount++;
 
@@ -277,15 +286,17 @@ export class AutopilotEngine {
   // --- Chapter generation pipeline ---
 
   private async generateChapter(chapterIndex: number): Promise<void> {
+    const signal = this.abortController?.signal;
     const chapterNumber = chapterIndex + 1;
-    const existing = this.config.getChapters().find(c => c.order === chapterIndex);
+    const chapters = this.config.getChapters();
+    const existing = chapters.find(c => c.order === chapterIndex);
     if (existing?.content.trim()) {
       // Resume reviews the saved draft; it must not silently replace a chapter the author edited.
-      if (existing.status === 'complete') return;
+      const report = this.reviewer.loadHistory().find(r => r.chapter === chapterIndex);
+      if (this.canSkipChapter(existing, report, chapters)) return;
       this.setStage('chapter_review');
-      await this.doChapterReview(chapterIndex, existing.content, existing.id);
       const content = await this.doQualityGateRewrite(chapterIndex, existing.content, existing.id);
-      if (this.state.status === 'paused' || this.abortController?.signal.aborted) return;
+      if (this.state.status === 'paused' || signal?.aborted) return;
       await this.doAftermath(chapterIndex, content, existing.id);
       return;
     }
@@ -294,10 +305,12 @@ export class AutopilotEngine {
     this.setStage('macro_planning');
     this.computeStoryPhase(chapterIndex);
     const macroPlan = await this.doMacroPlanning(chapterIndex);
+    if (signal?.aborted) return;
 
     // Stage 2: Act beat planning
     this.setStage('act_beat_planning');
     const outline = await this.doActBeatPlanning(chapterIndex, macroPlan);
+    if (signal?.aborted) return;
 
     // Find existing stub from global planning, or create new chapter
     let chapterId: string;
@@ -340,15 +353,12 @@ export class AutopilotEngine {
     // Stage 3: Chapter generation (beat loop)
     this.setStage('chapter_generation');
     let content = await this.doChapterGeneration(chapterIndex, outline, chapterId);
-    if (this.abortController?.signal.aborted) return;
+    if (signal?.aborted) return;
 
-    // Stage 4: Chapter review
+    // Stage 4: Chapter review and any targeted revision
     this.setStage('chapter_review');
-    await this.doChapterReview(chapterIndex, content, chapterId);
-
-    // Stage 5: Quality gate with targeted rewrite loop
     content = await this.doQualityGateRewrite(chapterIndex, content, chapterId);
-    if (this.state.status === 'paused' || this.abortController?.signal.aborted) return;
+    if (this.state.status === 'paused' || signal?.aborted) return;
 
     // Post-chapter aftermath
     await this.doAftermath(chapterIndex, content, chapterId);
@@ -358,12 +368,23 @@ export class AutopilotEngine {
 
   private isRunning(): boolean { return this.state.status === 'running'; }
 
-  private reviewContext(chapterIndex: number): ChapterReviewContext {
-    const chapters = this.config.getChapters();
+  private reviewContext(chapterIndex: number, chapters = this.config.getChapters()): ChapterReviewContext {
     return { source: {
       title: this.config.title, description: this.config.description || '', genre: this.config.genre,
       style: this.config.style, language: this.config.language,
     }, chapters, outline: chapters.find(c => c.order === chapterIndex)?.outline };
+  }
+
+  private canSkipChapter(chapter: NovelChapter, report: ChapterReviewReport | undefined, chapters: NovelChapter[]): boolean {
+    if (chapter.status !== 'complete' || !chapter.content.trim()) return false;
+    // Existing manuscripts may have been marked complete before review reports existed.
+    return !report || (report.status === 'reviewed' && isReviewCurrent(report, chapter.content,
+      this.reviewer.buildContext(chapter.order, this.reviewContext(chapter.order, chapters))));
+  }
+
+  private firstUnfinishedChapter(chapters: NovelChapter[]): number | undefined {
+    const reports = new Map(this.reviewer.loadHistory().map(report => [report.chapter, report]));
+    return chapters.find(chapter => !this.canSkipChapter(chapter, reports.get(chapter.order), chapters))?.order;
   }
 
   private readingContext(chapterIndex: number): string {
@@ -641,6 +662,7 @@ export class AutopilotEngine {
   // --- Beat-based Chapter Generation (core upgrade) ---
 
   private async doChapterGeneration(chapterIndex: number, outline: string, chapterId: string): Promise<string> {
+    const abortSignal = this.abortController?.signal;
     this.emit('stage_change', { stage: 'chapter_generation', chapter: chapterIndex });
 
     // Notify UI to switch to this chapter
@@ -648,6 +670,7 @@ export class AutopilotEngine {
 
     // Step 1: Magnify outline into beats
     const beats = await magnifyOutlineToBeats(outline, WORDS_PER_CHAPTER_TARGET, chapterIndex);
+    if (abortSignal?.aborted) return '';
     this.emit('beat_plan', {
       chapter: chapterIndex,
       chapterId,
@@ -660,7 +683,7 @@ export class AutopilotEngine {
     let lastFlushTime = 0;
 
     for (const beat of beats) {
-      if (this.abortController?.signal.aborted) break;
+      if (abortSignal?.aborted) return chapterContent;
 
       const wordsUsed = chapterContent.length;
       const signal = getConductorSignal(beat.index, beats.length, wordsUsed, WORDS_PER_CHAPTER_TARGET);
@@ -720,7 +743,7 @@ export class AutopilotEngine {
       // Stream this beat
       let beatContent = '';
       for await (const chunk of providerRouter.stream(request)) {
-        if (this.abortController?.signal.aborted) break;
+        if (abortSignal?.aborted) break;
         beatContent += chunk.delta;
 
         const now = Date.now();
@@ -741,7 +764,7 @@ export class AutopilotEngine {
         }
       }
 
-      if (this.abortController?.signal.aborted) return chapterContent + (chapterContent ? '\n\n' : '') + beatContent;
+      if (abortSignal?.aborted) return chapterContent + (chapterContent ? '\n\n' : '') + beatContent;
 
       // Track overspend debt
       const actualWords = beatContent.length;
@@ -801,29 +824,36 @@ export class AutopilotEngine {
     return Math.ceil(chinese * 1.5 + (text.length - chinese) * 0.3);
   }
 
-  private async doChapterReview(chapterIndex: number, content: string, chapterId: string): Promise<void> {
-    this.emit('stage_change', { stage: 'chapter_review', chapter: chapterIndex });
-    this.config.onUpdateChapter(chapterId, { status: 'revising' });
-    const review = await this.reviewer.reviewChapter(chapterIndex, content, this.reviewContext(chapterIndex));
-    this.emit('review_complete', { chapter: chapterIndex, chapterId, review, passed: review.status === 'reviewed' });
-  }
-
   private async doQualityGateRewrite(chapterIndex: number, content: string, chapterId: string): Promise<string> {
+    const signal = this.abortController?.signal;
     let current = content;
+    this.config.onUpdateChapter(chapterId, { status: 'revising' });
     try {
       const context = this.reviewContext(chapterIndex);
       const reference = this.reviewer.buildContext(chapterIndex, context);
+      const checkSources = () => {
+        if (this.config.getChapters().find(c => c.id === chapterId)?.content !== current
+          || reference !== this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex))) {
+          throw new Error('正文或创作依据在审读期间已改变，请重新审读。');
+        }
+      };
       let review = this.reviewer.loadHistory().find(r => r.chapter === chapterIndex && isReviewCurrent(r, current, reference));
-      if (!review) review = await this.reviewer.reviewChapter(chapterIndex, current, this.reviewContext(chapterIndex));
+      if (!review) {
+        review = await this.reviewer.reviewChapter(chapterIndex, current, context, { persist: false });
+        if (signal?.aborted) return current;
+        checkSources();
+        this.reviewer.saveReview(review);
+      }
       if (review.status === 'needs-revision' && review.findings.length) {
-        const edits = await this.reviewer.proposeRevision(chapterIndex, current, this.reviewContext(chapterIndex), 'review', review);
+        const edits = await this.reviewer.proposeRevision(chapterIndex, current, context, 'review', review);
+        if (signal?.aborted) return current;
+        checkSources();
         if (edits.length) {
           const candidate = applyEditorialEdits(current, edits);
           const after = await this.reviewer.reviewChapter(chapterIndex, candidate, context, { persist: false });
+          if (signal?.aborted) return current;
           this.repo.saveCustomData('chapter-revision-candidate:' + chapterId, { beforeFingerprint: textFingerprint(current), content: candidate, edits, review: after, timestamp: new Date().toISOString() });
-          const unchanged = this.config.getChapters().find(c => c.id === chapterId)?.content === current
-            && reference === this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex));
-          if (!unchanged) throw new Error('正文或创作依据在修订期间已改变，候选已保留，请重新审读。');
+          checkSources();
           if (after.status === 'reviewed') {
             this.repo.saveCustomData('chapter-revision:' + chapterId, { before: current, afterFingerprint: textFingerprint(candidate), timestamp: new Date().toISOString() });
             current = candidate;
@@ -843,6 +873,7 @@ export class AutopilotEngine {
         this.emit('error', { error: '第' + (chapterIndex + 1) + '章仍有影响阅读的问题，已保留草稿并暂停，等待审读。', unresolvedIssues: review.findings, qualityGateHumanIntervention: true });
       }
     } catch (error) {
+      if (signal?.aborted) return current;
       this.config.onUpdateChapter(chapterId, { status: 'revising' });
       this.config.onUpdateStoryNode?.(chapterId, { status: 'revising' });
       this.updateStatus('paused');
@@ -990,7 +1021,7 @@ export class AutopilotEngine {
   private restoreFromCheckpoint(): void {
     const restored = this.checkpoint.restore();
     if (!restored) return;
-    const firstUnfinished = this.config.getChapters().find(c => c.status !== 'complete' || !c.content.trim())?.order;
+    const firstUnfinished = this.firstUnfinishedChapter(this.config.getChapters());
     const resumeFrom = firstUnfinished === undefined ? restored.resumeFromChapter : Math.min(firstUnfinished, restored.resumeFromChapter);
 
     // Restore autopilot state (but keep status as idle — user must explicitly resume)

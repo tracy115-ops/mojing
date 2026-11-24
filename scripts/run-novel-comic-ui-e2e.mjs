@@ -326,7 +326,6 @@ try {
     const engine=new AutopilotEngine({novelId:'editorial-contract',title:'AutopilotQualityContract',description:'现实世界，禁止超自然。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:(id,updates)=>Object.assign(chapters[0],updates),onAddChapter:()=>chapters[0].id,onAddVolume:()=>'',onUpdateMetadata:()=>{}});
     engine.state.status='running';
     const content=await engine.doChapterGeneration(0,chapters[0].outline,chapters[0].id);
-    await engine.doChapterReview(0,content,chapters[0].id);
     await engine.doQualityGateRewrite(0,content,chapters[0].id);
     return {content,status:engine.state.status,chapterStatus:chapters[0].status};
   })()`);
@@ -344,11 +343,13 @@ try {
   for (const [novelId,title,accepted] of [['candidate-contract','AutopilotCandidateContract',false],['passing-contract','AutopilotPassingContract',true]]) {
     const result = await app.evaluate(`(async()=>{
       const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+      const {ChapterReviewer}=await import('/src/services/novel/chapter-reviewer.ts');
       const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');
       const chapters=[{id:'chapter',order:0,title:'Contract',outline:'林岚调查旧票。',content:${JSON.stringify(novelProse)},status:'drafting',wordCount:${novelProse.length}}];
       const engine=new AutopilotEngine({novelId:${JSON.stringify(novelId)},title:${JSON.stringify(title)},description:'现实世界，禁止超自然。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:(id,updates)=>Object.assign(chapters[0],updates),onAddChapter:()=>chapters[0].id,onAddVolume:()=>'',onUpdateMetadata:()=>{}});
       engine.state.status='running';
-      await engine.doChapterReview(0,chapters[0].content,'chapter');
+      const reviewer=new ChapterReviewer(${JSON.stringify(novelId)});
+      await reviewer.reviewChapter(0,chapters[0].content,engine.reviewContext(0));
       const repo=new NarrativeRepository(${JSON.stringify(novelId)});
       const before=repo.loadCustomData('chapter-reviews',[])[0];
       const content=await engine.doQualityGateRewrite(0,chapters[0].content,'chapter');
