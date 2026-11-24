@@ -77,7 +77,10 @@ app.onEvent(event => {
     await app.call('Fetch.fulfillRequest', { requestId, responseCode, responseHeaders: [{ name: 'Content-Type', value: type }], body: Buffer.from(result).toString('base64') });
   })().catch(error => app.errors.push(String(error)));
 });
-const fill = (selector, value) => app.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Missing input');Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+const fill = async (selector, value) => {
+  await app.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`, 'input ' + selector);
+  await app.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Missing input');Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+};
 const choose = async (selector, label) => {
   await app.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`, 'select ' + label);
   await app.evaluate(`document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').querySelector('.ant-select-selector').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))`);
@@ -220,7 +223,6 @@ try {
   assert.match(await text(), /待核对/);
   assert.equal(await app.evaluate(`document.querySelector(${JSON.stringify(pane + ' .ant-list-item')}).querySelector('button:has(.anticon-delete)').disabled`), true);
   await app.textButton('添加', pane);
-  await app.waitFor('!!document.querySelector(".ant-modal #subject")', 'knowledge graph form');
   await fill('.ant-modal #subject', '登记簿'); await fill('.ant-modal #predicate', '存放地点'); await fill('.ant-modal #object', '值班室');
   await saveModal();
   assert.equal(await app.evaluate(stored('triples') + '.find(t=>t.subject==="登记簿").source'), 'bible');
