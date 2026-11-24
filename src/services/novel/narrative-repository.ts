@@ -24,6 +24,7 @@ import type {
 } from '@/types/narrative';
 import type { AutopilotState, CircuitBreakerState } from '@/types/pipeline';
 import type { AuthorPlotOutline, WritingReferences } from './writing-context';
+import type { NovelReference } from './novel-reference';
 
 // --- Storage Keys ---
 
@@ -67,7 +68,8 @@ export class NarrativeRepository {
   }
 
   loadWritingReferences(): WritingReferences {
-    return { plotOutline: this.loadCustomData('plot-outline', null), worldbuilding: this.loadWorldbuilding(), storylines: this.loadStorylines(), casts: this.loadChapterCasts(),
+    return { plotOutline: this.loadCustomData('plot-outline', null), novelReference: this.loadCustomData('novel-reference', null),
+      worldbuilding: this.loadWorldbuilding(), storylines: this.loadStorylines(), casts: this.loadChapterCasts(),
       foreshadowing: this.loadForeshadowing(), triples: this.loadTriples(),
       props: this.loadCustomData('props', []), propEvents: this.loadCustomData('prop-events', []) };
   }
@@ -374,6 +376,7 @@ export class NarrativeRepository {
   exportAll(): NarrativeSnapshot {
     return {
       plotOutline: this.loadCustomData('plot-outline', null),
+      novelReference: this.loadCustomData('novel-reference', null),
       bible: this.loadBible(),
       foreshadowing: this.loadForeshadowing(),
       triples: this.loadTriples(),
@@ -389,6 +392,7 @@ export class NarrativeRepository {
 
   importAll(snapshot: NarrativeSnapshot): void {
     if (snapshot.plotOutline) this.saveCustomData('plot-outline', snapshot.plotOutline);
+    if (snapshot.novelReference) this.saveCustomData('novel-reference', snapshot.novelReference);
     if (snapshot.bible) this.saveBible(snapshot.bible);
     if (snapshot.foreshadowing) this.saveForeshadowing(snapshot.foreshadowing);
     if (snapshot.triples) this.saveTriples(snapshot.triples);
@@ -424,7 +428,7 @@ export class NarrativeRepository {
   // --- Clear all narrative data ---
 
   clearAll(): void {
-    const suffixes = ['bible', 'plot-outline', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts', 'global-plan', 'global-plan-review'];
+    const suffixes = ['bible', 'plot-outline', 'novel-reference', 'foreshadowing', 'triples', 'beats', 'timeline', 'char-states', 'debts', 'tension', 'voice', 'checkpoint', 'storylines', 'worldbuilding', 'casts', 'global-plan', 'global-plan-review'];
     for (const s of suffixes) {
       localStorage.removeItem(key(this.novelId, s));
     }
@@ -451,6 +455,7 @@ export interface AutopilotCheckpoint {
 
 export interface NarrativeSnapshot {
   plotOutline?: AuthorPlotOutline | null;
+  novelReference?: NovelReference | null;
   bible?: StoryBible;
   foreshadowing?: Foreshadowing[];
   triples?: RelationshipTriple[];

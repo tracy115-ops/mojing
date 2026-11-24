@@ -6,7 +6,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Modal, Steps, Button, Space, Form, Input, Select, InputNumber,
-  Card, Tag, Typography, message, Spin, Empty, Collapse, Row, Col,
+  Alert, Card, Tag, Typography, message, Spin, Empty, Collapse, Row, Col,
 } from 'antd';
 import {
   RocketOutlined, GlobalOutlined, UserOutlined, EnvironmentOutlined,
@@ -19,6 +19,8 @@ import { getTemplate } from '@/services/novel/prompt-templates';
 import { collectPlanningText } from '@/services/novel/planning-generation';
 import { reviewStoryPlan } from '@/services/novel/story-plan-review';
 import { validateWizardPlot } from '@/services/novel/story-plan-contract';
+import { decodeNovelReference, formatNovelReference, prepareNovelReference, REFERENCE_GUIDE_LIMIT,
+  type NovelReference, type NovelReferenceMode } from '@/services/novel/novel-reference';
 
 const { TextArea } = Input;
 const { Text, Paragraph } = Typography;
@@ -32,13 +34,14 @@ interface WizardValues {
   language: string;
 }
 
-interface WizardResult {
+export interface WizardResult {
   values: WizardValues;
   worldbuilding: Record<string, { key: string; value: string }[]>;
   styleConvention: string;
   characters: any[];
   locations: any[];
   plotOutline: any;
+  reference?: NovelReference;
 }
 
 interface NovelSetupWizardProps {
@@ -61,6 +64,13 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
   const [characters, setCharacters] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
   const [plotOutline, setPlotOutline] = useState<any>(null);
+  const [referenceText, setReferenceText] = useState('');
+  const [referenceMode, setReferenceMode] = useState<NovelReferenceMode>('style');
+  const [referenceName, setReferenceName] = useState<string>();
+  const [reference, setReference] = useState<NovelReference>();
+  const [referenceProgress, setReferenceProgress] = useState('');
+  const referenceNotes = useRef<string[]>([]);
+  const referenceFile = useRef<HTMLInputElement>(null);
 
   // Generation state
   const [genStatus, setGenStatus] = useState<GenerationStatus>('idle');
@@ -86,6 +96,12 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       setGenStatus('idle');
       setGenError('');
       setStreamText('');
+      setReferenceText('');
+      setReferenceMode('style');
+      setReferenceName(undefined);
+      setReference(undefined);
+      setReferenceProgress('');
+      referenceNotes.current = [];
       form.resetFields();
     }
   }, [open, form]);
@@ -97,9 +113,9 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
     if (!template) throw new Error(`Template ${templateId} not found`);
 
     const arrayKey = templateId === 'character-generation' ? 'characters' : templateId === 'location-generation' ? 'locations' : undefined;
-    const systemPrompt = template.buildSystem(vars) + (arrayKey
+    const systemPrompt = [template.buildSystem(vars) + (arrayKey
       ? `\n请把上述数组放入 JSON 对象的 "${arrayKey}" 字段；返回对象，不要直接返回顶层数组。`
-      : '');
+      : ''), formatNovelReference(reference)].filter(Boolean).join('\n\n');
     const userPrompt = template.buildUser(vars);
 
     const controller = new AbortController();
@@ -114,7 +130,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
         responseFormat: 'json',
         thinking: false,
       }), { signal: controller.signal, onText: setStreamText, onRetry: () => setBudgetRetry(true) });
-  }, []);
+  }, [reference]);
 
   const parseJSON = useCallback((text: string): any => {
     const trimmed = text.trim();
@@ -263,7 +279,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       const parsed = parseJSON(result);
       validateWizardPlot(parsed);
       setReviewingPlot(true);
-      const reviewed = await reviewStoryPlan(`原始简介：${basicValues.description}\n题材：${basicValues.genre}；目标字数：${basicValues.targetWordCount}\n待推演的世界设定：${wbStr}\n人物：${charStr}\n地点：${locStr}`, JSON.stringify(parsed), abortRef.current?.signal);
+      const reviewed = await reviewStoryPlan(`原始简介：${basicValues.description}\n题材：${basicValues.genre}；目标字数：${basicValues.targetWordCount}\n待推演的世界设定：${wbStr}\n人物：${charStr}\n地点：${locStr}\n\n${formatNovelReference(reference)}`, JSON.stringify(parsed), abortRef.current?.signal);
       validateWizardPlot(reviewed.plan);
       setPlotOutline(reviewed.plan);
       setPlotChanges(reviewed.changes);
@@ -274,24 +290,73 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
     } finally {
       setReviewingPlot(false);
     }
-  }, [basicValues, worldbuilding, characters, locations, generateWithStream, parseJSON]);
+  }, [basicValues, worldbuilding, characters, locations, generateWithStream, parseJSON, reference]);
 
   // --- Navigation ---
 
-  const handleNext = useCallback(() => {
-    if (current === 0) {
-      form.validateFields().then((values) => {
-        setBasicValues(values);
-        setGenStatus('idle');
-        setStreamText('');
-        setCurrent(1);
-      }).catch(() => undefined);
-    } else {
-      setGenStatus('idle');
-      setStreamText('');
-      setCurrent(current + 1);
+  const resetReference = () => {
+    setReference(undefined);
+    referenceNotes.current = [];
+    setGenStatus('idle');
+    setGenError('');
+  };
+
+  const readReferenceFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setGenStatus('generating');
+    setReferenceProgress(t('novelReference.readingFile'));
+    try {
+      const text = decodeNovelReference(await file.arrayBuffer());
+      if (controller.signal.aborted) return;
+      if (!text.trim()) throw new Error(t('novelReference.readFailed'));
+      resetReference();
+      setReferenceText(text);
+      setReferenceName(file.name);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setGenStatus('error');
+      setGenError(t('novelReference.readFailed'));
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [current, form]);
+  };
+
+  const handleNext = async () => {
+    if (current === 0) {
+      const values = await form.validateFields().catch(() => undefined);
+      if (!values) return;
+      if (referenceText.trim() && !reference) {
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setGenStatus('generating');
+        setGenError('');
+        try {
+          const guide = await prepareNovelReference(referenceText, (request, signal) => providerRouter.generate(request, signal), {
+            mode: referenceMode, sourceName: referenceName, signal: controller.signal, notes: referenceNotes.current,
+            onProgress: (done, total, merging) => setReferenceProgress(merging
+              ? t('novelReference.merging') : t('novelReference.analyzing', { current: done + 1, total })),
+          });
+          if (controller.signal.aborted) return;
+          setReference(guide);
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          setGenError(error instanceof Error ? error.message : String(error));
+          setGenStatus('error');
+          return;
+        } finally {
+          if (abortRef.current === controller) abortRef.current = null;
+        }
+      }
+      setBasicValues(values);
+    }
+    setGenStatus('idle');
+    setStreamText('');
+    setCurrent(current + 1);
+  };
 
   const handleFinish = useCallback(() => {
     if (!basicValues) return;
@@ -302,13 +367,14 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
       characters,
       locations,
       plotOutline,
+      reference: reference?.guide.trim() ? reference : undefined,
     });
-  }, [basicValues, worldbuilding, styleConvention, characters, locations, plotOutline, onComplete]);
+  }, [basicValues, worldbuilding, styleConvention, characters, locations, plotOutline, reference, onComplete]);
 
   // --- Step Renderers ---
 
   const renderStep0 = () => (
-    <Form form={form} layout="vertical" size="small"
+    <Form form={form} layout="vertical" size="small" disabled={genStatus === 'generating'}
       initialValues={{ genre: 'fantasy', targetWordCount: 100000, style: 'literary', language: 'zh-CN' }}>
       <Form.Item name="title" label={t('wizard.title')} rules={[{ required: true, message: t('common.required') }]}>
         <Input placeholder={t('wizard.titlePlaceholder')} />
@@ -356,6 +422,36 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
           </Form.Item>
         </Col>
       </Row>
+      <Collapse size="small" items={[{
+        key: 'reference',
+        label: t('novelReference.entry'),
+        children: <Space direction="vertical" style={{ width: '100%' }}>
+          <Space wrap>
+            <Select aria-label={t('novelReference.mode')} value={referenceMode} disabled={genStatus === 'generating'}
+              options={[
+                { value: 'style', label: t('novelReference.style') },
+                { value: 'rewrite', label: t('novelReference.rewrite') },
+              ]}
+              onChange={mode => { setReferenceMode(mode); resetReference(); }} />
+            <Button size="small" disabled={genStatus === 'generating'} onClick={() => referenceFile.current?.click()}>
+              {t('novelReference.import')}
+            </Button>
+            <input ref={referenceFile} data-testid="novel-reference-file" type="file" accept=".txt,.md" hidden onChange={readReferenceFile} />
+          </Space>
+          <TextArea data-testid="novel-reference-text" aria-label={t('novelReference.source')} value={referenceText}
+            placeholder={t('novelReference.source')} autoSize={{ minRows: 3, maxRows: 7 }} disabled={genStatus === 'generating'}
+            onChange={event => { setReferenceText(event.target.value); resetReference(); }} />
+          <Text type="secondary">{referenceName && `${referenceName} · `}{t('novel.wordCount', { count: referenceText.length.toLocaleString() })}</Text>
+          <Text type="secondary">{t(referenceMode === 'style' ? 'novelReference.styleHint' : 'novelReference.rewriteHint')}</Text>
+        </Space>,
+      }]} />
+      {genStatus === 'generating' && <Space wrap style={{ marginTop: 8 }}>
+        <Text role="status"><Spin size="small" /> {referenceProgress}</Text>
+        <Button size="small" disabled={false} onClick={() => { abortRef.current?.abort(); setGenStatus('idle'); }}>
+          {t('novel.stopGeneration')}
+        </Button>
+      </Space>}
+      {genStatus === 'error' && <Alert type="error" showIcon message={genError} />}
     </Form>
   );
 
@@ -405,6 +501,14 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
 
   const renderStep1 = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {reference && <Collapse size="small" items={[{
+        key: 'guide',
+        label: t('novelReference.editGuide'),
+        children: <TextArea data-testid="novel-reference-guide" aria-label={t('novelReference.guide')}
+          value={reference.guide} autoSize={{ minRows: 4, maxRows: 8 }} maxLength={REFERENCE_GUIDE_LIMIT}
+          disabled={genStatus === 'generating'}
+          onChange={event => setReference({ ...reference, guide: event.target.value })} />,
+      }]} />}
       {renderGenerationCard(t('wizard.genWorld'), generateWorld, Object.keys(worldbuilding).length > 0, (
         <>
           {styleConvention && (

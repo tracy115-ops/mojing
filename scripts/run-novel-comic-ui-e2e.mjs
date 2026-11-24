@@ -14,6 +14,9 @@ let outlineBeforeReview;
 let generateAutoRevisionDraft = false, draftDuringRevisionReview;
 const autoRevisionDraft = '林岚把登记簿交给保安。\n\n她没等交接就从保安手中取走登记簿。\n\n登记簿封底的蓝线还在。';
 const revisedAutoDraft = autoRevisionDraft.replace('她没等交接就从保安手中取走登记簿。', '保安签收后把登记簿退还给她。');
+const referenceSource = '范文开头：贺青在老渡口接过信封。\n\n' + '贺青核对水文日志，等待渡工归来。\n\n'.repeat(1200) + '范文结尾：贺青逐条核查，并把信封送回。';
+const referenceGuide = '范文笔记：逐次缩小可验证线索，每次核对后改变人物的下一步。';
+const editedGuide = referenceGuide + '\n用户补充：保留调查的节奏，在终点安排一次明确选择。';
 const novelProse = '雨水敲着车窗。\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '\n\n林岚从黄色帆布包中取出旧票，走向车载摄像头。';
 const colors = ['#d93434', '#32b34d', '#3355d4', '#d4a834'];
 const tiles = await Promise.all(colors.map(background => sharp({ create: { width: 360, height: 640, channels: 3, background } }).png().toBuffer()));
@@ -49,7 +52,8 @@ app.onEvent(event => {
       await app.call('Fetch.fulfillRequest', {requestId,responseCode:200,responseHeaders:[{name:'Content-Type',value:'application/json'}],body:Buffer.from(JSON.stringify({choices:[{message:{content:truncated?'{"edits":[':JSON.stringify(complete)},finish_reason:truncated?'length':'stop'}]})).toString('base64')});
       return;
     }
-    if (system.includes('小说世界观设计师')) content = { 'style公约': '克制的现实悬疑。', '核心法则': [{ key: '现实约束', value: '线索必须可以验证' }], '地理生态': [{ key: '总站', value: '雨夜的公交总站' }], '社会结构': [], '历史文化': [], '日常细节': [] };
+    if (system.includes('你是小说范文编辑')) content = referenceGuide;
+    else if (system.includes('小说世界观设计师')) content = { 'style公约': '克制的现实悬疑。', '核心法则': [{ key: '现实约束', value: '线索必须可以验证' }], '地理生态': [{ key: '总站', value: '雨夜的公交总站' }], '社会结构': [], '历史文化': [], '日常细节': [] };
     else if (system.includes('小说角色设计师')) content = { characters: [{ name: '林岚', importance: 'protagonist', description: '30岁女公交司机', appearance: '齐肩短发、深蓝制服', relationships: [] }] };
     else if (system.includes('小说场景设计师')) content = { locations: [{ name: '总站', description: '雨夜公交总站' }] };
     else if (system.includes('小说剧情规划师')) content = { mainPlot: '林岚发现黄色帆布包，调查日期为明天的车票。', stages: [{name:'预领核对',chapterRange:'第1-3章',description:'上报后核对原始交接记录',coreEvent:'未审稿：在包里添加第二张票',foreshadowSeeds:['次日预领栏']}], ending: '核实预盖日期并保留原始报告。' };
@@ -112,7 +116,7 @@ app.onEvent(event => {
       type = 'text/event-stream';
       result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : generateAutoRevisionDraft ? autoRevisionDraft : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
     } else {
-      result = JSON.stringify({ choices: [{ message: { content: content ? JSON.stringify(content) : '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
+      result = JSON.stringify({ choices: [{ message: { content: typeof content === 'string' ? content : content ? JSON.stringify(content) : '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
     }
     await app.call('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }], body: Buffer.from(result).toString('base64') });
   })().catch(error => app.errors.push(String(error)));
@@ -158,24 +162,52 @@ try {
   const description = '林岚，30岁女公交司机，发现黄色帆布包；车票日期是明天；禁止超自然。';
   await fill('.ant-modal #title', '末班车之后'); await fill('.ant-modal #description', description);
   await choose('.ant-modal #genre', '悬疑');
+  await fill('.ant-modal #targetWordCount', '100000');
+  await app.evaluate(`[...document.querySelectorAll('.ant-modal .ant-collapse-header')].find(e=>e.textContent.includes('从范文开始')).click()`);
+  await choose('.ant-modal input[aria-label="范文用法"]', '改写原稿');
+  const sourceFile = join(output, '范文输入.txt');
+  await writeFile(sourceFile, referenceSource);
+  const tree = await app.call('DOM.getDocument');
+  const fileInput = await app.call('DOM.querySelector', { nodeId: tree.root.nodeId, selector: '[data-testid=novel-reference-file]' });
+  await app.call('DOM.setFileInputFiles', { nodeId: fileInput.nodeId, files: [sourceFile] });
+  await app.waitFor(`document.querySelector('[data-testid=novel-reference-text]')?.value===${JSON.stringify(referenceSource)}`, 'file imported into novel creation');
   for (const label of ['AI 生成世界观', 'AI 生成角色', 'AI 生成地点', 'AI 生成剧情总纲']) {
     await app.textButton('下一步', '.ant-modal');
     await app.waitFor(`document.querySelector('.ant-modal').innerText.includes(${JSON.stringify(label)})`, label+' entry');
+    if (label === 'AI 生成世界观') {
+      await app.evaluate(`[...document.querySelectorAll('.ant-modal .ant-collapse-header')].find(e=>e.textContent.includes('编辑范文提炼')).click()`);
+      await app.waitFor(`document.querySelector('[data-testid=novel-reference-guide]')?.value===${JSON.stringify(referenceGuide)}`, 'generated guide is editable');
+      await fill('[data-testid=novel-reference-guide]', editedGuide);
+    }
     await app.textButton(label, '.ant-modal');
     await app.waitFor(`[...document.querySelectorAll('.ant-modal button')].some(e=>e.textContent==='重新生成')`, label+' result');
   }
   await app.textButton('完成创建', '.ant-modal');
   await app.waitFor('!document.querySelector(".ant-modal")', 'novel created');
   const savedPlot = await app.evaluate(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':plot-outline'))`);
+  const referenceKey = `'mojing-narrative:'+${novelExpr}.id+':novel-reference'`;
+  const savedReference = await app.evaluate(`JSON.parse(localStorage.getItem(${referenceKey}))`);
+  assert.equal(savedReference.guide, editedGuide);
+  assert.equal(savedReference.mode, 'rewrite');
+  assert.equal(savedReference.sourceName, '范文输入.txt');
+  assert.equal(savedReference.sourceCharacters, referenceSource.length);
+  assert.equal(await app.evaluate(`${novelExpr}.metadata.targetWordCount`), 100000);
+  const extractRequests = requests.filter(r => r.body.messages?.[0]?.content.includes('你是小说范文编辑'));
+  assert.equal(extractRequests.slice(0, savedReference.sourceParts).map(r => r.body.messages[1].content).join(''), referenceSource);
+  assert.ok(extractRequests.slice(0, savedReference.sourceParts).every(r => r.body.messages[1].content.length <= 10000));
+  assert.equal(extractRequests.some(r => r.body.messages[0].content.includes('按发生顺序提炼')), true);
   assert.equal(savedPlot.ending,'核实预盖日期并保留原始报告。');
   assert.equal(savedPlot.stages[0].coreEvent,'保留交接簿原件');
   assert.equal(JSON.stringify(savedPlot).includes('未审稿：在包里添加第二张票'),false,'adopt the reviewed story plan, not the raw generation');
   const storyPlanReviews=requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说情节编辑'));
   assert.equal(storyPlanReviews.length,1);
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(description));
+  assert.ok(storyPlanReviews[0].body.messages[1].content.includes(editedGuide));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes('未审稿：在包里添加第二张票'));
   await app.evaluate(`document.querySelector('[data-workbench-category="plot"]').click()`);
   await app.waitFor(`!!document.querySelector('[data-testid="story-plan-overview"]')`,'saved full plot visible');
+  await app.click('[data-testid=story-plan-reference] .ant-collapse-header');
+  assert.ok(await app.evaluate('document.querySelector("[data-testid=story-plan-reference]").innerText.includes("用户补充")'));
   await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('阶段与关键事件')).click()`);
   await app.evaluate(`[...document.querySelectorAll('[data-testid="story-plan-overview"] .ant-collapse-header')].find(e=>e.textContent.includes('结局')).click()`);
   await app.waitFor(`document.querySelector('[data-testid="story-plan-overview"]').innerText.includes('核实预盖日期并保留原始报告。')`,'ending visible');
@@ -194,6 +226,8 @@ try {
   assert.deepEqual(wizardRequests.filter(r=>r.body.messages[0].content.includes('小说剧情规划师')).map(r=>r.body.max_tokens),[8192,16384]);
   for (const { body } of wizardRequests) {
     assert.ok(body.messages[1].content.includes(description), 'every setup step retains the original premise');
+    assert.ok(body.messages[0].content.includes(editedGuide));
+    assert.ok(!body.messages[1].content.includes('范文开头：贺青'));
     assert.deepEqual(body.response_format, { type: 'json_object' });
     assert.deepEqual(body.thinking, { type: 'disabled' });
   }
@@ -221,6 +255,7 @@ try {
   assert.match(outlineReviews[1].body.messages[1].content, /上次回复未通过格式检查/);
   assert.ok(writing[1].body.messages[1].content.includes('经审读：'),'write from the reviewed plan rather than the unexamined planning response');
   for (const { body } of writing) {
+    assert.ok(body.messages[0].content.includes(editedGuide), 'chapter outlining and writing retain the edited reference');
     assert.ok(body.messages[0].content.includes('保留交接簿原件'),'stage events reach the real writing request');
     assert.ok(body.messages[0].content.includes('核实预盖日期并保留原始报告。'),'planned resolution reaches the real writing request');
     assert.ok(body.messages[0].content.includes('不能当作已经发生的事实'));
@@ -520,8 +555,9 @@ try {
   await app.waitFor(`!!localStorage.getItem('mojing-comic-store') && !!document.querySelector('.ws-titlebar')`, 'reload');
   assert.deepEqual(await app.evaluate(`({novel:${novelExpr},comic:${comicExpr}})`), prior);
   assert.deepEqual(await app.evaluate(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':plot-outline'))`),savedPlot,'full plot survives page reload');
+  assert.deepEqual(await app.evaluate(`JSON.parse(localStorage.getItem(${referenceKey}))`),savedReference,'writing reference survives reload');
   assert.deepEqual(external, []); assert.deepEqual(app.errors, []);
-  report = { result: 'passed', boundary: 'Remote LLM and images use HTTP fixtures. UI requests, prompt context, cast references, pipeline state, Canvas composition pixels and reload persistence are real. Connectivity probes are blocked. This does not assess model quality.', writingRequests: writing.length, singleChapterAutoRevision: true, imageRequests: imageRequests.length, frameRequests: frameRequests.length, stages: comic.stages, layouts, dialoguePixels, dialogueReflowWithoutImageGeneration: true, blockedProbes };
+  report = { result: 'passed', boundary: 'Remote LLM and images use HTTP fixtures. UI requests, prompt context, cast references, pipeline state, Canvas composition pixels and reload persistence are real. Connectivity probes are blocked. This does not assess model quality.', writingRequests: writing.length, referenceImport: { sourceCharacters: savedReference.sourceCharacters, sections: savedReference.sourceParts, targetWordCount: 100000 }, singleChapterAutoRevision: true, imageRequests: imageRequests.length, frameRequests: frameRequests.length, stages: comic.stages, layouts, dialoguePixels, dialogueReflowWithoutImageGeneration: true, blockedProbes };
 } catch (error) {
   report = { result: 'failed', error: String(error), runtimeErrors: app.errors, external };
   await app.screenshot('failure.png').catch(() => {}); throw error;

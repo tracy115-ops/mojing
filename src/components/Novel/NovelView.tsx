@@ -32,7 +32,7 @@ import { useResizable } from '@/hooks/useResizable';
 import { LAYOUT } from '@/design/layoutDensity';
 import ProjectList from '@/components/Common/ProjectList';
 import ResizeHandle from '@/components/Common/ResizeHandle';
-import NovelSetupWizard from './NovelSetupWizard';
+import NovelSetupWizard, { type WizardResult } from './NovelSetupWizard';
 import ChapterEditor from './ChapterEditor';
 import AutopilotPanel from './AutopilotPanel';
 import NarrativeWorkbench from './NarrativeWorkbench';
@@ -385,15 +385,8 @@ const NovelView: React.FC = () => {
     }
   }, [activeProjectId]);
 
-  const handleWizardComplete = (result: {
-    values: { title: string; description: string; genre: string; targetWordCount: number; style: string; language: string };
-    worldbuilding: Record<string, { key: string; value: string }[]>;
-    styleConvention: string;
-    characters: any[];
-    locations: any[];
-    plotOutline: any;
-  }) => {
-    const { values, worldbuilding: wb, styleConvention: style, characters: chars, locations: locs, plotOutline: plot } = result;
+  const handleWizardComplete = (result: WizardResult) => {
+    const { values, worldbuilding: wb, styleConvention: style, characters: chars, locations: locs, plotOutline: plot, reference } = result;
     const project = useProjectStore.getState().createProject('novel', values.title, values.description, {
       genre: values.genre,
       targetWordCount: values.targetWordCount,
@@ -406,6 +399,7 @@ const NovelView: React.FC = () => {
     // Persist Bible data from wizard
     const repo = new NarrativeRepository(project.id);
     const bible = repo.loadBible();
+    if (reference) repo.saveCustomData('novel-reference', reference);
 
     // Save style convention
     if (style) {

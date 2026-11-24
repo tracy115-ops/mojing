@@ -1,8 +1,9 @@
 import type { NovelChapter, NovelMetadata } from '@/types';
 import type { StoryBible, Worldbuilding, Storyline, ChapterCast, Foreshadowing, RelationshipTriple } from '@/types/narrative';
 import type { Prop, PropEvent } from './prop-manager';
+import { formatNovelReference, type NovelReference } from './novel-reference.ts';
 
-export const WRITING_REFERENCE_KEYS = ['bible', 'plot-outline', 'worldbuilding', 'storylines', 'casts', 'foreshadowing', 'triples', 'props', 'prop-events', 'chapter-reviews'] as const;
+export const WRITING_REFERENCE_KEYS = ['bible', 'plot-outline', 'novel-reference', 'worldbuilding', 'storylines', 'casts', 'foreshadowing', 'triples', 'props', 'prop-events', 'chapter-reviews'] as const;
 
 export interface AuthorPlotOutline {
   mainPlot?: string;
@@ -20,6 +21,7 @@ export interface AuthorPlotOutline {
 
 export interface WritingReferences {
   plotOutline?: AuthorPlotOutline | null;
+  novelReference?: NovelReference | null;
   worldbuilding?: Worldbuilding;
   storylines?: Storyline[];
   casts?: ChapterCast[];
@@ -128,6 +130,7 @@ export function buildWritingContext(
   const sections = [
     '【创作依据的使用边界】\n先核对前文、人物约定和信息来源，再展开本章。保留口供与推测的归属，只有正文给出验证过程才能把猜测写成事实。规划不替代正文，缺少观察时保留其他可能。',
     `【作者原始设定，优先于推演规划】\n小说：《${source.title}》\n类型：${source.genre}\n风格：${source.style}\n语言：${source.language || '中文'}\n简介与创作约束：${source.description}`,
+    ...(references.novelReference ? [formatNovelReference(references.novelReference)] : []),
     `【文风偏好，服务于内容，不是事实或逐句禁令】\n${purpose === 'review' ? '审读以实际阅读效果为准，不能仅因心理直述、句子长短、缺少手势或人物偶尔偏离性格标签报错。只有确实造成阅读障碍才提出修改，并说明影响。' : '沿用作品的声音；不把偏好执行成动作、环境、比喻的配额。'}\n${bible.styleNotes.map(n => `${n.key}: ${n.value}`).join('\n')}`,
     ...bible.worldSettings.map(w => `【世界设定：${w.name}】\n${w.description}${w.constraints?.length ? `\n约束：${w.constraints.join('；')}` : ''}`),
     ...bible.characters.map(c => `【人物设定：${c.name}】\n${c.description}\n外貌:${c.appearance}; 性格:${c.personality}; 经历:${c.backstory || ''}; 信念:${c.psyche?.coreBelief || ''}; 禁忌:${c.psyche?.taboo || ''}; 说话习惯:${c.voiceAnchor?.speechStyle || c.voiceAnchor?.verbalTic || ''}${c.relationships?.length ? `\n作者关系设定：${c.relationships.filter(r => r.sinceChapter <= chapterIndex).map(r => `${bible.characters.find(other => other.id === r.targetCharacterId)?.name || r.targetCharacterId}：${r.type} ${r.description}`).join('；')}` : ''}`),

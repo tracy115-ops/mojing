@@ -79,6 +79,7 @@ app.onEvent(event => {
 });
 const fill = (selector, value) => app.evaluate(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw new Error('Missing input');Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
 const choose = async (selector, label) => {
+  await app.waitFor(`!!document.querySelector(${JSON.stringify(selector)})`, 'select ' + label);
   await app.evaluate(`document.querySelector(${JSON.stringify(selector)}).closest('.ant-select').querySelector('.ant-select-selector').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))`);
   const option = `(()=>{const input=document.querySelector(${JSON.stringify(selector)});const popup=document.getElementById(input.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');return popup&&[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)});})()`;
   await app.waitFor(`!!(${option})`, 'option ' + label); await app.evaluate(`(${option}).click()`);

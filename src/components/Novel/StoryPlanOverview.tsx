@@ -3,6 +3,7 @@ import { Card, Collapse, Typography } from 'antd';
 import { useTranslation } from '@/i18n';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { AuthorPlotOutline } from '@/services/novel/writing-context';
+import type { NovelReference } from '@/services/novel/novel-reference';
 
 const { Paragraph, Text } = Typography;
 
@@ -20,9 +21,22 @@ const StoryPlanOverview: React.FC<{ novelId: string }> = ({ novelId }) => {
     return legacy ? { mainPlot: legacy.event, coreConflict: legacy.significance } : null;
   };
   const [plot, setPlot] = useState<AuthorPlotOutline | null>(load);
-  useEffect(() => { setPlot(load()); return repo.subscribe(['plot-outline', 'global-plan', 'bible'], () => setPlot(load())); }, [repo, t]);
-  if (!plot) return null;
-  return <Card data-testid="story-plan-overview" size="small" title={t('storyPlan.title')} style={{ marginTop: 8 }}>
+  const [reference, setReference] = useState<NovelReference | null>(() => repo.loadCustomData('novel-reference', null));
+  useEffect(() => {
+    const refresh = () => { setPlot(load()); setReference(repo.loadCustomData('novel-reference', null)); };
+    refresh();
+    return repo.subscribe(['plot-outline', 'novel-reference', 'global-plan', 'bible'], refresh);
+  }, [repo, t]);
+  return <>
+    {reference && <Collapse size="small" data-testid="story-plan-reference" style={{ marginTop: 8 }} items={[{
+      key: 'reference', label: t('novelReference.guide'),
+      children: <>
+        <Text type="secondary">{reference.sourceName && `${reference.sourceName} · `}
+          {t(reference.mode === 'style' ? 'novelReference.style' : 'novelReference.rewrite')} · {t('novel.wordCount', { count: reference.sourceCharacters.toLocaleString() })}</Text>
+        <Paragraph style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{reference.guide}</Paragraph>
+      </>,
+    }]} />}
+    {plot && <Card data-testid="story-plan-overview" size="small" title={t('storyPlan.title')} style={{ marginTop: 8 }}>
     <Paragraph type="secondary">{t('storyPlan.note')}</Paragraph>
     <Collapse size="small" defaultActiveKey={['main']} items={[
       { key: 'main', label: t('wizard.mainPlot'), children: <>
@@ -38,7 +52,8 @@ const StoryPlanOverview: React.FC<{ novelId: string }> = ({ novelId }) => {
         </Card>) : <Text type="secondary">{t('storyPlan.legacy')}</Text> },
       { key: 'ending', label: t('wizard.ending'), children: <Paragraph style={{ whiteSpace: 'pre-wrap' }}>{plot.ending || t('storyPlan.legacy')}</Paragraph> },
     ]} />
-  </Card>;
+    </Card>}
+  </>;
 };
 
 export default StoryPlanOverview;
