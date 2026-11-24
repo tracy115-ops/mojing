@@ -201,6 +201,7 @@ try {
   assert.equal(JSON.stringify(savedPlot).includes('未审稿：在包里添加第二张票'),false,'adopt the reviewed story plan, not the raw generation');
   const storyPlanReviews=requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说情节编辑'));
   assert.equal(storyPlanReviews.length,1);
+  assert.deepEqual(storyPlanReviews[0].body.thinking, { type: 'disabled' }, 'reserve the output budget for the complete reviewed plan');
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(description));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(editedGuide));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes('未审稿：在包里添加第二张票'));

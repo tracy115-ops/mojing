@@ -220,6 +220,7 @@ try {
   assert.match(await text(), /待核对/);
   assert.equal(await app.evaluate(`document.querySelector(${JSON.stringify(pane + ' .ant-list-item')}).querySelector('button:has(.anticon-delete)').disabled`), true);
   await app.textButton('添加', pane);
+  await app.waitFor('!!document.querySelector(".ant-modal #subject")', 'knowledge graph form');
   await fill('.ant-modal #subject', '登记簿'); await fill('.ant-modal #predicate', '存放地点'); await fill('.ant-modal #object', '值班室');
   await saveModal();
   assert.equal(await app.evaluate(stored('triples') + '.find(t=>t.subject==="登记簿").source'), 'bible');
