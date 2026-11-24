@@ -66,6 +66,9 @@ try {
   assert.equal(timeouts.at(-1),360000,'reasoning editorial requests can outlast the former two-minute deadline');
   await provider.generate({...request,thinking:false});
   assert.equal(timeouts.at(-1),120000);
+  await provider.generate({...request,thinking:false,timeoutMs:360000});
+  assert.equal(timeouts.at(-1),360000,'a full-plan review can reserve the reasoning budget for the response and still wait for it');
+  assert.equal(requests.at(-1).timeoutMs,undefined,'the deadline stays on the client');
   const custom = new OpenAICompatibleProvider({...endpoint,provider:'custom'},'custom');
   for (const model of ['deepseek-v4-pro','deepseek-v4.1-flash']) {
     source = JSON.stringify({choices:[{message:{content:'{"ready":true}'},finish_reason:'stop'}]});

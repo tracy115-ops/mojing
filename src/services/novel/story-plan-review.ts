@@ -7,6 +7,7 @@ export async function reviewStoryPlan(context: string, plan: string, signal?: Ab
   // Reserve the model's output budget for the complete revised plan.
   const response = await generatePlanningResponse(maxTokens => providerRouter.generate({
     taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens, thinking: false,
+    timeoutMs: 360_000,
     systemPrompt: `你是小说情节编辑，在正文动笔前审读整部故事方案。目标是值得读下去、人物可信、因果成立的故事；不是用评分替代阅读，也不是承诺签约或通过AI检测。
 ${NOVEL_WRITING_PRINCIPLES}
 先检查故事的独特看点和读者期待是否清楚，开篇是否进入人物真正的处境。主角要有具体欲望与难以两全的选择；配角有自己的利益、认知和行动，不能只当线索发放员。人物关系随事件改变，不只重复性格标签或口头禅。

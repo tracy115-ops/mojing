@@ -444,6 +444,8 @@ export interface LLMGenerateRequest {
   maxTokens?: number;
   temperature?: number;
   responseFormat?: 'text' | 'json';
+  /** Client-side time limit for the request, in milliseconds. */
+  timeoutMs?: number;
   /** Optional thinking mode for models that support it (currently DeepSeek V4). */
   thinking?: boolean;
   stopSequences?: string[];

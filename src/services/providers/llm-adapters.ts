@@ -86,12 +86,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   async generate(request: LLMGenerateRequest): Promise<LLMGenerateResponse> {
     const startTime = Date.now();
     const body = this.getChatBody(request);
+    const timeoutMs = request.timeoutMs ?? (request.thinking ? 360_000 : 120_000);
 
     let response = await httpFetch(this.getChatUrl(), {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
+      signal: this.timeoutSignal(timeoutMs),
     });
 
     if (!response.ok) {
@@ -110,7 +111,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
           method: 'POST',
           headers: this.getHeaders(),
           body: JSON.stringify(body),
-          signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
+          signal: this.timeoutSignal(timeoutMs),
         });
       }
 
@@ -150,7 +151,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(request.thinking ? 360_000 : 120_000),
+      signal: this.timeoutSignal(request.timeoutMs ?? (request.thinking ? 360_000 : 120_000)),
     });
 
     if (!response.ok) {
@@ -255,7 +256,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(120_000),
+      signal: this.timeoutSignal(request.timeoutMs ?? 120_000),
     });
 
     if (!response.ok) {
@@ -296,7 +297,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(body),
-      signal: this.timeoutSignal(120_000),
+      signal: this.timeoutSignal(request.timeoutMs ?? 120_000),
     });
 
     if (!response.ok) {
