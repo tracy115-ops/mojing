@@ -54,8 +54,7 @@ app.onEvent(event => {
       if (holdRevision) await holdRevision;
     }
     else if (system.includes('你是小说情节编辑')) {
-      const plan = JSON.parse(body.messages[1].content.split('【待审全书方案，尚未发生】\n')[1]);
-      content = { ready: true, plan, changes: [], unresolvedIssues: [] };
+      content = { ready: true, edits: [], unresolvedIssues: [] };
     }
     else if (system.includes('小说总架构师')) content = {
       mainPlot: '按前文继续核对登记。', coreConflict: '登记与实物须对照。', themeMessage: '尊重证据。',

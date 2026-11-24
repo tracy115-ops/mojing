@@ -1,10 +1,10 @@
 import { providerRouter } from '@/services/providers';
 import { NOVEL_WRITING_PRINCIPLES } from './writing-context';
 import { generatePlanningResponse } from './planning-generation';
-import { parseStoryPlanAssessment } from './story-plan-contract';
+import { applyStoryPlanAssessment } from './story-plan-contract';
 
 export async function reviewStoryPlan(context: string, plan: string, signal?: AbortSignal) {
-  // Reserve the model's output budget for the complete revised plan.
+  // Reserve the model's output budget for the proposed edits.
   const response = await generatePlanningResponse(maxTokens => providerRouter.generate({
     taskType: 'review', responseFormat: 'json', temperature: 0.25, maxTokens, thinking: false,
     timeoutMs: 360_000,
@@ -15,8 +15,9 @@ ${NOVEL_WRITING_PRINCIPLES}
 检查中段是否反复询问、查监控、解释同一线索，是否只换地点而处境不变。事件之间靠人物行动及其后果连接；重大揭示应有铺垫和验证，高潮由此前的选择造成，并留下相称后果。允许安静和余味，不强制每章反转或悬崖结尾。
 资料中的AI推演是可修改的设计，不是已证实事实；原始简介和既有正文优先。现实制度、职业流程、医疗和法律说法不能凭空当成行业规则；必要的虚构背景应作为本书设定，仍要说明人物为何能取得记录、调用资源或改变流程。
 修订未写的方案，保留题材与作者意图，不修改已写事实。不要用增加微表情、句式配额、替换普通词语来冒充情节改进。没有实质收益就保留原文。不能修复时ready=false，说明具体矛盾，禁止假装已解决。
-输出严格JSON：{"ready":true,"plan":{完整修订方案，保持待审方案的字段结构、章节编号及数量},"changes":["具体修改及其阅读收益，无则空数组"],"unresolvedIssues":[]}。plan不可缺省或只返回改动片段。`,
+输出严格 JSON：{"ready":true,"edits":[{"path":["stages",0,"description"],"replacement":"修订后的完整字段文字","reason":"说明具体改动及其阅读收益"}],"unresolvedIssues":[]}。
+系统会将 edits 中的替换文字直接写入大纲。path 从待审方案根节点起，数组位置从 0 开始，每条定位到一个现有文字字段。每个字段最多修订一次。连同结局、阶段描述、关键事件或章节大纲中受同一改动影响的文字一起修订。保留原有章节范围、顺序和数组数量。无需修改时返回空 edits。`,
     userPrompt: `【创作依据，原始简介与正文优先】\n${context}\n\n【待审全书方案，尚未发生】\n${plan}`,
   }, signal), 16384);
-  return parseStoryPlanAssessment(response.content);
+  return applyStoryPlanAssessment(response.content, plan);
 }

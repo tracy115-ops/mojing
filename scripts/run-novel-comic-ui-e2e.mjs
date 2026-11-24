@@ -60,10 +60,11 @@ app.onEvent(event => {
     else if (system.includes('资深小说总架构师')) content={mainPlot:'核实异常车票来源',coreConflict:'核对记录',themeMessage:'事实与猜测',volumes:[{title:'卷一',startChapter:0,endChapter:0,theme:'核对'}],chapters:[{order:0,title:'原始规划',outline:'未审读的全局方案',volumeIndex:0,keyEvents:[],tensionHint:5}],ending:'查清日期来源'};
     else if (system.includes('你是小说情节编辑')) {
       const draft=JSON.parse(body.messages[1].content.split('【待审全书方案，尚未发生】\n')[1]);
-      if(draft.stages)draft.stages[0].coreEvent='保留交接簿原件';
-      else draft.chapters[0].outline='全书审读后：留下原始登记，再核对可取得的记录。';
+      const edit=draft.stages
+        ? {path:['stages',0,'coreEvent'],replacement:'保留交接簿原件'}
+        : {path:['chapters',0,'outline'],replacement:'全书审读后：留下原始登记，再核对可取得的记录。'};
       const denied=body.messages[1].content.includes('DenyGlobalStoryPlanContract');
-      content={ready:!denied,plan:draft,changes:['删除违背原始设定的推断，保留可核对的交接事件。'],unresolvedIssues:denied?['日期矛盾仍未解决']:[]};
+      content={ready:!denied,edits:[{...edit,reason:'删除违背原始设定的推断，保留可核对的交接事件。'}],unresolvedIssues:denied?['日期矛盾仍未解决']:[]};
     }
     if (target.pathname.includes('images')) {
       const index = Number(body.prompt.match(/Panel marker (\d)/)?.[1] ?? 0);
@@ -201,7 +202,7 @@ try {
   assert.equal(JSON.stringify(savedPlot).includes('未审稿：在包里添加第二张票'),false,'adopt the reviewed story plan, not the raw generation');
   const storyPlanReviews=requests.filter(r=>r.body.messages?.[0]?.content.includes('你是小说情节编辑'));
   assert.equal(storyPlanReviews.length,1);
-  assert.deepEqual(storyPlanReviews[0].body.thinking, { type: 'disabled' }, 'reserve the output budget for the complete reviewed plan');
+  assert.deepEqual(storyPlanReviews[0].body.thinking, { type: 'disabled' }, 'reserve the output budget for the proposed revisions');
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(description));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes(editedGuide));
   assert.ok(storyPlanReviews[0].body.messages[1].content.includes('未审稿：在包里添加第二张票'));
