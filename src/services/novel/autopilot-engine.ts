@@ -18,8 +18,7 @@ import { GovernanceEngine } from './governance-engine';
 import { NarrativeRepository } from './narrative-repository';
 import { parseLLMJson } from './llm-json';
 import { ChapterReviewer, type ChapterReviewContext, type ChapterReviewReport } from './chapter-reviewer';
-import { applyEditorialEdits, isReviewCurrent } from './editorial-review';
-import { textFingerprint } from './writing-context';
+import { isReviewCurrent } from './editorial-review';
 import { generatePlanningResponse } from './planning-generation';
 import { reviewStoryPlan } from './story-plan-review';
 import {
@@ -829,40 +828,20 @@ export class AutopilotEngine {
     let current = content;
     this.config.onUpdateChapter(chapterId, { status: 'revising' });
     try {
-      const context = this.reviewContext(chapterIndex);
-      const reference = this.reviewer.buildContext(chapterIndex, context);
-      const checkSources = () => {
-        if (this.config.getChapters().find(c => c.id === chapterId)?.content !== current
-          || reference !== this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex))) {
-          throw new Error('正文或创作依据在审读期间已改变，请重新审读。');
-        }
+      const currentTarget = () => {
+        const context = this.reviewContext(chapterIndex);
+        const chapter = context.chapters.find(c => c.id === chapterId);
+        return chapter && { chapter, context };
       };
-      let review = this.reviewer.loadHistory().find(r => r.chapter === chapterIndex && isReviewCurrent(r, current, reference));
-      if (!review) {
-        review = await this.reviewer.reviewChapter(chapterIndex, current, context, { persist: false });
-        if (signal?.aborted) return current;
-        checkSources();
-        this.reviewer.saveReview(review);
-      }
-      if (review.status === 'needs-revision' && review.findings.length) {
-        const edits = await this.reviewer.proposeRevision(chapterIndex, current, context, 'review', review);
-        if (signal?.aborted) return current;
-        checkSources();
-        if (edits.length) {
-          const candidate = applyEditorialEdits(current, edits);
-          const after = await this.reviewer.reviewChapter(chapterIndex, candidate, context, { persist: false });
-          if (signal?.aborted) return current;
-          this.repo.saveCustomData('chapter-revision-candidate:' + chapterId, { beforeFingerprint: textFingerprint(current), content: candidate, edits, review: after, timestamp: new Date().toISOString() });
-          checkSources();
-          if (after.status === 'reviewed') {
-            this.repo.saveCustomData('chapter-revision:' + chapterId, { before: current, afterFingerprint: textFingerprint(candidate), timestamp: new Date().toISOString() });
-            current = candidate;
-            review = after;
-            this.config.onUpdateChapter(chapterId, { content: current, wordCount: current.length, status: 'revising' });
-            this.reviewer.saveReview(after);
-          }
-        }
-      }
+      const target = currentTarget();
+      if (!target || target.chapter.content !== content) throw new Error('正文已改变，请重新审读。');
+      const result = await this.reviewer.reviewDraft(target, {
+        current: currentTarget, reuseReview: true, signal,
+        applyRevision: revised => this.config.onUpdateChapter(chapterId, { content: revised, wordCount: revised.length, status: 'revising' }),
+      });
+      current = result.content;
+      if (signal?.aborted) return current;
+      const review = result.report;
       const passed = review.status === 'reviewed' && isReviewCurrent(review, current, this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex)));
       this.config.onUpdateChapter(chapterId, { status: passed ? 'complete' : 'revising' });
       this.config.onUpdateStoryNode?.(chapterId, { status: passed ? 'complete' : 'revising' });

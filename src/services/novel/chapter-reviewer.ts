@@ -5,7 +5,7 @@ import type { LLMGenerateRequest } from '@/types/providers';
 import { buildWritingContext, NOVEL_WRITING_PRINCIPLES, textFingerprint, type NovelWritingSource } from './writing-context';
 import {
   EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, parseEditorialEdits,
-  labelEditorialParagraphs, parseOutlineAssessment,
+  labelEditorialParagraphs, parseOutlineAssessment, applyEditorialEdits, isReviewCurrent,
   type EditorialAssessment, type EditorialEdit,
 } from './editorial-review';
 
@@ -26,17 +26,33 @@ export interface ChapterReviewReport extends EditorialAssessment {
   status: 'reviewed' | 'needs-revision';
 }
 
+export type ChapterReviewStage = 'reviewingProse' | 'revisingProse' | 'reviewingRevision';
+interface ChapterReviewTarget {
+  chapter: Pick<NovelChapter, 'id' | 'order' | 'content'>;
+  context: ChapterReviewContext;
+}
+interface ReviewDraftOptions {
+  current: () => ChapterReviewTarget | undefined;
+  reuseReview?: boolean;
+  applyRevision?: (content: string) => void;
+  restoreFrom?: string;
+  signal?: AbortSignal;
+  onStage?: (stage: ChapterReviewStage) => void;
+}
+
 export class ChapterReviewer {
   private repo: NarrativeRepository;
   constructor(private novelId: string) { this.repo = new NarrativeRepository(novelId); }
 
-  private async generateEditorial(request: LLMGenerateRequest) {
+  private async generateEditorial(request: LLMGenerateRequest, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     try {
-      return await providerRouter.generate(request);
+      return await providerRouter.generate(request, signal);
     } catch (error) {
       const outputBudget = request.maxTokens ?? 16384;
       if (!(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=') || outputBudget >= 32768) throw error;
-      return providerRouter.generate({ ...request, maxTokens: Math.min(outputBudget * 2, 32768) });
+      signal?.throwIfAborted();
+      return providerRouter.generate({ ...request, maxTokens: Math.min(outputBudget * 2, 32768) }, signal);
     }
   }
 
@@ -78,7 +94,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     return result.outline;
   }
 
-  async reviewChapter(chapterIndex: number, content: string, context: ChapterReviewContext, options: { persist?: boolean } = {}): Promise<ChapterReviewReport> {
+  async reviewChapter(chapterIndex: number, content: string, context: ChapterReviewContext, options: { persist?: boolean; candidate?: boolean; signal?: AbortSignal } = {}): Promise<ChapterReviewReport> {
     const reference = this.buildContext(chapterIndex, context);
     const factSources = [context.source.description,
       ...this.repo.loadBible().worldSettings.flatMap(setting => setting.constraints ?? []),
@@ -111,7 +127,8 @@ critical 用于有直接证据的硬事实矛盾或核心承诺被破坏，major
         taskType: 'review', systemPrompt,
         userPrompt: `【创作约束与前文，R编号】\n${labelEditorialParagraphs(reference, 'R')}\n\n【待审第${chapterIndex + 1}章完整正文，C编号】\n${labelEditorialParagraphs(content)}${correction}`,
         responseFormat: 'json', temperature: 0.2, maxTokens: 16384, thinking: true,
-      });
+      }, options.signal);
+      options.signal?.throwIfAborted();
       try {
         const assessment = parseEditorialAssessment(response.content, content, reference, excerpt => factSources.some(source => source.includes(excerpt)));
         const report: ChapterReviewReport = {
@@ -125,14 +142,14 @@ critical 用于有直接证据的硬事实矛盾或核心承诺被破坏，major
         return report;
       } catch (error) {
         failure = error;
-        this.repo.saveCustomData((options.persist === false ? 'chapter-candidate-review-failure:' : 'chapter-review-failure:') + chapterIndex, { contentFingerprint: textFingerprint(content), raw: response.content, error: String(error), timestamp: new Date().toISOString() });
+        this.repo.saveCustomData((options.candidate ? 'chapter-candidate-review-failure:' : 'chapter-review-failure:') + chapterIndex, { contentFingerprint: textFingerprint(content), raw: response.content, error: String(error), timestamp: new Date().toISOString() });
         correction = `\n\n上次审稿校验失败：${String(error)}。只使用上面实际存在的C/R段落编号，确保六个维度齐全。没有依据的问题不要报告。`;
       }
     }
     throw failure instanceof Error ? failure : new Error('审稿未完成，正文保留为草稿');
   }
 
-  async proposeRevision(chapterIndex: number, content: string, context: ChapterReviewContext, mode: 'polish' | 'rewrite' | 'expand' | 'review', report?: ChapterReviewReport): Promise<EditorialEdit[]> {
+  async proposeRevision(chapterIndex: number, content: string, context: ChapterReviewContext, mode: 'polish' | 'rewrite' | 'expand' | 'review', report?: ChapterReviewReport, signal?: AbortSignal): Promise<EditorialEdit[]> {
     const findings = report?.findings.filter(finding => finding.basis !== 'uncertain');
     if (mode === 'review' && findings?.length === 0) return [];
     const purposes = {
@@ -151,8 +168,57 @@ critical 用于有直接证据的硬事实矛盾或核心承诺被破坏，major
 提出最多12处有明确阅读收益的修改；没有值得采用的修改就返回空edits。paragraphId可用单段C12或连续范围C12-C15，最多连续20段。每处after替换所指范围的全部正文，保留范围内仍有效的事件与细节，可用空字符串删除冗余。各范围不得重叠，也不得同时对一个范围和其内部单段提出修改。
 保持范围外的原文，不缩写整章、不丢结尾。不得修改原始故事约束，不能靠新增信物、失忆、幕后消息或超自然能力填补逻辑。reason说明具体问题和修改对阅读的帮助。只输出严格JSON：{"edits":[{"paragraphId":"C12-C15","after":"改后完整语段，段间保留换行","reason":"理由"}]}`,
       userPrompt: `${this.buildContext(chapterIndex, context)}\n\n【本章完整正文，C编号】\n${labelEditorialParagraphs(content)}\n\n【审稿问题】\n${findings?.length ? JSON.stringify(findings) : '请通读全文，找出最影响阅读的具体语段。'}`,
-    });
+    }, signal);
+    signal?.throwIfAborted();
     return parseEditorialEdits(response.content, content);
+  }
+
+  async reviewDraft({ chapter, context }: ChapterReviewTarget, options: ReviewDraftOptions) {
+    const { id, order, content } = chapter;
+    const reference = this.buildContext(order, context);
+    const checkCurrent = () => {
+      options.signal?.throwIfAborted();
+      const current = options.current();
+      if (!current || current.chapter.order !== order || current.chapter.content !== content
+        || this.buildContext(order, current.context) !== reference) {
+        throw new Error('正文或创作依据在审读期间已改变，请重新审读。');
+      }
+    };
+    checkCurrent();
+
+    let report = options.reuseReview
+      ? this.loadHistory().find(item => item.chapter === order && isReviewCurrent(item, content, reference))
+      : undefined;
+    if (!report) {
+      options.onStage?.('reviewingProse');
+      report = await this.reviewChapter(order, content, context, { persist: false, signal: options.signal });
+      checkCurrent();
+      this.saveReview(report);
+    }
+    if (!options.applyRevision || report.status !== 'needs-revision') return { content, report, revised: false };
+
+    options.onStage?.('revisingProse');
+    const edits = await this.proposeRevision(order, content, context, 'review', report, options.signal);
+    checkCurrent();
+    if (!edits.length) return { content, report, revised: false };
+    const candidate = applyEditorialEdits(content, edits);
+    if (candidate === content) return { content, report, revised: false };
+
+    options.onStage?.('reviewingRevision');
+    const after = await this.reviewChapter(order, candidate, context, { persist: false, candidate: true, signal: options.signal });
+    checkCurrent();
+    this.repo.saveCustomData('chapter-revision-candidate:' + id, { beforeFingerprint: textFingerprint(content), content: candidate, edits, review: after, timestamp: new Date().toISOString() });
+    if (after.status !== 'reviewed') return { content, report, revised: false };
+
+    this.saveRevisionBackup(id, options.restoreFrom || content, candidate);
+    options.applyRevision(candidate);
+    this.saveReview(after);
+    return { content: candidate, report: after, revised: true };
+  }
+
+  saveRevisionBackup(chapterId: string, before: string, after: string): void {
+    if (before && before !== after) this.repo.saveCustomData('chapter-revision:' + chapterId,
+      { before, afterFingerprint: textFingerprint(after), timestamp: new Date().toISOString() });
   }
 
   saveReview(report: ChapterReviewReport): void {

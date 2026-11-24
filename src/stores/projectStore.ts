@@ -13,6 +13,7 @@ import type {
 } from '@/types';
 import type { StoryNode } from '@/types/narrative';
 import { StoryTreeService, type CreateNodeParams } from '@/services/novel/story-tree';
+import { getNovelChapters } from '@/services/novel/writing-context';
 
 const generateId = () => crypto.randomUUID?.() ?? `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -479,3 +480,19 @@ export const useProjectStore = create<ProjectState>()(
     },
   ),
 );
+
+export function readSavedChapterForReview(projectId: string, chapterId: string) {
+  const project = useProjectStore.getState().projects.find(item => item.id === projectId && item.type === 'novel');
+  if (!project) return;
+  const metadata = project.metadata as NovelMetadata;
+  const chapters = getNovelChapters(metadata);
+  const chapter = chapters.find(item => item.id === chapterId);
+  if (!chapter) return;
+  return {
+    chapter,
+    context: {
+      source: { title: project.title, description: project.description, genre: metadata.genre, style: metadata.style, language: metadata.language },
+      chapters, outline: chapter.outline,
+    },
+  };
+}

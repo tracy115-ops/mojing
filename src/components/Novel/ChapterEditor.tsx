@@ -8,9 +8,10 @@ import {
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useProviderStore } from '@/stores/providerStore';
+import { readSavedChapterForReview } from '@/stores/projectStore';
 import { providerRouter } from '@/services/providers';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
-import { ChapterReviewer, type ChapterReviewReport } from '@/services/novel/chapter-reviewer';
+import { ChapterReviewer, type ChapterReviewReport, type ChapterReviewStage } from '@/services/novel/chapter-reviewer';
 import { NOVEL_WRITING_PRINCIPLES, textFingerprint, WRITING_REFERENCE_KEYS } from '@/services/novel/writing-context';
 import { applyEditorialEdits, isReviewCurrent } from '@/services/novel/editorial-review';
 import { generatePlanningResponse } from '@/services/novel/planning-generation';
@@ -227,12 +228,12 @@ ${NOVEL_WRITING_PRINCIPLES}
       }
 
       if (fullContent) {
-        saveRevisionBackup(contentDraft, fullContent);
+        reviewer.saveRevisionBackup(chapter.id, contentDraft, fullContent);
         setContentDraft(fullContent);
         contentRef.current = fullContent;
         onUpdate({ content: fullContent, status: 'drafting', wordCount: fullContent.length });
         setStreamContent('');
-        if (autoReview) await runReview(fullContent, { ...getReviewContext(), outline: writingOutline });
+        if (autoReview) await runReview({ revise: true, controller, restoreFrom: contentDraft });
         else message.success(t('novel.editor.draftSaved'));
       }
     } catch (err) {
@@ -246,16 +247,15 @@ ${NOVEL_WRITING_PRINCIPLES}
 
   const handleStopGeneration = () => {
     abortRef.current?.abort();
+    abortRef.current = null;
     if (streamContent) {
+      setContentDraft(streamContent);
+      contentRef.current = streamContent;
       onUpdate({ content: streamContent, status: 'drafting' });
       setStreamContent('');
     }
+    setPreparingProse(false);
     setGenerating(null);
-  };
-
-  const saveRevisionBackup = (before: string, after: string) => {
-    if (before && before !== after) new NarrativeRepository(novel.id).saveCustomData('chapter-revision:' + chapter.id,
-      { before, afterFingerprint: textFingerprint(after), timestamp: new Date().toISOString() });
   };
 
   const showReview = (report: ChapterReviewReport) => Modal.info({
@@ -275,19 +275,44 @@ ${NOVEL_WRITING_PRINCIPLES}
     </div>,
   });
 
-  const runReview = async (content = contentRef.current, context = getReviewContext()) => {
-    if (!content.trim() || !hasEndpoint) return;
+  const runReview = async (options: { revise?: boolean; controller?: AbortController; restoreFrom?: string } = {}) => {
+    flushSave();
+    const current = () => readSavedChapterForReview(novel.id, chapter.id);
+    const target = current();
+    if (!target?.chapter.content.trim() || !hasEndpoint) return;
+    const controller = options.controller ?? new AbortController();
+    abortRef.current = controller;
+    let stage: ChapterReviewStage = 'reviewingProse';
     setGenerationError('');
-    setGenerating('review');
-    const originalReference = reviewer.buildContext(chapter.order, context);
+    setGenerating(stage);
     try {
-      const result = await reviewer.reviewChapter(chapter.order, content, context);
-      setReview(result);
-      if (contentRef.current === content && reviewer.buildContext(chapter.order, reviewContextRef.current()) === originalReference) onUpdate({ status: result.status === 'needs-revision' ? 'revising' : 'drafting' });
+      const result = await reviewer.reviewDraft(target, {
+        current, restoreFrom: options.restoreFrom, signal: controller.signal,
+        onStage: next => { stage = next; setGenerating(next); },
+        applyRevision: options.revise ? revised => {
+          contentRef.current = revised;
+          setContentDraft(revised);
+          onUpdate({ content: revised, status: 'drafting' });
+        } : undefined,
+      });
+      if (controller.signal.aborted) return;
+      const saved = current();
+      if (!saved || !isReviewCurrent(result.report, saved.chapter.content, reviewer.buildContext(saved.chapter.order, saved.context))) return;
+      setReview(result.report);
+      onUpdate({ status: result.report.status === 'needs-revision' ? 'revising' : 'drafting' });
+      if (result.revised) message.success(t('novel.editor.autoRevisionApplied'));
+      else if (options.revise && result.report.status === 'needs-revision') setGenerationError(t('novel.editor.autoRevisionRetained'));
     } catch (error) {
+      if (controller.signal.aborted) return;
       const detail = error instanceof Error ? error.message : String(error);
-      setGenerationError(t('novel.editor.proseReviewRetry', { detail }));
-    } finally { setGenerating(null); }
+      setGenerationError(t(stage === 'reviewingProse' ? 'novel.editor.proseReviewRetry' : 'novel.editor.autoRevisionFailed', { detail }));
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setGenerating(null);
+        setPreparingProse(false);
+      }
+    }
   };
 
   const handleAITool = async (mode: 'rewrite' | 'polish' | 'expand' | 'summarize' | 'consistency_check' | 'review') => {
@@ -296,7 +321,7 @@ ${NOVEL_WRITING_PRINCIPLES}
     const content = contentRef.current;
     const originalReference = reviewer.buildContext(chapter.order, getReviewContext());
     if (content.trim().length < 20) { message.warning(t('editor.noContent')); return; }
-    if (mode === 'consistency_check') { await runReview(content); return; }
+    if (mode === 'consistency_check') { await runReview(); return; }
     setGenerating(mode === 'review' ? 'revise' : mode);
     try {
       if (mode === 'summarize') {
@@ -331,12 +356,12 @@ ${NOVEL_WRITING_PRINCIPLES}
             return;
           }
           const revised = applyEditorialEdits(content, edits.filter((_, i) => selected.has(i)));
-          saveRevisionBackup(content, revised);
+          reviewer.saveRevisionBackup(chapter.id, content, revised);
           contentRef.current = revised;
           setContentDraft(revised);
           onUpdate({ content: revised, wordCount: revised.length, status: 'revising' });
           close();
-          void runReview(revised);
+          void runReview();
         },
       });
     } catch (error) { message.error(t('common.failed') + ': ' + (error instanceof Error ? error.message : String(error))); }
@@ -417,7 +442,8 @@ ${NOVEL_WRITING_PRINCIPLES}
   const hasProse = Boolean(contentDraft.trim());
   const planningOutline = generating === 'outline' || generating === 'outlineReview';
   const generationStatus = generating === 'content' ? (preparingProse ? 'preparingProse' : 'writingProse')
-    : generating === 'review' ? 'reviewingProse' : generating === 'outline' ? 'planningOutline'
+    : generating === 'reviewingProse' || generating === 'revisingProse' || generating === 'reviewingRevision' ? generating
+    : generating === 'outline' ? 'planningOutline'
     : generating === 'outlineReview' ? 'reviewingOutline' : generating ? 'preparingEdits' : undefined;
 
   return (
@@ -443,7 +469,7 @@ ${NOVEL_WRITING_PRINCIPLES}
       </div>
 
       {(hasProse || generationStatus) && <div className="chapter-editor__review">
-        {hasProse && <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'review'} disabled={generating !== null || !hasEndpoint} onClick={() => { flushSave(); void runReview(); }}>{t('novel.editor.runReview')}</Button>}
+        {hasProse && <Button size="small" icon={<FileSearchOutlined />} loading={generating === 'reviewingProse'} disabled={generating !== null || !hasEndpoint} onClick={() => void runReview()}>{t('novel.editor.runReview')}</Button>}
         {currentReview ? <>
           {!generationStatus && <Tag color={currentReview.status === 'needs-revision' ? 'warning' : 'default'}>{t(currentReview.status === 'needs-revision' ? 'novel.editor.needsRevision' : 'novel.editor.reviewed')}</Tag>}
           <Button size="small" type="link" disabled={!!generating} onClick={() => showReview(currentReview)}>{t('novel.editor.viewReview')}</Button>
@@ -499,7 +525,7 @@ ${NOVEL_WRITING_PRINCIPLES}
             children: (
               <div className="chapter-editor__page">
                 <div className="chapter-editor__toolbar" data-testid="chapter-actions">
-                  {generating === 'content' ? (
+                  {generating && abortRef.current ? (
                     <Button size="small" danger onClick={handleStopGeneration}>
                       {t('novel.stopGeneration')}
                     </Button>
@@ -551,6 +577,7 @@ ${NOVEL_WRITING_PRINCIPLES}
                   onChange={(e) => { if (!generating) debouncedSave('content', e.target.value); }}
                   onBlur={flushSave}
                   disabled={generating === 'content'}
+                  readOnly={generating !== null}
                   placeholder={t("novel.contentPlaceholder")}
                   className="chapter-editor__text"
                   style={textareaStyle}

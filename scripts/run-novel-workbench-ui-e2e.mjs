@@ -15,7 +15,7 @@ const novelId = 'workbench-ui-contract';
 const projectExpr = `JSON.parse(localStorage.getItem('mojing-projects')).state.projects.find(p=>p.id===${JSON.stringify(novelId)})`;
 const stored = suffix => `JSON.parse(localStorage.getItem(${JSON.stringify('mojing-narrative:' + novelId + ':' + suffix)}))`;
 const requests = [], external = [], pages = [], assertions = [];
-let failDialogue = false, streamIndex = 0, holdStream, holdRevision;
+let failDialogue = false, streamIndex = 0, holdStream, holdRevision, offerRevision = false;
 const drafts = ['林岚把登记簿放在值班桌上。', '保安核对编号后签了字。', '林岚收好回执，离开值班室。'];
 const signedAlone = '本次由保安一人签收回执。';
 const countersignRule = '值班室内回执必须由两人共同签收。';
@@ -50,7 +50,7 @@ app.onEvent(event => {
         problem: '本次只有一人签收，违反值班室两人签收的规则。', suggestion: '核对签收现场。',
       }] } : review;
     } else if (system.includes('小说责任编辑')) {
-      content = holdRevision ? { edits: [{ before: signedAlone, after: '本次两人共同签收回执。', reason: '按世界规则签收。' }] } : { edits: [] };
+      content = holdRevision || offerRevision ? { edits: [{ before: signedAlone, after: '本次两人共同签收回执。', reason: '按世界规则签收。' }] } : { edits: [] };
       if (holdRevision) await holdRevision;
     }
     else if (system.includes('你是小说情节编辑')) {
@@ -384,6 +384,22 @@ try {
   await app.waitFor('!!document.querySelector("[data-testid=chapter-review-panel]") && !document.querySelector("#novel-narrative-pane").hidden', 'dashboard link stays in review at 900px');
   assert.match(await text(), /第5章 · 回执/);
   check('The chapter review link opens the selected chapter at 900px without switching away from the workbench');
+
+  await app.textButton('审读并修订', pane);
+  await app.waitFor(`document.querySelector(${JSON.stringify(pane)}).innerText.includes('原稿已保留')`, 'review and revise retains unresolved draft');
+  assert.equal(await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4").content'), authorDraft);
+  offerRevision = true;
+  const beforeWorkbenchRevision = requests.length;
+  await app.textButton('审读并修订', pane);
+  await app.waitFor(`document.querySelector(${JSON.stringify(pane)}).innerText.includes('修订稿已通过复审并保存')`, 'successful workbench revision');
+  const workbenchChapter = await app.evaluate(projectExpr + '.metadata.storyNodes.find(n=>n.id==="chapter-4")');
+  assert.equal(workbenchChapter.content, authorDraft.replace(signedAlone, '本次两人共同签收回执。'));
+  assert.equal(await app.evaluate(stored('chapter-revision:chapter-4') + '.before'), authorDraft);
+  assert.equal(await app.evaluate(stored('chapter-reviews') + '.find(r=>r.chapter===4).status'), 'reviewed');
+  assert.deepEqual(requests.slice(beforeWorkbenchRevision).map(body=>body.messages[0].content.match(/小说责任编辑|认真通读作品的小说编辑/)?.[0]), ['小说责任编辑', '认真通读作品的小说编辑']);
+  await shot('workbench-revised');
+  check('At 900px, Review and revise uses the current report, retains a blocked draft and adopts a checked revision with a restorable backup');
+
   await app.call('Emulation.clearDeviceMetricsOverride');
   if (await app.evaluate('document.querySelector("#novel-narrative-pane").hidden')) await app.click('[data-testid=novel-workbench-toggle]');
 

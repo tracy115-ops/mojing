@@ -11,6 +11,9 @@ const origin = new URL(url).origin;
 const app = await chromeSession({ url, port: 9256 });
 const requests = [], external = [], blockedProbes = [];
 let outlineBeforeReview;
+let generateAutoRevisionDraft = false, draftDuringRevisionReview;
+const autoRevisionDraft = '林岚把登记簿交给保安。\n\n她没等交接就从保安手中取走登记簿。\n\n登记簿封底的蓝线还在。';
+const revisedAutoDraft = autoRevisionDraft.replace('她没等交接就从保安手中取走登记簿。', '保安签收后把登记簿退还给她。');
 const novelProse = '雨水敲着车窗。\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350) + '\n\n林岚从黄色帆布包中取出旧票，走向车载摄像头。';
 const colors = ['#d93434', '#32b34d', '#3355d4', '#d4a834'];
 const tiles = await Promise.all(colors.map(background => sharp({ create: { width: 360, height: 640, channels: 3, background } }).png().toBuffer()));
@@ -75,6 +78,14 @@ app.onEvent(event => {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) }, finish_reason:'stop' }] });
     } else if (system.includes('认真通读作品的小说编辑')) {
       const assessment = { dimensions: ['premise_fidelity','character_consistency','timeline_consistency','plot_coherence','foreshadowing_usage','voice_quality'].map(name => ({ name, score: 80 })), summary: 'Fixture editorial response, not a live quality judgment.', findings: [], continuityNotes: [{ fact: '林岚取票走向摄像头。', quote: '林岚从黄色帆布包中取出旧票，走向车载摄像头。' }] };
+      if (generateAutoRevisionDraft) {
+        assessment.continuityNotes = [];
+        if (body.messages[1].content.includes('她没等交接就从保安手中取走登记簿。')) {
+          assessment.findings.push({ dimension:'plot_coherence', severity:'major', basis:'craft', paragraphId:'C2', problem:'交接过程缺失。', suggestion:'补上签收之后的归还。' });
+        } else {
+          draftDuringRevisionReview = await app.evaluate(`${novelExpr}.metadata.storyNodes[1].content`);
+        }
+      }
       if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'major',basis:'craft',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved story problem.',suggestion:'Fixture correction direction.' });
       if (/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
         if (body.messages[1].content.includes('雨水敲着车窗。')) assessment.findings.push({dimension:'plot_coherence',severity:'major',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture initial problem.',suggestion:'Fixture correction.'});
@@ -84,6 +95,11 @@ app.onEvent(event => {
     } else if (system.includes('叙事节拍规划师')) {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ beats: [0,1,2].map(i => ({ description:'Lin Lan checks the ticket, scene '+i, targetWords:1000,focus:'dialogue',sceneGoal:'Track the ticket owner.' })) }) },finish_reason:'stop' }] });
     } else if (system.includes('小说责任编辑')) {
+      if (generateAutoRevisionDraft) {
+        result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits: [{ paragraphId: 'C2', after:'保安签收后把登记簿退还给她。', reason:'补上实际签收和归还。' }] }) }, finish_reason: 'stop' }] });
+        await app.call('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }], body: Buffer.from(result).toString('base64') });
+        return;
+      }
       const alreadyRevised = body.messages[1].content.includes('雨点敲着车顶。');
       const edits = [{ before: alreadyRevised ? '雨点敲着车顶。' : '雨水敲着车窗。', after: alreadyRevised ? '雨声落在车顶。' : '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }];
       if (!/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
@@ -94,7 +110,7 @@ app.onEvent(event => {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits }) }, finish_reason: 'stop' }] });
     } else if (body.stream) {
       type = 'text/event-stream';
-      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
+      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : generateAutoRevisionDraft ? autoRevisionDraft : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
     } else {
       result = JSON.stringify({ choices: [{ message: { content: content ? JSON.stringify(content) : '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
     }
@@ -480,13 +496,32 @@ try {
     await writeFile(join(output, `dialogue-${shape}.png`), visibleBytes);
   }
   await app.screenshot('comic-pipeline.png');
+  await app.click('button[aria-label="小说引擎"]');
+  await app.textButton('添加章节');
+  const savedSecond = `${novelExpr}.metadata.storyNodes[1]`;
+  await app.waitFor(`!!${savedSecond} && !!document.querySelector('textarea[placeholder="章节大纲..."]')`, 'second chapter');
+  await fill('.chapter-editor textarea[placeholder="章节大纲..."]', '安排保安完成签收并归还登记簿。');
+  const autoStartIndex = requests.length;
+  generateAutoRevisionDraft = true;
+  await app.click('[data-testid="chapter-outline-next"]');
+  await app.waitFor(`${savedSecond}.content===${JSON.stringify(revisedAutoDraft)}`, 'generated prose revised automatically');
+  generateAutoRevisionDraft = false;
+  assert.equal(draftDuringRevisionReview, autoRevisionDraft, 'the original draft stays saved while the candidate is under review');
+  const revisionRequests = requests.slice(autoStartIndex).filter(({body}) => /认真通读作品的小说编辑|小说责任编辑/.test(body.messages[0].content));
+  assert.equal(revisionRequests.length, 3, 'generation triggers initial review, targeted rewrite and candidate review');
+  assert.ok(revisionRequests[2].body.messages[1].content.includes('保安签收后把登记簿退还给她。'));
+  assert.equal(await app.evaluate(`${novelExpr}.metadata.storyNodes[0].content`), revisedProse, 'automatic revision affects only the generated chapter');
+  const updatedChapterId = await app.evaluate(`${savedSecond}.id`);
+  const backup = await app.evaluate(`JSON.parse(localStorage.getItem('mojing-narrative:'+ ${novelExpr}.id + ':chapter-revision:'+${JSON.stringify(updatedChapterId)}))`);
+  assert.equal(backup.before, autoRevisionDraft);
+  await app.screenshot('novel-automatic-revision.png');
   const prior = await app.evaluate(`({novel:${novelExpr},comic:${comicExpr}})`);
   await app.call('Page.reload');
   await app.waitFor(`!!localStorage.getItem('mojing-comic-store') && !!document.querySelector('.ws-titlebar')`, 'reload');
   assert.deepEqual(await app.evaluate(`({novel:${novelExpr},comic:${comicExpr}})`), prior);
   assert.deepEqual(await app.evaluate(`JSON.parse(localStorage.getItem('mojing-narrative:'+${novelExpr}.id+':plot-outline'))`),savedPlot,'full plot survives page reload');
   assert.deepEqual(external, []); assert.deepEqual(app.errors, []);
-  report = { result: 'passed', boundary: 'Remote LLM and images use HTTP fixtures. UI requests, prompt context, cast references, pipeline state, Canvas composition pixels and reload persistence are real. Connectivity probes are blocked. This does not assess model quality.', writingRequests: writing.length, imageRequests: imageRequests.length, frameRequests: frameRequests.length, stages: comic.stages, layouts, dialoguePixels, dialogueReflowWithoutImageGeneration: true, blockedProbes };
+  report = { result: 'passed', boundary: 'Remote LLM and images use HTTP fixtures. UI requests, prompt context, cast references, pipeline state, Canvas composition pixels and reload persistence are real. Connectivity probes are blocked. This does not assess model quality.', writingRequests: writing.length, singleChapterAutoRevision: true, imageRequests: imageRequests.length, frameRequests: frameRequests.length, stages: comic.stages, layouts, dialoguePixels, dialogueReflowWithoutImageGeneration: true, blockedProbes };
 } catch (error) {
   report = { result: 'failed', error: String(error), runtimeErrors: app.errors, external };
   await app.screenshot('failure.png').catch(() => {}); throw error;
