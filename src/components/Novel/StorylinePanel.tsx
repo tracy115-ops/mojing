@@ -219,7 +219,7 @@ const StorylinePanel: React.FC<StorylinePanelProps> = ({ novelId, totalChapters 
         <Button size="small" icon={<ReloadOutlined />} onClick={refresh} />
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '0 8px' }}>
-        <StoryPlanOverview novelId={novelId} />
+        <StoryPlanOverview key={novelId} novelId={novelId} />
         <Tabs items={tabItems} size="small" />
       </div>
 

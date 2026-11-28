@@ -400,8 +400,8 @@ const beatMagnify: PromptTemplate = {
 const beatGeneration: PromptTemplate = {
   id: 'beat-generation',
   name: '单Beat生成',
-  version: 5,
-  variables: ['title', 'genre', 'style', 'phaseDirective', 'context', 'outline', 'beatDescription', 'beatFocus', 'targetWords', 'conductorSignal', 'beatIndex', 'totalBeats', 'sensoryHint'],
+  version: 6,
+  variables: ['title', 'genre', 'style', 'phaseDirective', 'context', 'beatDescription', 'beatFocus', 'targetWords', 'conductorSignal', 'beatIndex', 'totalBeats', 'nextBeat', 'sensoryHint'],
   buildSystem(vars) {
     const isFirst = vars.beatIndex === '0';
     const isLast = vars.beatIndex === String(Number(vars.totalBeats) - 1);
@@ -417,7 +417,11 @@ const beatGeneration: PromptTemplate = {
 
     return `你是一位小说作者。按照本书题材、人物和既有情节续写当前场景，保留作者已经形成的声音。
 
-写作前在内部核对本段与全部已写正文的事实、约定和因果；关键推断须检查观察范围与其他解释。大纲和节拍可据此调整，不能改动已发生事实。输出接续的作品正文，不输出核对过程或重复章标题。
+写作前核对已写正文最后一段的时间、地点和人物动作。新段落从它之后起笔，已写事件只用于核对，不能再次现场演出或改写。若本节拍的前半已经落笔，只写尚未发生的部分。关键推断须检查观察范围与其他解释。只输出新写的正文。
+
+参考材料里的章节编号、节拍和审读标签只供写作定位。人物回忆先前的决定时，用故事中的时间、地点或事件来指代，例如“前一晚记下的几条”。叙述和人物笔记里都不能把本书的“第16章”当成发生过的时间或记录来源。情节中确实存在的文件条款、档案编号等照实保留。
+
+有明确日期的场景中，核对“今天、明天、昨天”各自指哪天，再写约定和通知。人物拿到日期、批注或证词以前，只能用已掌握的信息决定行动。人物复述已写的经过时，直接写听者由此作出的新决定，略去没有后果的复述。原件、登记和口供可能都不完整；角色可以希望它们能查证，不能因其身份或形式直接断言可靠。
 
 ${sceneProtocol}
 
@@ -445,7 +449,10 @@ ${vars.conductorSignal ?? ''}${beatSpecific}
 • 字数 ${vars.targetWords} 字左右`;
   },
   buildUser(vars) {
-    return `「这一段你要讲的故事」\n${vars.beatDescription}\n\n章节大纲：${vars.outline}\n\n讲吧。`;
+    const boundary = vars.nextBeat
+      ? `下一个节拍的内容，留给后续写作：${vars.nextBeat}`
+      : '这是本章最后一个节拍。完成当前场景的后果后停笔，下一章的行动留到下一章。';
+    return `续写第 ${Number(vars.beatIndex) + 1}/${vars.totalBeats} 段，约 ${vars.targetWords} 字。\n本段唯一要推进的行动：${vars.beatDescription}\n${boundary}\n已发生的动作、对话和证据交接各写一次。`;
   },
 };
 

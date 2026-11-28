@@ -2,6 +2,8 @@ import type { NovelChapter, NovelMetadata } from '@/types';
 import type { StoryBible, Worldbuilding, Storyline, ChapterCast, Foreshadowing, RelationshipTriple } from '@/types/narrative';
 import type { Prop, PropEvent } from './prop-manager';
 import { formatNovelReference, type NovelReference } from './novel-reference.ts';
+import { findPriorChapterEvidence } from './prior-chapter-evidence.ts';
+import { parseChapterGraphLink, quoteChapterGraphLink, type ChapterGraphLink } from './chapter-graph-evidence.ts';
 
 export const WRITING_REFERENCE_KEYS = ['bible', 'plot-outline', 'novel-reference', 'worldbuilding', 'storylines', 'casts', 'foreshadowing', 'triples', 'props', 'prop-events', 'chapter-reviews'] as const;
 
@@ -85,8 +87,26 @@ export interface NovelWritingSource {
 
 export interface ChapterMemory {
   chapter: number;
+  status?: 'reviewed' | 'needs-revision';
   contentFingerprint?: string;
-  continuityNotes?: Array<{ fact: string; quote: string }>;
+  continuityNotes?: Array<{ fact: string; quote: string; link?: ChapterGraphLink }>;
+}
+
+export function getChapterGraphEvidence(chapters: NovelChapter[], memories: ChapterMemory[], includeDrafts = false) {
+  const byChapter = new Map(chapters.map(chapter => [chapter.order, chapter]));
+  return memories.flatMap(memory => {
+    const pending = memory.status === 'needs-revision';
+    if (pending && !includeDrafts) return [];
+    const chapter = byChapter.get(memory.chapter);
+    if (!chapter || memory.contentFingerprint !== textFingerprint(chapter.content)) return [];
+    return (memory.continuityNotes ?? []).filter(note => note.quote && chapter.content.includes(note.quote)).map(note => ({
+      chapter: chapter.order,
+      fact: note.fact,
+      quote: note.quote,
+      pending,
+      link: parseChapterGraphLink(note.link, note.quote),
+    }));
+  }).sort((a, b) => b.chapter - a.chapter);
 }
 
 // Cache invalidation only; this is not a security hash.
@@ -125,6 +145,8 @@ export function buildWritingContext(
   memories: ChapterMemory[] = [],
   purpose: 'writing' | 'review' = 'writing',
   references: WritingReferences = {},
+  focus = '',
+  fits?: (text: string) => boolean,
 ): string {
   const previous = chapters.filter(c => c.order < chapterIndex && c.content.trim()).sort((a, b) => a.order - b.order);
   const sections = [
@@ -135,23 +157,69 @@ export function buildWritingContext(
     ...bible.worldSettings.map(w => `【世界设定：${w.name}】\n${w.description}${w.constraints?.length ? `\n约束：${w.constraints.join('；')}` : ''}`),
     ...bible.characters.map(c => `【人物设定：${c.name}】\n${c.description}\n外貌:${c.appearance}; 性格:${c.personality}; 经历:${c.backstory || ''}; 信念:${c.psyche?.coreBelief || ''}; 禁忌:${c.psyche?.taboo || ''}; 说话习惯:${c.voiceAnchor?.speechStyle || c.voiceAnchor?.verbalTic || ''}${c.relationships?.length ? `\n作者关系设定：${c.relationships.filter(r => r.sinceChapter <= chapterIndex).map(r => `${bible.characters.find(other => other.id === r.targetCharacterId)?.name || r.targetCharacterId}：${r.type} ${r.description}`).join('；')}` : ''}`),
     ...bible.locations.map(l => `【地点：${l.name}】\n${l.description}${l.parentLocation ? `\n所在区域：${l.parentLocation}` : ''}${l.significance ? `\n用途：${l.significance}` : ''}`),
-    `【待实现的剧情规划，不是已发生事实】\n${bible.timelineNotes.filter(n => n.id === 'plot-outline').map(n => `${n.event}\n${n.significance || ''}`).join('\n')}\n规划与原始简介冲突时保留原始约束，调整规划。前文正文已发生的事情不能因大纲不同而被当作没发生。`,
+    ...(!references.plotOutline ? [`【待实现的剧情规划，不是已发生事实】\n${bible.timelineNotes.filter(n => n.id === 'plot-outline').map(n => `${n.event}\n${n.significance || ''}`).join('\n')}\n规划与原始简介冲突时保留原始约束，调整规划。前文正文已发生的事情不能因大纲不同而被当作没发生。`] : []),
     ...referenceSections(bible, chapterIndex, references),
   ];
   const recentIds = new Set(previous.slice(-3).map(c => c.id));
-  for (const c of previous) {
+  const recentOrders = new Set(previous.slice(-3).map(c => c.order));
+  const chapterSections: string[] = [];
+  let archiveBudget = 4800;
+  for (const c of [...previous].reverse()) {
     if (recentIds.has(c.id)) continue;
     const memory = memories.find(m => m.chapter === c.order && m.contentFingerprint === textFingerprint(c.content));
     const excerpts = [...new Set(memory?.continuityNotes?.map(note => note.quote).filter(quote => quote && c.content.includes(quote)))];
     excerpts.sort((a, b) => c.content.indexOf(a) - c.content.indexOf(b));
-    sections.push(excerpts.length
+    const section = excerpts.length
       ? `【第${c.order + 1}章原文片段，由审读选取】\n${excerpts.join('\n\n')}`
-      : `【第${c.order + 1}章片段，尚无有效审稿记录，不能据此证明整章连续性】\n${c.content.slice(0, 350)}\n……\n${c.content.slice(-550)}`);
+      : `【第${c.order + 1}章片段，尚无有效审稿记录，不能据此证明整章连续性】\n${c.content.slice(0, 350)}\n……\n${c.content.slice(-550)}`;
+    if (section.length > archiveBudget) continue;
+    chapterSections.push(section);
+    archiveBudget -= section.length;
   }
+  chapterSections.reverse();
   for (const c of previous.filter(c => recentIds.has(c.id))) {
-    const text = c.content.length <= 12000 ? c.content : `${c.content.slice(0, 5000)}\n【中段超出上下文预算，未提供；审稿不能推断其内容】\n${c.content.slice(-7000)}`;
-    sections.push(`【第${c.order + 1}章《${c.title}》${c.content.length <= 12000 ? '正文' : '正文节选'}，已发生事实】\n${text}`);
+    const complete = c.content.length <= 3500;
+    const text = complete ? c.content : `${c.content.slice(0, 1200)}\n【中间正文有省略，请以实际引文为据】\n${c.content.slice(-2300)}`;
+    chapterSections.push(`【第${c.order + 1}章《${c.title}》${complete ? '正文' : '正文节选'}，已发生事实】\n${text}`);
   }
+  const currentChapter = chapters.find(c => c.order === chapterIndex);
+  const evidenceFocus = (focus || currentChapter?.outline || '').slice(0, 6000).normalize('NFKC').toLowerCase();
+  const evidence = findPriorChapterEvidence(previous, evidenceFocus, chapterSections);
+  const quotedGraphLinks = getChapterGraphEvidence(previous, memories).flatMap(({ chapter, link, quote }) => {
+    if (!link) return [];
+    const excerpt = quoteChapterGraphLink(link, quote);
+    if (!excerpt) return [];
+    const matches = [link.subject, link.object, link.predicate].filter(part =>
+      part.length >= 2 && evidenceFocus.includes(part.normalize('NFKC').toLowerCase()));
+    const sourceMatched = evidence.some(item => item.chapter.order === chapter && quote.includes(item.quote));
+    if (!matches.length && !sourceMatched && !recentOrders.has(chapter)) return [];
+    return [{ chapter, link, excerpt, score: matches.length * 10 + (sourceMatched ? 3 : 0) }];
+  }).sort((a, b) => b.score - a.score || b.chapter - a.chapter);
+  const shownLinks = new Set<string>();
+  const graphSections: string[] = [];
+  for (const { chapter, link, excerpt } of quotedGraphLinks) {
+    const key = JSON.stringify([chapter, link.subject, link.predicate, link.object]);
+    if (shownLinks.has(key)) continue;
+    shownLinks.add(key);
+    graphSections.push(`【第${chapter + 1}章叙事关联，须结合引文核对】\n${link.subject} → ${link.predicate} → ${link.object}\n${excerpt}`);
+    if (shownLinks.size === 6) break;
+  }
+  const evidenceSections = evidence.map(({ chapter, quote }) =>
+    `【第${chapter.order + 1}章《${chapter.title}》相关原文】\n${quote}`);
+  if (fits) {
+    const latest = chapterSections[chapterSections.length - 1];
+    const earlier = chapterSections.slice(0, -1);
+    const essential = latest ? [...sections, latest] : sections;
+    const selected = new Set<string>();
+    for (const section of [...evidenceSections, ...earlier.slice().reverse(), ...graphSections]) {
+      if (fits([...essential, ...selected, section].join('\n\n'))) selected.add(section);
+    }
+    return [...sections, ...graphSections.filter(section => selected.has(section)),
+      ...evidenceSections.filter(section => selected.has(section)),
+      ...earlier.filter(section => selected.has(section)), ...(latest ? [latest] : [])].join('\n\n');
+  }
+  sections.push(...graphSections, ...evidenceSections);
+  sections.push(...chapterSections);
   if (!previous.length) sections.push('【前文】这是开篇，尚无已发生的章节。');
   return sections.join('\n\n');
 }

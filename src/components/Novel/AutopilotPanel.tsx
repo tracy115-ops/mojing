@@ -69,7 +69,7 @@ const AutopilotPanel: React.FC<AutopilotPanelProps> = ({
       {(running || paused || status === 'completed') && <div style={{ marginTop: 8 }}>
         <Text type="secondary">{t('workbench.pipeline.currentStage')}: {stages[state?.currentStage || ''] ? t('novel.engine.stage.' + stages[state!.currentStage]) : t('autopilotPipeline.status.idle')}</Text>
         {state && <Progress percent={Math.round(Math.max(0, Math.min(1, state.progress)) * 100)} size="small" status={running ? 'active' : 'normal'} />}
-        {running && beat && <Text type="secondary">{t('autopilotPipeline.beatProgress', { current: beat.currentBeatIndex + 1, total: beat.totalBeats })} · {beat.chapterWordCount} {t('autopilot.words')}</Text>}
+        {running && state?.currentStage === 'chapter_generation' && beat && <Text type="secondary">{t('autopilotPipeline.beatProgress', { current: beat.currentBeatIndex + 1, total: beat.totalBeats })} · {beat.chapterWordCount} {t('autopilot.words')}</Text>}
         {status === 'completed' && <Text type="secondary">{t('workbench.pipeline.finishedHint', { count: currentWordCount })}</Text>}
       </div>}
       {state?.lastError && <Alert style={{ marginTop: 8 }} type={status === 'error' ? 'error' : 'warning'} showIcon message={state.lastError} />}

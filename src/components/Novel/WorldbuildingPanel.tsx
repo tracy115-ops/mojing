@@ -10,6 +10,7 @@ import {
   ReadOutlined, CoffeeOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import ContinuityEvidence from './ContinuityEvidence';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { Worldbuilding } from '@/types/narrative';
 
@@ -153,6 +154,7 @@ const WorldbuildingPanel: React.FC<WorldbuildingPanelProps> = ({ novelId }) => {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
         <p style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{t('workbench.world.hint')}</p>
+        <ContinuityEvidence novelId={novelId} kind="world" />
         <Collapse items={items} size="small" defaultActiveKey={['coreRules']} />
       </div>
     </div>

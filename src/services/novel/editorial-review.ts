@@ -1,4 +1,5 @@
 import { textFingerprint } from './writing-context.ts';
+import { parseChapterGraphLink, type ChapterGraphLink } from './chapter-graph-evidence.ts';
 
 export const EDITORIAL_DIMENSIONS = [
   'premise_fidelity', 'character_consistency', 'timeline_consistency',
@@ -14,12 +15,15 @@ export interface EditorialFinding {
   problem: string;
   suggestion: string;
 }
-export interface EditorialEdit { before: string; after: string; reason: string }
+export interface EditorialEdit { before: string; after: string; reason: string; paragraphId?: string }
+export const CONTINUITY_NOTE_KINDS = ['clue', 'prop', 'world', 'event'] as const;
+export type ContinuityNoteKind = typeof CONTINUITY_NOTE_KINDS[number];
+export interface ContinuityNote { fact: string; quote: string; kind?: ContinuityNoteKind; link?: ChapterGraphLink }
 export interface EditorialAssessment {
   dimensions: Array<{ name: string; score: number; issues: string[] }>;
   summary: string;
   findings: EditorialFinding[];
-  continuityNotes: Array<{ fact: string; quote: string }>;
+  continuityNotes: ContinuityNote[];
 }
 
 export function parseOutlineAssessment(raw: string): { ready: boolean; outline: string; changes: string[]; unresolvedIssues: string[] } {
@@ -55,12 +59,18 @@ export function resolveEditorialParagraph(text: string, id: unknown, prefix = 'C
 
 /** Resolve a single paragraph or adjacent paragraphs without changing source separators. */
 export function resolveEditorialCitation(text: string, id: unknown, prefix = 'C'): string {
+  const { start, end } = resolveParagraphSpan(text, id, prefix, 20);
+  return text.slice(start, end);
+}
+
+function resolveParagraphSpan(text: string, id: unknown, prefix: string, limit: number) {
   if (typeof id !== 'string') throw new Error('审稿段落编号无效');
   const match = new RegExp(`^${prefix}([1-9]\\d*)(?:-${prefix}([1-9]\\d*))?$`).exec(id);
   if (!match) throw new Error('审稿段落编号无效');
   const start = Number(match[1]), end = Number(match[2] || match[1]);
   const paragraphs = editorialParagraphs(text);
-  if (start > end || end - start >= 20) throw new Error('审稿引用范围无效，最多连续20段');
+  if (start > end) throw new Error('审稿段落范围无效');
+  if (end - start >= limit) throw new Error('审稿引用范围无效，最多连续20段');
   if (!paragraphs[start - 1] || !paragraphs[end - 1]) throw new Error('审稿引用了未提供的段落');
   let offset = 0, from = 0, to = 0;
   for (let i = 0; i < end; i++) {
@@ -69,7 +79,7 @@ export function resolveEditorialCitation(text: string, id: unknown, prefix = 'C'
     offset = position + paragraphs[i].length;
     to = offset;
   }
-  return text.slice(from, to);
+  return { start: from, end: to };
 }
 
 export function isReviewCurrent(report: { contentFingerprint?: string; contextFingerprint?: string } | null | undefined, content: string, context: string): boolean {
@@ -77,8 +87,26 @@ export function isReviewCurrent(report: { contentFingerprint?: string; contextFi
 }
 
 function clockTimes(text: string): string[] {
-  return Array.from(text.normalize('NFKC').matchAll(/\b([01]?\d|2[0-3])\s*[:点时]\s*([0-5]\d)(?!\d)/g),
+  const normalized = text.normalize('NFKC');
+  const times = Array.from(normalized.matchAll(/(?<!凌晨|上午|早上|下午|傍晚|晚上|夜里)\b([01]?\d|2[0-3])\s*[:点时]\s*([0-5]\d)(?!\d)/g),
     ([, hour, minute]) => `${Number(hour)}:${minute}`);
+  const digits = '零一二三四五六七八九';
+  const number = (value: string): number => {
+    if (/^\d+$/.test(value)) return Number(value);
+    if (value === '两') return 2;
+    if (!value.includes('十')) return digits.indexOf(value);
+    const [tens, ones] = value.split('十');
+    return (tens ? digits.indexOf(tens) : 1) * 10 + (ones ? digits.indexOf(ones) : 0);
+  };
+  const qualifiedTimes = /(凌晨|上午|早上|下午|傍晚|晚上|夜里)(\d{1,2}|[一二两三四五六七八九十]{1,3})[:点时](半|[0-5]\d|[零一二三四五六七八九十]{1,3})(?:分)?(?![\d零一二三四五六七八九十])/g;
+  for (const [, period, hour, minute] of normalized.matchAll(qualifiedTimes)) {
+    const h = number(hour), m = minute === '半' ? 30 : number(minute);
+    if (h < 1 || h > 12 || m < 0 || m > 59) continue;
+    const afternoon = period === '下午' || period === '傍晚' || period === '晚上' || period === '夜里';
+    const convertedHour = h === 12 ? (period === '下午' ? 12 : 0) : h + (afternoon ? 12 : 0);
+    times.push(`${convertedHour}:${String(m).padStart(2, '0')}`);
+  }
+  return times;
 }
 
 /** Keep unsupported comparisons visible for the author without treating them as errors. */
@@ -122,7 +150,9 @@ export function parseEditorialAssessment(
     const note = record(input);
     const quote = note.paragraphId ? resolveEditorialCitation(content, note.paragraphId) : nonempty(note.quote);
     if (!content.includes(quote)) throw new Error('章后事实引用无法对应正文');
-    return { fact: nonempty(note.fact), quote };
+    const kind = CONTINUITY_NOTE_KINDS.find(category => category === note.kind);
+    const link = parseChapterGraphLink(note.link, quote);
+    return { fact: nonempty(note.fact), quote, ...(kind ? { kind } : {}), ...(link ? { link } : {}) };
   });
   for (const d of dimensions) d.issues = findings.filter(f => f.dimension === d.name).map(f => `${f.problem}（原文：${f.quote}）`);
   return { dimensions, findings, continuityNotes, summary: nonempty(value.summary) };
@@ -133,6 +163,11 @@ export function applyEditorialEdits(content: string, edits: EditorialEdit[]): st
   if (!Array.isArray(edits) || !edits.length || edits.length > 12) throw new Error('修订必须包含 1～12 处具体修改');
   const spans = edits.map(edit => {
     if (!edit || typeof edit.before !== 'string' || !edit.before || typeof edit.after !== 'string' || !edit.reason?.trim()) throw new Error('修订缺少原文、改文或理由');
+    if (edit.paragraphId) {
+      const span = resolveParagraphSpan(content, edit.paragraphId, 'C', edit.after ? 20 : Infinity);
+      if (content.slice(span.start, span.end) !== edit.before) throw new Error('修订段落的原文已经改变');
+      return { ...span, edit };
+    }
     const start = content.indexOf(edit.before);
     if (start < 0 || content.indexOf(edit.before, start + 1) >= 0) throw new Error('修订原文不存在或出现多次，请提供唯一的完整语段');
     return { start, end: start + edit.before.length, edit };
@@ -151,9 +186,15 @@ export function parseEditorialEdits(raw: string, content: string): EditorialEdit
   if (!value.edits.length) return [];
   const edits = value.edits.map(input => {
     const edit = record(input);
+    const after = typeof edit.after === 'string' ? edit.after : nonempty(edit.after);
+    if (edit.paragraphId) {
+      const paragraphId = nonempty(edit.paragraphId);
+      const { start, end } = resolveParagraphSpan(content, paragraphId, 'C', after ? 20 : Infinity);
+      return { paragraphId, before: content.slice(start, end), after, reason: nonempty(edit.reason) };
+    }
     return {
-      before: edit.paragraphId ? resolveEditorialCitation(content, edit.paragraphId) : nonempty(edit.before),
-      after: typeof edit.after === 'string' ? edit.after : nonempty(edit.after),
+      before: nonempty(edit.before),
+      after,
       reason: nonempty(edit.reason),
     };
   });
@@ -161,6 +202,6 @@ export function parseEditorialEdits(raw: string, content: string): EditorialEdit
   return edits;
 }
 
-export function needsEditorialRevision(assessment: EditorialAssessment): boolean {
+export function needsEditorialRevision(assessment: Pick<EditorialAssessment, 'findings'>): boolean {
   return assessment.findings.some(f => f.basis === 'conflict' || (f.severity !== 'minor' && f.basis !== 'uncertain'));
 }

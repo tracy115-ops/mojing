@@ -64,7 +64,13 @@ app.onEvent(event => {
       const edit=draft.stages
         ? {path:['stages',correction?0:9,'coreEvent'],replacement:'保留交接簿原件'}
         : {path:['chapters',0,'outline'],replacement:'全书审读后：留下原始登记，再核对可取得的记录。'};
-      const denied=body.messages[1].content.includes('DenyGlobalStoryPlanContract');
+      const recovering=body.messages[1].content.includes('RepairGlobalStoryPlanContract');
+      const repaired=body.messages[1].content.includes('以下是上轮仍需核查的问题');
+      const denied=body.messages[1].content.includes('DenyGlobalStoryPlanContract') || (recovering && !repaired);
+      if(recovering && repaired) {
+        assert.equal(draft.chapters[0].outline,edit.replacement,'the second review sees the first applied change');
+        edit.replacement += ' 6月17日周一复核。';
+      }
       content={ready:!denied,edits:[{...edit,reason:'删除违背原始设定的推断，保留可核对的交接事件。'}],unresolvedIssues:denied?['日期矛盾仍未解决']:[]};
     }
     if (target.pathname.includes('images')) {
@@ -93,9 +99,10 @@ app.onEvent(event => {
         }
       }
       if (body.messages[1].content.includes('AutopilotQualityContract')) assessment.findings.push({ dimension:'plot_coherence',severity:'major',basis:'craft',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture unresolved story problem.',suggestion:'Fixture correction direction.' });
-      if (/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
+      if (/Autopilot(?:Candidate|Passing|TwoPass)Contract/.test(body.messages[1].content)) {
         if (body.messages[1].content.includes('雨水敲着车窗。')) assessment.findings.push({dimension:'plot_coherence',severity:'major',quote:'雨水敲着车窗。',referenceQuote:'',problem:'Fixture initial problem.',suggestion:'Fixture correction.'});
         if (body.messages[1].content.includes('AutopilotCandidateContract')) assessment.findings.push({dimension:'timeline_consistency',severity:'major',quote:'林岚从黄色帆布包中取出旧票，走向车载摄像头。',referenceQuote:'',problem:'Fixture remaining problem.',suggestion:'Requires author judgment.'});
+        if (body.messages[1].content.includes('AutopilotTwoPassContract') && !body.messages[1].content.includes('雨声落在车顶。')) assessment.findings.push({dimension:'plot_coherence',severity:'major',quote:body.messages[1].content.includes('雨点敲着车顶。') ? '雨点敲着车顶。' : '雨水敲着车窗。',problem:'Fixture remaining opening problem.',suggestion:'Rework the opening.'});
       }
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify(assessment) }, finish_reason: 'stop' }] });
     } else if (system.includes('叙事节拍规划师')) {
@@ -108,7 +115,7 @@ app.onEvent(event => {
       }
       const alreadyRevised = body.messages[1].content.includes('雨点敲着车顶。');
       const edits = [{ before: alreadyRevised ? '雨点敲着车顶。' : '雨水敲着车窗。', after: alreadyRevised ? '雨声落在车顶。' : '雨点敲着车顶。', reason: 'Fixture edit to exercise exact text application.' }];
-      if (!/AutopilotCandidateContract|AutopilotPassingContract/.test(body.messages[1].content)) {
+      if (!/Autopilot(?:Candidate|Passing|TwoPass)Contract/.test(body.messages[1].content)) {
         // Exercise a cross-paragraph response through the actual preview and adoption controls.
         edits[0] = { paragraphId:'C1-C2', after:edits[0].after + '\n\n' + '林岚核对登记簿，保安等她签字。'.repeat(350), reason:'Fixture cross-paragraph edit.' };
         edits.push({before: '林岚从黄色帆布包中取出旧票，走向车载摄像头。', after:'A deliberately unwanted ending change.',reason:'Fixture edit to reject in the preview.'});
@@ -116,7 +123,9 @@ app.onEvent(event => {
       result = JSON.stringify({ choices: [{ message: { content: JSON.stringify({ edits }) }, finish_reason: 'stop' }] });
     } else if (body.stream) {
       type = 'text/event-stream';
-      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: content ? JSON.stringify(content) : generateAutoRevisionDraft ? autoRevisionDraft : novelProse }, finish_reason: 'stop' }] }) + '\n\ndata: [DONE]\n\n';
+      const interrupted = system.includes('AutopilotBeatResumeContract') && requests.filter(r => r.body.stream && r.body.messages[0].content.includes('AutopilotBeatResumeContract')).length === 2;
+      result = 'data: ' + JSON.stringify({ choices: [{ delta: { content: interrupted ? '未完成的节拍' : content ? JSON.stringify(content) : generateAutoRevisionDraft ? autoRevisionDraft : novelProse }, finish_reason: interrupted ? null : 'stop' }] }) + '\n\n';
+      result += interrupted ? 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n' : 'data: [DONE]\n\n';
     } else {
       result = JSON.stringify({ choices: [{ message: { content: typeof content === 'string' ? content : content ? JSON.stringify(content) : '林岚收车检查，在公交车上发现黄色帆布包，核对车票与监控记录。' }, finish_reason: 'stop' }] });
     }
@@ -364,7 +373,7 @@ try {
     const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
     const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');
     const results=[];
-    for(const title of ['GlobalStoryPlanContract','DenyGlobalStoryPlanContract']){
+    for(const title of ['GlobalStoryPlanContract','DenyGlobalStoryPlanContract','RepairGlobalStoryPlanContract']){
       const chapters=[];const engine=new AutopilotEngine({novelId:title,title,description:'包内只有一张车票。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:()=>{},onAddChapter:()=>'',onAddVolume:()=>'',onUpdateMetadata:()=>{}});
       try{const plan=await engine.doGlobalPlanning();results.push({plan,saved:new NarrativeRepository(title).loadGlobalPlan()});}
       catch(error){results.push({error:String(error),saved:new NarrativeRepository(title).loadGlobalPlan()});}
@@ -375,6 +384,7 @@ try {
   assert.deepEqual(globalPlanContract[0].saved,globalPlanContract[0].plan,'save the reviewed global plan');
   assert.match(globalPlanContract[1].error,/日期矛盾仍未解决/);
   assert.equal(globalPlanContract[1].saved,null,'an unresolved global plan cannot become a resume checkpoint');
+  assert.match(globalPlanContract[2].saved.chapters[0].outline,/6月17日周一复核/);
   const autoContract = await app.evaluate(`(async()=>{
     const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
     const chapters=[{id:'auto-0',order:0,title:'Contract',outline:'林岚调查旧票。',content:'',status:'planned',wordCount:0}];
@@ -395,7 +405,64 @@ try {
   assert.ok(beatRequests[2].body.messages[0].content.includes([novelProse,novelProse].join('\n\n')), 'third beat receives all text already written in the chapter');
   assert.equal(autoContract.status,'paused','an unresolved major story issue must pause automatic writing');
   assert.equal(autoContract.chapterStatus,'revising','failed review/revision must never mark the chapter complete');
-  for (const [novelId,title,accepted] of [['candidate-contract','AutopilotCandidateContract',false],['passing-contract','AutopilotPassingContract',true]]) {
+  const recoveredBeat = await app.evaluate(`(async()=>{
+    const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+    const chapters=[{id:'chapter',order:0,title:'Contract',outline:'核对旧票。',content:'',status:'drafting',wordCount:0}];
+    const config={novelId:'beat-resume-contract',title:'AutopilotBeatResumeContract',description:'现实调查。',genre:'mystery',style:'克制',targetChapterCount:1,targetWordCount:3000,existingChapters:chapters,getChapters:()=>chapters,onUpdateChapter:(id,updates)=>Object.assign(chapters[0],updates),onAddChapter:()=>chapters[0].id,onAddVolume:()=>'',onUpdateMetadata:()=>{}};
+    const first=new AutopilotEngine(config);
+    let failure;
+    try { await first.doChapterGeneration(0,chapters[0].outline,'chapter'); } catch (error) { failure=String(error); }
+    const saved=chapters[0].content;
+    const reopened=new AutopilotEngine(config);
+    await reopened.generateChapter(0);
+    return {failure,saved,content:chapters[0].content,status:chapters[0].status};
+  })()`);
+  assert.match(recoveredBeat.failure, /truncated/);
+  assert.equal(recoveredBeat.saved, novelProse, 'a truncated stream never becomes saved正文');
+  assert.equal(recoveredBeat.content, [novelProse,novelProse,novelProse].join('\n\n'));
+  assert.equal(recoveredBeat.status, 'complete');
+  assert.equal(requests.filter(r=>r.body.stream&&r.body.messages[0].content.includes('AutopilotBeatResumeContract')).length, 4, 'resume skips the first completed beat');
+  const scopeStart = requests.length;
+  await app.evaluate(`(async()=>{
+    const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
+    const engine=new AutopilotEngine({novelId:'chapter-scope-contract',title:'ChapterScopeContract',description:'现实调查。',genre:'mystery',style:'克制',targetChapterCount:3,targetWordCount:9000,existingChapters:[],getChapters:()=>[],onUpdateChapter:()=>{},onAddChapter:()=>'',onAddVolume:()=>'',onUpdateMetadata:()=>{}});
+    engine.globalPlan={volumes:[],chapters:[
+      {order:0,title:'拾包',outline:'逐排检查并拾到帆布包。',keyEvents:[]},
+      {order:1,title:'登记',outline:'把包和车票登记入柜。',keyEvents:['登记并锁柜']},
+      {order:2,title:'门卫',outline:'询问门卫的时间记录。',keyEvents:['首次取得访客的时间记录']},
+    ]};
+    await engine.doActBeatPlanning(1,{title:'登记',direction:'核对失物。'});
+  })()`);
+  const scopedRequests = requests.slice(scopeStart).filter(({body}) => body.messages[0].content.includes('ChapterScopeContract') || body.messages[0].content.includes('你是小说策划编辑'));
+  assert.equal(scopedRequests.length, 2, 'chapter scope reaches beat planning and the outline review');
+  for (const {body} of scopedRequests) {
+    const prompt = body.messages.map(message => message.content).join('\n');
+    assert.match(prompt, /登记并锁柜/);
+    assert.match(prompt, /后续章节已安排的事件[\s\S]*首次取得访客的时间记录/);
+  }
+  const endingContext = await app.evaluate(`(async()=>{
+    const {ChapterReviewer}=await import('/src/services/novel/chapter-reviewer.ts');
+    const {NarrativeRepository}=await import('/src/services/novel/narrative-repository.ts');
+    const id='ending-evidence-contract';
+    const quote='林岚在7路末班车座位下发现黄色帆布包。';
+    const filler='周六公交照常开出。\\n\\n';
+    const chapters=Array.from({length:34},(_,order)=>({
+      id:'chapter-'+order,order,title:'Chapter '+order,outline:'',content:order===0?filler.repeat(100)+quote+'\\n\\n'+filler.repeat(100):order<33?filler:'',
+    }));
+    new NarrativeRepository(id).saveGlobalPlan({chapters:chapters.map(chapter=>({order:chapter.order})),ending:'认领黄色帆布包，核对7路末班车座位下的发现位置。'});
+    const reviewer=new ChapterReviewer(id);
+    const context={source:{title:'ClosingContract',description:'现实调查。',genre:'mystery',style:'克制'},chapters,outline:'收尾。'};
+    return {quote,early:reviewer.buildContext(32,context),ending:reviewer.buildContext(33,context)};
+  })()`);
+  assert.doesNotMatch(endingContext.early, /全书收尾/);
+  assert.match(endingContext.ending, /全书收尾/);
+  assert.ok(endingContext.ending.includes(endingContext.quote), 'retrieve the early evidence even when the last chapter outline only says to close the story');
+  for (const [novelId,title,expected] of [
+    ['candidate-contract','AutopilotCandidateContract',novelProse],
+    ['passing-contract','AutopilotPassingContract',revisedProse],
+    ['two-pass-contract','AutopilotTwoPassContract',revisedProse.replace('雨点敲着车顶。','雨声落在车顶。')],
+  ]) {
+    const accepted = expected !== novelProse;
     const result = await app.evaluate(`(async()=>{
       const {AutopilotEngine}=await import('/src/services/novel/autopilot-engine.ts');
       const {ChapterReviewer}=await import('/src/services/novel/chapter-reviewer.ts');
@@ -411,7 +478,7 @@ try {
       return {content,before,after:repo.loadCustomData('chapter-reviews',[])[0],candidate:repo.loadCustomData('chapter-revision-candidate:chapter',null),status:engine.state.status,chapterStatus:chapters[0].status};
     })()`);
     assert.ok(result.candidate,'retain candidate and its independent review');
-    assert.equal(result.content,accepted?revisedProse:novelProse);
+    assert.equal(result.content,expected);
     if (accepted) {
       assert.equal(result.after.contentFingerprint,result.candidate.review.contentFingerprint);
       assert.equal(result.chapterStatus,'complete');
@@ -445,7 +512,8 @@ try {
   })()`);
   assert.match(exhaustedBudget.error,/truncated/);
   assert.equal(exhaustedBudget.reports,0,'incomplete output must not become a successful review');
-  assert.deepEqual(requests.slice(failureStart).map(r=>r.body.max_tokens),[16384,32768],'a persistent truncation stops at the output budget limit');
+  assert.deepEqual(requests.slice(failureStart).map(r=>r.body.max_tokens),[16384,32768,16384],'a persistent truncation stops after a compact attempt');
+  assert.equal(requests.at(-1).body.thinking?.type,'disabled','the compact attempt reserves output for the JSON');
   await app.click('button[aria-label="漫画工坊"]');
   await app.waitFor('[...document.querySelectorAll("button")].some(e=>e.textContent==="新建漫画")', 'comic page');
   await app.textButton('新建漫画');

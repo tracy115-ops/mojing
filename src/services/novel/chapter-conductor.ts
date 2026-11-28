@@ -7,6 +7,7 @@ import type { LLMGenerateRequest } from '@/types/providers';
 import { providerRouter } from '@/services/providers';
 import { ContextBudgetAllocator } from './context-budget';
 import { parseLLMJson } from './llm-json';
+import { generatePlanningResponse } from './planning-generation';
 
 // --- Constants ---
 
@@ -43,6 +44,7 @@ export async function magnifyOutlineToBeats(
   outline: string,
   targetWords: number,
   chapterIndex: number,
+  signal?: AbortSignal,
 ): Promise<Beat[]> {
   const request: LLMGenerateRequest = {
     taskType: 'planning',
@@ -71,7 +73,11 @@ export async function magnifyOutlineToBeats(
   };
 
   try {
-    const response = await providerRouter.generate(request);
+    const response = await generatePlanningResponse(
+      maxTokens => providerRouter.generate({ ...request, maxTokens }, signal),
+      request.maxTokens,
+      signal,
+    );
     const parsed = parseLLMJson<unknown>(response.content);
     const raw = Array.isArray(parsed) ? parsed : (parsed as { beats?: unknown[] } | null)?.beats;
     if (!raw || !Array.isArray(raw) || !raw.length) throw new Error('Expected nonempty beat array');
@@ -96,6 +102,7 @@ export async function magnifyOutlineToBeats(
 
     return beats;
   } catch (err) {
+    signal?.throwIfAborted();
     throw new Error(`章节节拍规划未完成，已停止写作：${err instanceof Error ? err.message : String(err)}`);
   }
 }

@@ -292,7 +292,9 @@ const NovelView: React.FC = () => {
   const [showWorkbench, setShowWorkbench] = useState(true);
   const [narrowWindow, setNarrowWindow] = useState(() => window.matchMedia(NARROW_NOVEL_WINDOW).matches);
   const [showNarrowWorkbench, setShowNarrowWorkbench] = useState(false);
+  const [expandedWorkbench, setExpandedWorkbench] = useState(false);
   const workbenchVisible = narrowWindow ? showNarrowWorkbench : showWorkbench;
+  const fullWorkbench = narrowWindow || expandedWorkbench;
   const [exportOpen, setExportOpen] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -934,7 +936,7 @@ const NovelView: React.FC = () => {
 
               {/* Editor area + optional Narrative Workbench right panel */}
               <div className="novel-workspace__regions">
-                <div className="novel-workspace__editor" hidden={narrowWindow && workbenchVisible}>
+                <div className="novel-workspace__editor" hidden={fullWorkbench && workbenchVisible}>
                   {activeChapter ? (
                     <ChapterEditor
                       key={`${activeProjectId}/${activeChapter.id}`}
@@ -952,10 +954,10 @@ const NovelView: React.FC = () => {
 
                 {activeProjectId && (
                   <div id="novel-narrative-pane" hidden={!workbenchVisible}
-                    className={narrowWindow ? 'novel-workspace__workbench novel-workspace__workbench--full' : 'novel-workspace__workbench'}
+                    className={fullWorkbench ? 'novel-workspace__workbench novel-workspace__workbench--full' : 'novel-workspace__workbench'}
                     style={{ '--novel-workbench-width': `${workbenchWidth}px` } as React.CSSProperties}>
                     <div style={{ height: '100%' }}>
-                      {!narrowWindow && <ResizeHandle
+                      {!fullWorkbench && <ResizeHandle
                         onPointerDown={resizeHandleProps.onPointerDown}
                         isDragging={isResizing}
                         position="left"
@@ -965,6 +967,12 @@ const NovelView: React.FC = () => {
                         novelId={activeProjectId}
                         totalChapters={chapters.length}
                         chapterIndex={activeChapter?.order ?? 0}
+                        expanded={fullWorkbench}
+                        onToggleExpanded={() => {
+                          if (narrowWindow) setShowNarrowWorkbench(false);
+                          else setExpandedWorkbench(expanded => !expanded);
+                        }}
+                        narrow={narrowWindow}
                         onSelectChapter={index => { const chapter = chapters.find(c => c.order === index); if (chapter) setActiveChapterId(chapter.id); }}
                       />
                     </div>

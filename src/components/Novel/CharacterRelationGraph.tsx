@@ -6,7 +6,7 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { Typography, Tag, Space, Empty, Badge, Drawer, Card, Button } from 'antd';
 import {
-  TeamOutlined, ZoomInOutlined, ZoomOutOutlined, FullscreenOutlined,
+  TeamOutlined, ZoomInOutlined, ZoomOutOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
@@ -15,6 +15,9 @@ import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { BibleCharacter, RelationshipTriple } from '@/types/narrative';
 import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
 import { useEchartsReady } from '@/hooks/useEchartsReady';
+import { format } from 'echarts';
+import { useNovelGraphEvidence } from './useNovelGraphEvidence';
+import type { ChapterGraphEdge } from '@/services/novel/chapter-graph-evidence';
 
 const { Text } = Typography;
 
@@ -53,10 +56,11 @@ function getEdgeColor(predicate: string): string {
 const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId }) => {
   const { t } = useTranslation();
   const chartTheme = useChartTheme();
-  const [selectedChar, setSelectedChar] = useState<BibleCharacter | null>(null);
+  const [selectedName, setSelectedName] = useState<string | null>(null);
   const echartRef = useRef<ReactECharts | null>(null);
 
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
+  const evidence = useNovelGraphEvidence(repo, novelId);
   const [revision, refresh] = useState(0);
   useEffect(() => repo.subscribe(['bible', 'triples'], () => refresh(n => n + 1)), [repo]);
 
@@ -87,7 +91,7 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
     }
 
     // Merge: deduplicate by subject+predicate+object
-    const allLinks = [...charTriples];
+    const allLinks: Array<RelationshipTriple | ChapterGraphEdge> = [...charTriples];
     const existingKeys = new Set(charTriples.map((t) => `${t.subject}|${t.predicate}|${t.object}`));
     for (const bt of bibleTriples) {
       const key = `${bt.subject}|${bt.predicate}|${bt.object}`;
@@ -96,18 +100,29 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
         existingKeys.add(key);
       }
     }
+    for (const note of evidence) {
+      if (note.link?.kind !== 'relationship') continue;
+      const { subject, predicate, object } = note.link;
+      const key = JSON.stringify([subject, predicate, object, note.chapter]);
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      charNames.add(subject);
+      charNames.add(object);
+      allLinks.push({ subject, predicate, object, sinceChapter: note.chapter, source: 'extracted', evidence: note });
+    }
 
     return { characters: bible.characters, triples: allLinks, charSet: charNames };
-  }, [repo, revision]);
+  }, [repo, revision, evidence]);
 
+  const selectedChar: BibleCharacter | undefined = characters.find(character => character.name === selectedName);
   const relatedTriples = useMemo(() => {
-    if (!selectedChar) return [];
-    return triples.filter((tr) => tr.subject === selectedChar.name || tr.object === selectedChar.name);
-  }, [selectedChar, triples]);
+    if (!selectedName) return [];
+    return triples.filter((tr) => tr.subject === selectedName || tr.object === selectedName);
+  }, [selectedName, triples]);
 
   const option = useMemo(() => {
     // Show graph if we have characters (even without relationships)
-    if (characters.length === 0) return null;
+    if (charSet.size === 0) return null;
 
     const activeNames = new Set<string>();
     for (const tr of triples) {
@@ -155,11 +170,12 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
       };
     });
 
-    const links = triples.map((tr, i) => ({
+    const links = triples.map(tr => ({
       source: tr.subject,
       target: tr.object,
       value: tr.predicate,
       lineStyle: {
+        type: 'evidence' in tr ? 'dashed' : 'solid',
         color: getEdgeColor(tr.predicate),
         width: 1.5,
         curveness: 0.15,
@@ -196,12 +212,13 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
             const char = charMap.get(params.name);
             const imp = char?.importance || 'supporting';
             const desc = char?.description?.slice(0, 80) || '';
-            return `<b>${params.name}</b><br/>` +
+            return `<b>${format.encodeHTML(params.name)}</b><br/>` +
               `<span style="color:${IMPORTANCE_COLOR[imp]}">${t('bible.importance.' + imp) || imp}</span>` +
-              (desc ? `<br/><span style="color:#888;font-size:11px">${desc}…</span>` : '');
+              (desc ? `<br/><span style="color:#888;font-size:11px">${format.encodeHTML(desc)}…</span>` : '');
           }
           if (params.dataType === 'edge') {
-            return `${params.data.source} → <b>${params.data.value}</b> → ${params.data.target}`;
+            const { source, value, target } = params.data;
+            return [source, value, target].map(format.encodeHTML).join(' → ');
           }
           return '';
         },
@@ -244,16 +261,15 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
         },
       }],
     };
-  }, [characters, triples, chartTheme, t]);
+  }, [characters, charSet, triples, chartTheme, t]);
 
   useEchartsReady(echartRef, option);
 
   const handleChartClick = useCallback((params: any) => {
     if (params.dataType === 'node') {
-      const char = characters.find((c) => c.name === params.name);
-      setSelectedChar(char ?? null);
+      setSelectedName(params.name);
     }
-  }, [characters]);
+  }, []);
 
   const handleResetZoom = useCallback(() => {
     const chart = echartRef.current?.getEchartsInstance();
@@ -274,9 +290,11 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
         <Space size={4}>
           <Badge count={charSet.size} style={{ backgroundColor: '#3b82f6' }} />
           <Badge count={triples.length} style={{ backgroundColor: '#22c55e' }} />
-          <Button size="small" icon={<FullscreenOutlined />} onClick={handleResetZoom} />
+          <Button size="small" aria-label={t('workbench.graph.resetView')} title={t('workbench.graph.resetView')}
+            icon={<ReloadOutlined />} onClick={handleResetZoom} />
         </Space>
       </div>
+      {evidence.some(note => note.link?.kind === 'relationship') && <Text type="secondary" style={{ padding: '4px 12px' }}>{t('workbench.graph.relationshipEvidenceHint')}</Text>}
 
       <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {!option ? (
@@ -296,25 +314,25 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
       </div>
 
       <Drawer
-        title={selectedChar?.name ?? ''}
-        open={!!selectedChar}
-        onClose={() => setSelectedChar(null)}
+        title={selectedName ?? ''}
+        open={!!selectedName}
+        onClose={() => setSelectedName(null)}
         width={340}
       >
-        {selectedChar && (
+        {selectedName && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
+            {selectedChar && <div>
               <Tag color={IMPORTANCE_COLOR[selectedChar.importance] || 'default'}>
                 {t('bible.importance.' + selectedChar.importance) || selectedChar.importance}
               </Tag>
               <Tag>{selectedChar.status}</Tag>
-            </div>
-            {selectedChar.description && (
+            </div>}
+            {selectedChar?.description && (
               <Card size="small" title={t('bible.characterPersonality')}>
                 <Text style={{ fontSize: 12 }}>{selectedChar.description.slice(0, 200)}</Text>
               </Card>
             )}
-            {selectedChar.personality && (
+            {selectedChar?.personality && (
               <Card size="small" title={t('bible.characterPersonality')}>
                 <Text style={{ fontSize: 12 }}>{selectedChar.personality}</Text>
               </Card>
@@ -323,10 +341,14 @@ const CharacterRelationGraph: React.FC<CharacterRelationGraphProps> = ({ novelId
               <Card size="small" title={t('bible.characterRelationships')}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {relatedTriples.map((tr, i) => (
-                    <div key={i} style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div key={i}>
+                      <Space size={4} wrap>
                       <Tag color="blue" style={{ fontSize: 9, margin: 0 }}>{tr.subject}</Tag>
                       <span style={{ color: getEdgeColor(tr.predicate), fontWeight: 500 }}>{tr.predicate}</span>
                       <Tag color="green" style={{ fontSize: 9, margin: 0 }}>{tr.object}</Tag>
+                      {'evidence' in tr && tr.evidence.pending && <Tag color="warning">{t('novel.editor.needsRevision')}</Tag>}
+                      </Space>
+                      {'evidence' in tr && <div><Text type="secondary">{t('novel.chapterOrder', { order: tr.sinceChapter + 1 })} · {tr.evidence.quote}</Text></div>}
                     </div>
                   ))}
                 </div>

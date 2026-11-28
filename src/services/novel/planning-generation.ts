@@ -1,19 +1,27 @@
 import type { LLMStreamChunk } from '@/types/providers';
 
-export async function generatePlanningResponse<T>(generate: (maxTokens: number) => Promise<T>, initialBudget = 8192): Promise<T> {
-  try { return await generate(initialBudget); }
-  catch (error) {
-    if (!(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=') || initialBudget >= 32768) throw error;
-    return generate(Math.min(initialBudget * 2, 32768));
+export async function generatePlanningResponse<T>(generate: (maxTokens: number) => Promise<T>, initialBudget = 8192, signal?: AbortSignal): Promise<T> {
+  let budget = initialBudget;
+  for (let attempt = 1; ; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      return await generate(budget);
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (attempt === 3 || budget >= 32768 || !(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=')) throw error;
+      budget = Math.min(budget * 2, 32768);
+    }
   }
 }
 
-/** Retry an explicitly truncated plan once; partial JSON is never adopted. */
-export async function collectPlanningText(
+/** Retry an explicitly truncated stream once and discard its incomplete output. */
+export async function collectNovelStreamText(
   stream: (maxTokens: number) => AsyncIterable<LLMStreamChunk>,
-  options: { signal?: AbortSignal; onText?: (text: string) => void; onRetry?: () => void } = {},
+  options: { initialBudget?: number; signal?: AbortSignal; onText?: (text: string) => void; onRetry?: () => void } = {},
 ): Promise<string> {
-  for (const maxTokens of [8192, 16384]) {
+  const initialBudget = options.initialBudget ?? 8192;
+  const retryBudget = Math.min(initialBudget * 2, 32768);
+  for (const maxTokens of initialBudget < retryBudget ? [initialBudget, retryBudget] : [initialBudget]) {
     options.signal?.throwIfAborted();
     let text = '';
     options.onText?.('');
@@ -27,9 +35,9 @@ export async function collectPlanningText(
       return text;
     } catch (error) {
       options.signal?.throwIfAborted();
-      if (maxTokens !== 8192 || !(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=')) throw error;
+      if (maxTokens >= retryBudget || !(error instanceof Error) || !error.message.includes('LLM output was truncated at max_tokens=')) throw error;
       options.onRetry?.();
     }
   }
-  throw new Error('Planning output is incomplete.');
+  throw new Error('Novel output is incomplete.');
 }

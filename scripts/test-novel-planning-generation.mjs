@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import {collectPlanningText,generatePlanningResponse} from '../src/services/novel/planning-generation.ts';
+import {collectNovelStreamText,generatePlanningResponse} from '../src/services/novel/planning-generation.ts';
 import {decodeNovelReference,formatNovelReference,prepareNovelReference,splitNovelReference} from '../src/services/novel/novel-reference.ts';
 
 const attempts=[], previews=[];
 let retries=0;
-const text=await collectPlanningText(async function*(budget){
+const text=await collectNovelStreamText(async function*(budget){
   attempts.push(budget);
   if(budget===8192){yield {delta:'{"mainPlot":"discarded',done:false};throw new Error('LLM output was truncated at max_tokens=8192; increase the output budget.');}
   yield {delta:'{"mainPlot":"complete"}',done:false};yield {delta:'',done:true};
@@ -14,18 +14,42 @@ assert.deepEqual(attempts,[8192,16384]);assert.equal(retries,1);
 assert.deepEqual(previews.slice(0,3),['','{"mainPlot":"discarded',''],'clear incomplete JSON before retry');
 for(const message of ['LLM API error 402','LLM API error 429','network error','invalid JSON']){
   let count=0;
-  await assert.rejects(collectPlanningText(async function*(){count++;throw new Error(message);}),e=>e.message===message);
+  await assert.rejects(collectNovelStreamText(async function*(){count++;throw new Error(message);}),e=>e.message===message);
   assert.equal(count,1,'do not retry non-truncation errors');
 }
 let count=0;
-await assert.rejects(collectPlanningText(async function*(){count++;throw new Error('LLM output was truncated at max_tokens=16384');}),/truncated/);
+await assert.rejects(collectNovelStreamText(async function*(){count++;throw new Error('LLM output was truncated at max_tokens=16384');}),/truncated/);
 assert.equal(count,2,'stop after a second truncation');
 const controller=new AbortController();count=0;
-await assert.rejects(collectPlanningText(async function*(){count++;yield {delta:'partial',done:false};controller.abort();throw new Error('LLM output was truncated at max_tokens=8192');},{signal:controller.signal}),e=>e.name==='AbortError');
+await assert.rejects(collectNovelStreamText(async function*(){count++;yield {delta:'partial',done:false};controller.abort();throw new Error('LLM output was truncated at max_tokens=8192');},{signal:controller.signal}),e=>e.name==='AbortError');
 assert.equal(count,1,'cancellation does not start another billed request');
 const budgets=[];
 assert.equal(await generatePlanningResponse(async budget=>{budgets.push(budget);if(budget===8192)throw new Error('LLM output was truncated at max_tokens=8192');return 'complete';}),'complete');
 assert.deepEqual(budgets,[8192,16384]);
+const twiceTruncated = [];
+assert.equal(await generatePlanningResponse(async budget => {
+  twiceTruncated.push(budget);
+  if (budget < 16384) throw new Error('LLM output was truncated at max_tokens=' + budget);
+  return 'complete';
+}, 4096), 'complete');
+assert.deepEqual(twiceTruncated, [4096, 8192, 16384]);
+for (const initialBudget of [2048, 4096]) {
+  const budgets = [];
+  assert.equal(await generatePlanningResponse(async budget => {
+    budgets.push(budget);
+    if (budget === initialBudget) throw new Error('LLM output was truncated at max_tokens=' + budget);
+    return 'complete';
+  }, initialBudget), 'complete');
+  assert.deepEqual(budgets, [initialBudget, initialBudget * 2]);
+}
+const planningController = new AbortController();
+count = 0;
+await assert.rejects(generatePlanningResponse(async () => {
+  count++;
+  planningController.abort();
+  throw new Error('LLM output was truncated at max_tokens=4096');
+}, 4096, planningController.signal), { name: 'AbortError' });
+assert.equal(count, 1, 'chapter planning cancellation skips the retry');
 count=0;
 await assert.rejects(generatePlanningResponse(async()=>{count++;throw new Error('LLM API error 429');}),/429/);assert.equal(count,1);
 console.log('Novel planning: bounded truncation retry, cleared partial JSON, no retry on account/network errors, cancellation honored.');

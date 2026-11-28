@@ -19,7 +19,8 @@ import { NarrativeRepository } from './narrative-repository';
 import { parseLLMJson } from './llm-json';
 import { ChapterReviewer, type ChapterReviewContext, type ChapterReviewReport } from './chapter-reviewer';
 import { isReviewCurrent } from './editorial-review';
-import { generatePlanningResponse } from './planning-generation';
+import { textFingerprint } from './writing-context';
+import { collectNovelStreamText, generatePlanningResponse } from './planning-generation';
 import { reviewStoryPlan } from './story-plan-review';
 import {
   magnifyOutlineToBeats,
@@ -71,6 +72,17 @@ interface AutopilotConfig {
 
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_RESET_MS = 60_000;
+const CHAPTER_WRITING_DRAFT = 'chapter-writing-draft';
+const NOVEL_PROSE_CONTEXT_BUDGET = 48_000;
+
+interface ChapterWritingDraft {
+  chapterId: string;
+  beats: Beat[];
+  nextBeat: number;
+  content: string;
+  previousFingerprint: string;
+  overspendDebt: number;
+}
 
 export class AutopilotEngine {
   private state: AutopilotState;
@@ -289,6 +301,12 @@ export class AutopilotEngine {
     const chapterNumber = chapterIndex + 1;
     const chapters = this.config.getChapters();
     const existing = chapters.find(c => c.order === chapterIndex);
+    const draft = this.repo.loadCustomData<ChapterWritingDraft | null>(CHAPTER_WRITING_DRAFT, null);
+    if (existing && draft?.chapterId === existing.id && existing.status === 'drafting') {
+      this.computeStoryPhase(chapterIndex);
+      await this.generateAndReviewChapter(chapterIndex, existing.outline, existing.id, signal, draft);
+      return;
+    }
     if (existing?.content.trim()) {
       // Resume reviews the saved draft; it must not silently replace a chapter the author edited.
       const report = this.reviewer.loadHistory().find(r => r.chapter === chapterIndex);
@@ -349,9 +367,13 @@ export class AutopilotEngine {
 
     this.emit('chapter_progress', { chapterId, chapterNumber });
 
+    await this.generateAndReviewChapter(chapterIndex, outline, chapterId, signal);
+  }
+
+  private async generateAndReviewChapter(chapterIndex: number, outline: string, chapterId: string, signal?: AbortSignal, draft?: ChapterWritingDraft) {
     // Stage 3: Chapter generation (beat loop)
     this.setStage('chapter_generation');
-    let content = await this.doChapterGeneration(chapterIndex, outline, chapterId);
+    let content = await this.doChapterGeneration(chapterIndex, outline, chapterId, draft);
     if (signal?.aborted) return;
 
     // Stage 4: Chapter review and any targeted revision
@@ -386,8 +408,25 @@ export class AutopilotEngine {
     return chapters.find(chapter => !this.canSkipChapter(chapter, reports.get(chapter.order), chapters))?.order;
   }
 
-  private readingContext(chapterIndex: number): string {
-    return this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex), 'writing');
+  private readingContext(chapterIndex: number, sceneFocus = ''): string {
+    return this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex), 'writing', sceneFocus);
+  }
+
+  private chapterPlanningScope(chapterIndex: number): string {
+    const chapters = this.globalPlan?.chapters ?? [];
+    const current = chapters.find(chapter => chapter.order === chapterIndex);
+    if (!current) return '';
+    const volume = this.globalPlan?.volumes[current.volumeIndex];
+    const next = chapters.filter(chapter => chapter.order > chapterIndex)
+      .map(chapter => '第' + (chapter.order + 1) + '章 ' + chapter.title + '：' + (chapter.keyEvents?.join('、') || chapter.outline).slice(0, 140));
+    return [
+      '【本章与后续章节的安排，供作者规划】',
+      current.title + '：' + current.outline,
+      ...(current.keyEvents?.length ? ['本章关键事件：' + current.keyEvents.join('、')] : []),
+      ...(volume ? ['当前卷：' + volume.title + '（' + volume.theme + '）'] : []),
+      ...(next.length ? ['后续章节已安排的事件：', ...next] : []),
+      '保留本章的目标和章末处境。已经发生的情节接着写后果。后续章的事件与揭示留到相应章节。',
+    ].join('\n');
   }
 
   private async doMacroPlanning(chapterIndex: number): Promise<{ title: string; direction: string }> {
@@ -409,17 +448,12 @@ export class AutopilotEngine {
     // Inject global plan context for richer per-chapter planning
     let globalPlanContext = '';
     if (this.globalPlan) {
-      const plannedChapter = this.globalPlan.chapters.find((c) => c.order === chapterIndex);
-      const vol = plannedChapter ? this.globalPlan.volumes[plannedChapter.volumeIndex] : null;
       globalPlanContext = `【全局规划上下文】
 主线：${this.globalPlan.mainPlot}
 核心冲突：${this.globalPlan.coreConflict}
 主题：${this.globalPlan.themeMessage}
-预定结局（作者规划，角色尚未必知情）：${this.globalPlan.ending}${plannedChapter ? `
-本章规划标题：${plannedChapter.title}
-本章大纲：${plannedChapter.outline}
-本章关键事件：${plannedChapter.keyEvents.join('、')}` : ''}${vol ? `
-当前卷：${vol.title}（${vol.theme}）` : ''}`;
+预定结局（作者规划，角色尚未必知情）：${this.globalPlan.ending}
+${this.chapterPlanningScope(chapterIndex)}`;
     }
 
     const template = getTemplate('macro-planning');
@@ -443,7 +477,12 @@ export class AutopilotEngine {
       maxTokens: 2048,
     };
 
-    const response = await providerRouter.generate(request);
+    const signal = this.abortController?.signal;
+    const response = await generatePlanningResponse(
+      maxTokens => providerRouter.generate({ ...request, maxTokens }, signal),
+      request.maxTokens,
+      signal,
+    );
     try {
       const data = parseLLMJson<{ direction?: string; conflictCore?: string; endingHook?: string; title?: string }>(response.content);
       if (!data) return { title: `第${chapterIndex + 1}章`, direction: '' };
@@ -477,8 +516,9 @@ export class AutopilotEngine {
       .map((l) => `- ${l.name}: ${l.description}`)
       .join('\n');
 
-    // Load wizard plot outline if available
-    const plotNote = bible.timelineNotes?.find((n) => n.id === 'plot-outline');
+    // The current outline is already included in the shared writing context.
+    const plotNote = this.repo.loadCustomData<unknown>('plot-outline', null)
+      ? undefined : bible.timelineNotes?.find(n => n.id === 'plot-outline');
     const plotOutlineStages = plotNote ? `${plotNote.event}\n${plotNote.significance || ''}` : '';
 
     const template = getTemplate('global-planning');
@@ -633,9 +673,10 @@ export class AutopilotEngine {
       .join('\n');
 
     const template = getTemplate('act-beat-planning');
+    const scope = this.chapterPlanningScope(chapterIndex);
     const request: LLMGenerateRequest = {
       taskType: 'planning',
-      systemPrompt: this.readingContext(chapterIndex) + '\n\n' + template!.buildSystem({
+      systemPrompt: this.readingContext(chapterIndex) + '\n\n' + scope + '\n\n' + template!.buildSystem({
         title: this.config.title,
         genre: this.config.genre,
         style: this.config.style,
@@ -654,13 +695,19 @@ export class AutopilotEngine {
       thinking: false,
     };
 
-    const response = await providerRouter.generate(request);
-    return this.reviewer.prepareOutline(chapterIndex, response.content, this.reviewContext(chapterIndex));
+    const signal = this.abortController?.signal;
+    const response = await generatePlanningResponse(
+      maxTokens => providerRouter.generate({ ...request, maxTokens }, signal),
+      request.maxTokens,
+      signal,
+    );
+    signal?.throwIfAborted();
+    return this.reviewer.prepareOutline(chapterIndex, response.content, this.reviewContext(chapterIndex), { scope, signal });
   }
 
   // --- Beat-based Chapter Generation (core upgrade) ---
 
-  private async doChapterGeneration(chapterIndex: number, outline: string, chapterId: string): Promise<string> {
+  private async doChapterGeneration(chapterIndex: number, outline: string, chapterId: string, draft?: ChapterWritingDraft): Promise<string> {
     const abortSignal = this.abortController?.signal;
     this.emit('stage_change', { stage: 'chapter_generation', chapter: chapterIndex });
 
@@ -668,7 +715,7 @@ export class AutopilotEngine {
     this.emit('chapter_progress', { chapter: chapterIndex, chapterId, wordCount: 0 });
 
     // Step 1: Magnify outline into beats
-    const beats = await magnifyOutlineToBeats(outline, WORDS_PER_CHAPTER_TARGET, chapterIndex);
+    const beats = draft?.beats ?? await magnifyOutlineToBeats(outline, WORDS_PER_CHAPTER_TARGET, chapterIndex, abortSignal);
     if (abortSignal?.aborted) return '';
     this.emit('beat_plan', {
       chapter: chapterIndex,
@@ -677,11 +724,13 @@ export class AutopilotEngine {
     });
 
     // Step 2: Beat loop
-    let chapterContent = '';
-    let overspendDebt = 0;
+    const readContent = () => this.config.getChapters().find(c => c.id === chapterId)?.content;
+    let savedContent = readContent() ?? '';
+    let chapterContent = draft?.previousFingerprint === textFingerprint(savedContent) ? draft.content : savedContent;
+    let overspendDebt = draft?.overspendDebt ?? 0;
     let lastFlushTime = 0;
 
-    for (const beat of beats) {
+    for (const beat of beats.slice(draft?.nextBeat ?? 0)) {
       if (abortSignal?.aborted) return chapterContent;
 
       const wordsUsed = chapterContent.length;
@@ -689,8 +738,8 @@ export class AutopilotEngine {
       const adjustedTarget = adjustBeatTargetWords(beat, signal, overspendDebt);
 
       // Build context for this beat
-      this.budget = new ContextBudgetAllocator();
-      this.buildBeatContext(chapterIndex, outline, beat, signal, chapterContent);
+      this.budget = new ContextBudgetAllocator(NOVEL_PROSE_CONTEXT_BUDGET);
+      this.buildBeatContext(chapterIndex, chapterContent, beat.description);
 
       const { prompt: contextPrompt } = this.budget.allocate();
 
@@ -702,7 +751,6 @@ export class AutopilotEngine {
         style: this.config.style,
         phaseDirective: this.storyPhase ? ContextBudgetAllocator.buildPhaseDirective(this.storyPhase) : '',
         context: contextPrompt,
-        outline,
         beatDescription: beat.description,
         beatFocus: beat.focus,
         targetWords: String(adjustedTarget),
@@ -712,9 +760,11 @@ export class AutopilotEngine {
       });
 
       let userPrompt = template.buildUser({
-        outline,
         beatDescription: beat.description,
         targetWords: String(adjustedTarget),
+        beatIndex: String(beat.index),
+        totalBeats: String(beats.length),
+        nextBeat: beats[beat.index + 1]?.description ?? '',
       });
 
       // Append soft landing hint if needed
@@ -739,31 +789,20 @@ export class AutopilotEngine {
         phase: signal.phase,
       });
 
-      // Stream this beat
-      let beatContent = '';
-      for await (const chunk of providerRouter.stream(request)) {
-        if (abortSignal?.aborted) break;
-        beatContent += chunk.delta;
-
-        const now = Date.now();
-        if (now - lastFlushTime > 120) {
+      const beatContent = await collectNovelStreamText(maxTokens => providerRouter.stream({ ...request, maxTokens }), {
+        initialBudget: request.maxTokens,
+        signal: abortSignal,
+        onText: text => {
+          const now = Date.now();
+          if (text && now - lastFlushTime <= 120) return;
           lastFlushTime = now;
-          const runningContent = chapterContent + (chapterContent ? '\n\n' : '') + beatContent;
-          this.config.onUpdateChapter(chapterId, {
-            content: runningContent,
-            wordCount: runningContent.length,
-            status: 'drafting',
-          });
-          this.emit('chapter_progress', {
-            chapter: chapterIndex,
-            chapterId,
-            wordCount: runningContent.length,
-            content: runningContent,
-          });
-        }
-      }
+          const runningContent = chapterContent && text ? `${chapterContent}\n\n${text}` : chapterContent || text;
+          this.emit('chapter_progress', { chapter: chapterIndex, chapterId, wordCount: runningContent.length, content: runningContent });
+        },
+      });
 
-      if (abortSignal?.aborted) return chapterContent + (chapterContent ? '\n\n' : '') + beatContent;
+      if (abortSignal?.aborted) return chapterContent;
+      if (!beatContent.trim()) throw new Error('模型未返回本节拍的正文，已保留此前写完的节拍。');
 
       // Track overspend debt
       const actualWords = beatContent.length;
@@ -774,6 +813,13 @@ export class AutopilotEngine {
       }
 
       chapterContent += (chapterContent ? '\n\n' : '') + beatContent;
+      if (readContent() !== savedContent) throw new Error('本章正文在生成期间已改变，已保留当前正文。');
+      this.repo.saveCustomData<ChapterWritingDraft>(CHAPTER_WRITING_DRAFT, {
+        chapterId, beats, nextBeat: beat.index + 1, content: chapterContent,
+        previousFingerprint: textFingerprint(savedContent), overspendDebt,
+      });
+      this.config.onUpdateChapter(chapterId, { content: chapterContent, wordCount: chapterContent.length, status: 'drafting' });
+      savedContent = chapterContent;
 
       this.emit('beat_complete', {
         chapter: chapterIndex,
@@ -793,6 +839,7 @@ export class AutopilotEngine {
       wordCount: chapterContent.length,
       status: 'drafting',
     });
+    this.repo.saveCustomData(CHAPTER_WRITING_DRAFT, null);
 
     this.emit('chapter_progress', {
       chapter: chapterIndex,
@@ -806,16 +853,21 @@ export class AutopilotEngine {
   /**
    * Build per-beat context budget with all registered slots.
    */
-  private buildBeatContext(chapterIndex: number, outline: string, _beat: Beat, _signal: { phase: string }, currentChapterContent = ''): void {
-    const readingContext = this.readingContext(chapterIndex);
+  private buildBeatContext(chapterIndex: number, currentChapterContent: string, sceneFocus: string): void {
+    const continuation = currentChapterContent
+      ? '【本章已写正文，接续末句，不要重写、复述或重新开场】\n' + currentChapterContent
+      : '';
+    const available = NOVEL_PROSE_CONTEXT_BUDGET - this.estimateTokens(continuation);
+    const fits = (text: string) => this.estimateTokens(text) <= available;
+    const fullContext = this.readingContext(chapterIndex, sceneFocus);
+    const readingContext = fits(fullContext) ? fullContext
+      : this.reviewer.buildContext(chapterIndex, this.reviewContext(chapterIndex), 'writing', sceneFocus, fits);
     this.budget.registerSlot({ name: 'EDITORIAL_CONTINUITY', tier: 'T0', content: readingContext,
       estimatedTokens: this.estimateTokens(readingContext), priority: 140, minTokens: 0 });
-    if (currentChapterContent) {
-      const continuation = '【本章已写正文，接续末句，不要重写、复述或重新开场】\n' + currentChapterContent;
+    if (continuation) {
       this.budget.registerSlot({ name: 'CURRENT_CHAPTER_PROSE', tier: 'T0', content: continuation,
         estimatedTokens: this.estimateTokens(continuation), priority: 139, minTokens: 0 });
     }
-    this.budget.registerChapterOutline(outline);
   }
 
   private estimateTokens(text: string): number {
@@ -836,7 +888,7 @@ export class AutopilotEngine {
       const target = currentTarget();
       if (!target || target.chapter.content !== content) throw new Error('正文已改变，请重新审读。');
       const result = await this.reviewer.reviewDraft(target, {
-        current: currentTarget, reuseReview: true, signal,
+        current: currentTarget, reuseReview: true, maxRevisionPasses: 2, signal,
         applyRevision: revised => this.config.onUpdateChapter(chapterId, { content: revised, wordCount: revised.length, status: 'revising' }),
       });
       current = result.content;

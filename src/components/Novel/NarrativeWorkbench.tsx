@@ -1,10 +1,11 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { Tabs } from 'antd';
+import { Button, Tabs } from 'antd';
 import {
   DashboardOutlined, BookOutlined, AimOutlined, ToolOutlined,
   MessageOutlined, GlobalOutlined, BranchesOutlined, TeamOutlined,
   AuditOutlined, HistoryOutlined, NodeIndexOutlined, AppstoreOutlined,
   UsergroupDeleteOutlined, RocketOutlined, SettingOutlined,
+  FullscreenOutlined, FullscreenExitOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
 import { useAutopilotStore } from '@/stores/autopilotStore';
@@ -27,6 +28,9 @@ interface NarrativeWorkbenchProps {
   novelId: string;
   totalChapters: number;
   chapterIndex: number;
+  expanded: boolean;
+  narrow: boolean;
+  onToggleExpanded: () => void;
   onSelectChapter: (index: number) => void;
 }
 
@@ -37,7 +41,7 @@ const CATEGORY_ICONS = {
 };
 
 const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
-  novelId, totalChapters, chapterIndex, onSelectChapter,
+  novelId, totalChapters, chapterIndex, onSelectChapter, expanded, narrow, onToggleExpanded,
 }) => {
   const { t } = useTranslation();
   const [category, setCategory] = useState<Category>('overview');
@@ -84,7 +88,8 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
 
   return (
     <div data-testid="narrative-workbench" style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      <div style={{ display: 'flex', gap: 2, padding: '6px 8px 0', borderBottom: '1px solid var(--border-secondary)', overflowX: 'auto', flexShrink: 0 }}>
+      <div className="narrative-workbench__toolbar">
+        <div className="narrative-workbench__categories">
         {(Object.keys(categoryTabs) as Category[]).map(key => (
           <button key={key} data-workbench-category={key} aria-pressed={category === key}
             onClick={() => { setCategory(key); setSubTab(''); }}
@@ -95,6 +100,13 @@ const NarrativeWorkbench: React.FC<NarrativeWorkbenchProps> = ({
             {CATEGORY_ICONS[key]} {t('workbench.category.' + key)}
           </button>
         ))}
+        </div>
+        <Button size="small" data-testid="novel-workbench-expand"
+          aria-pressed={narrow ? undefined : expanded}
+          icon={expanded ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+          onClick={onToggleExpanded}>
+          {t(narrow ? 'novel.backToChapterEditor' : expanded ? 'workbench.restoreSplit' : 'workbench.expand')}
+        </Button>
       </div>
       <Tabs className="narrative-workbench-tabs" activeKey={activeKey} onChange={setSubTab}
         items={currentTabs.map(tab => ({ key: tab.key, label: <span>{tab.icon} {t('workbench.tab.' + tab.key)}</span>, children: tab.content }))}

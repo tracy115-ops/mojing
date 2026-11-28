@@ -12,6 +12,7 @@ import {
   ToolOutlined, SwapOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import ContinuityEvidence from './ContinuityEvidence';
 import { PropManager, type Prop, type PropCategory, type PropEvent, type LifecycleState } from '@/services/novel/prop-manager';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { panelHeader, statsRow, statItem } from './PanelStyles';
@@ -150,6 +151,7 @@ const PropsPanel: React.FC<PropsPanelProps> = ({ novelId }) => {
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 10 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <ContinuityEvidence novelId={novelId} kind="prop" />
       {/* Stats */}
       <div style={statsRow}>
         {(['active', 'introduced', 'dormant', 'damaged'] as LifecycleState[]).map(state => (

@@ -41,6 +41,85 @@
   border-left: none;
 }
 
+.narrative-workbench__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border-secondary);
+  flex: none;
+}
+
+.narrative-workbench__categories {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.narrative-workbench__toolbar > button {
+  flex: none;
+}
+
+.novel-knowledge-graph {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.novel-knowledge-graph__body {
+  display: grid;
+  grid-template-rows: minmax(180px, 1fr) minmax(0, min(42%, 280px));
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.novel-knowledge-graph__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 0;
+}
+
+.novel-knowledge-graph__controls > .ant-input-affix-wrapper {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.novel-knowledge-graph__canvas {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.novel-knowledge-graph__details {
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  border-top: 1px solid var(--border-secondary);
+}
+
+.novel-knowledge-graph__relations,
+.novel-knowledge-graph__evidence {
+  padding: 4px 12px;
+}
+
+@container (min-width: 760px) {
+  .novel-knowledge-graph__body {
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr) minmax(300px, 36%);
+  }
+
+  .novel-knowledge-graph__details {
+    border-top: none;
+    border-left: 1px solid var(--border-secondary);
+  }
+}
+
 .novel-workspace__footer {
   display: flex;
   flex-wrap: wrap;
@@ -156,4 +235,70 @@
 
 .chapter-editor__settings .ant-checkbox-wrapper {
   grid-column: 1 / -1;
+}
+
+.story-plan__stage {
+  margin-bottom: 8px;
+}
+
+.story-plan__stage .ant-card-head-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.story-plan__editor,
+.story-plan__field,
+.story-plan__finding {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.story-plan__field {
+  gap: 4px;
+}
+
+.story-plan__editor {
+  scroll-margin-block-start: 8px;
+}
+
+.story-plan__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.story-plan__read-actions {
+  margin-bottom: 8px;
+}
+
+.story-plan__review-head {
+  justify-content: space-between;
+}
+
+.story-plan__finding {
+  padding: 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.story-plan__locate {
+  justify-self: start;
+  padding-inline: 0;
+}
+
+.story-plan__comparison {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 8px;
+}
+
+.story-plan__quote {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

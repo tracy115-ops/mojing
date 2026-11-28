@@ -27,7 +27,7 @@ const AutopilotPipelineView: React.FC<{ novelId: string }> = ({ novelId }) => {
             <p>{t('novel.chapterOrder', { order: Math.min(state.currentChapterNumber + 1, state.targetChapterCount || 1) })} / {state.targetChapterCount}</p>
             <p>{t('workbench.pipeline.currentStage')}: {stages[state.currentStage] ? t('autopilotPipeline.stage.' + stages[state.currentStage]) : t('autopilotPipeline.status.idle')}</p>
             <Progress percent={Math.round(Math.max(0, Math.min(1, state.progress)) * 100)} status={status === 'error' ? 'exception' : status === 'running' ? 'active' : 'normal'} />
-            {beat && <p>{t('autopilotPipeline.beatProgress', { current: beat.currentBeatIndex + 1, total: beat.totalBeats })}</p>}
+            {state.currentStage === 'chapter_generation' && beat && <p>{t('autopilotPipeline.beatProgress', { current: beat.currentBeatIndex + 1, total: beat.totalBeats })}</p>}
           </Card>
           {state.currentChapterContent && <Card size="small" title={t('workbench.pipeline.draft')}>
             <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{state.currentChapterContent}</div>

@@ -10,6 +10,7 @@ import {
   ExclamationCircleOutlined, PushpinOutlined, AimOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from '@/i18n';
+import ContinuityEvidence from './ContinuityEvidence';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import { panelHeader, statsRow, statItem } from './PanelStyles';
 import type { Foreshadowing, ForeshadowingStatus } from '@/types/narrative';
@@ -43,6 +44,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
   const [filter, setFilter] = useState<FilterStatus>('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Foreshadowing | null>(null);
+  const [registeringEvidence, setRegisteringEvidence] = useState(false);
   const [form] = Form.useForm();
   const project = useProjectStore(s => s.projects.find(p => p.id === novelId));
   const chapters = project?.type === 'novel' ? getNovelChapters(project.metadata as NovelMetadata) : [];
@@ -73,7 +75,8 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
     };
   }, [items, writtenChapter]);
 
-  const openModal = (item?: Foreshadowing) => {
+  const openModal = (item?: Foreshadowing, source?: { description: string; chapter?: number }) => {
+    setRegisteringEvidence(!!source);
     if (item) {
       setEditingItem(item);
       form.setFieldsValue({
@@ -87,7 +90,12 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
     } else {
       setEditingItem(null);
       form.resetFields();
-      form.setFieldsValue({ plantedInChapter: chapterIndex + 1, urgency: 'medium', narrativeWeight: 5 });
+      form.setFieldsValue({
+        description: source?.description,
+        plantedInChapter: source ? source.chapter : chapterIndex + 1,
+        urgency: 'medium',
+        narrativeWeight: 5,
+      });
     }
     setModalOpen(true);
   };
@@ -100,7 +108,7 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
     const item: Foreshadowing = {
       id,
       novelId,
-      description: values.description,
+      description: values.description.trim(),
       plantedInChapter: Number(values.plantedInChapter),
       suggestedResolveChapter: values.suggestedResolveChapter ? Number(values.suggestedResolveChapter) : undefined,
       resolvedInChapter: editingItem?.resolvedInChapter,
@@ -111,6 +119,10 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
     };
 
     const all = repo.loadForeshadowing();
+    if (all.some(f => f.id !== id && f.plantedInChapter === item.plantedInChapter && f.description.trim() === item.description)) {
+      form.setFields([{ name: 'description', errors: [t('workbench.ledger.duplicate')] }]);
+      return;
+    }
     const idx = all.findIndex((f) => f.id === id);
     if (idx >= 0) { all[idx] = item; } else { all.push(item); }
     repo.saveForeshadowing(all);
@@ -161,14 +173,19 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Text type="secondary">{t('workbench.ledger.countScope')}</Text>
       {/* Stats row */}
       <div style={statsRow}>
         <span style={statItem('#3b82f6')}>● {stats.planted} {t('foreshadow.status.planted')}</span>
         <span style={statItem('#22c55e')}>● {stats.resolved} {t('foreshadow.status.resolved')}</span>
         <span style={statItem('#9ca3af')}>● {stats.abandoned} {t('foreshadow.status.abandoned')}</span>
         <Tag>{t('workbench.ledger.dueCount', { count: stats.overdue })}</Tag>
-        <span style={{ ...statItem(), marginLeft: 'auto', fontWeight: 600 }}>{t('foreshadow.total', { count: stats.total })}</span>
+        <span data-testid="foreshadow-ledger-total" style={{ ...statItem(), marginLeft: 'auto', fontWeight: 600 }}>{t('foreshadow.total', { count: stats.total })}</span>
       </div>
+      <ContinuityEvidence novelId={novelId} kind="clue"
+        onRegister={(description, chapter) => openModal(undefined, { description, chapter })}
+        isRegistered={(description, chapter) => items.some(item => item.description.trim() === description.trim() && (chapter === undefined || item.plantedInChapter === chapter))}
+      />
 
       {/* Filter strip */}
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -265,10 +282,20 @@ const ForeshadowLedgerPanel: React.FC<ForeshadowLedgerPanelProps> = ({ novelId, 
         destroyOnClose
       >
         <Form form={form} layout="vertical" size="small">
-          <Form.Item name="description" label={t('foreshadow.description')} rules={[{ required: true, message: t('foreshadow.descriptionRequired') }]}>
+          <Form.Item name="description" label={t('foreshadow.description')} rules={[{ required: true, whitespace: true, message: t('foreshadow.descriptionRequired') }]}>
             <TextArea rows={2} placeholder={t('foreshadow.descriptionPlaceholder')} />
           </Form.Item>
-          <Form.Item name="plantedInChapter" label={t('foreshadow.plantedChapter')} rules={[{ required: true }]}>
+          <Form.Item name="plantedInChapter" label={t('foreshadow.plantedChapter')} rules={[{ required: true }, {
+            validator: (_, value) => {
+              if (value === undefined || value === '') return Promise.resolve();
+              const chapter = Number(value);
+              if (!Number.isInteger(chapter) || chapter < 1) return Promise.reject(new Error(t('workbench.ledger.validChapter')));
+              if (registeringEvidence && !chapters.some(c => c.order + 1 === chapter && c.content.trim())) {
+                return Promise.reject(new Error(t('workbench.ledger.writtenChapter')));
+              }
+              return Promise.resolve();
+            },
+          }]}>
             <Input type="number" min={1} />
           </Form.Item>
           <div style={{ display: 'flex', gap: 12 }}>

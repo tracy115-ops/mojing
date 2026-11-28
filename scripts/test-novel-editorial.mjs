@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { buildWritingContext, getNovelChapters, textFingerprint } from '../src/services/novel/writing-context.ts';
+import { buildWritingContext, getChapterGraphEvidence, getNovelChapters, textFingerprint } from '../src/services/novel/writing-context.ts';
 import { EDITORIAL_DIMENSIONS, parseEditorialAssessment, needsEditorialRevision, applyEditorialEdits, parseEditorialEdits, labelEditorialParagraphs, parseOutlineAssessment, resolveEditorialCitation, resolveEditorialParagraph, isReviewCurrent } from '../src/services/novel/editorial-review.ts';
 import { getDueForeshadowing, lastWrittenChapter } from '../src/services/novel/workbench-state.ts';
+import { ContextBudgetAllocator } from '../src/services/novel/context-budget.ts';
 
 const source = { title: '末班车之后', description: '包里只有一张日期为明天的车票，禁止超自然。', genre: 'mystery', style: '克制现实叙事' };
 const bible = { novelId: 'test', characters: [], locations: [], worldSettings: [], styleNotes: [], timelineNotes: [{ id: 'plot-outline', event: '规划：交还失物' }] };
@@ -13,6 +14,10 @@ assert.ok(context.indexOf('第1章《章0》') < context.indexOf('第2章《章1
 assert.ok(!context.includes('未来章节的秘密'), 'future prose must not leak into earlier chapters');
 assert.ok(!context.includes('计划拿回车票但尚未发生'), 'outlines are not summaries of events that occurred');
 assert.ok(context.includes('待实现的剧情规划，不是已发生事实'));
+const essentialContext = buildWritingContext(source, bible, chapters, 2, [], 'writing', {}, '', text => !text.includes('雨夜收车'));
+assert.ok(essentialContext.includes(source.description), 'budget selection preserves author constraints');
+assert.ok(essentialContext.includes(chapters[2].content), 'budget selection preserves the latest chapter');
+assert.ok(!essentialContext.includes('雨夜收车'), 'budget selection drops older excerpts as whole sections');
 const plotOutline = { mainPlot:'核对备用票的提前领用', coreConflict:'保护师傅还是保留真实记录', themeMessage:'善意不能替代事实', ending:'查明预盖日期，保留原始报告', stages:[{name:'留下报告',chapterRange:'第1-3章',description:'上报后被要求撤回',coreEvent:'林岚拒绝改日期',foreshadowSeeds:['交接簿上的预领栏']}] };
 for (const purpose of ['writing', 'review']) {
   const plotContext = buildWritingContext(source,bible,chapters,2,[],purpose,{plotOutline});
@@ -35,6 +40,64 @@ assert.match(archivedContext, /第1章原文片段，由审读选取】\n林岚�
 assert.ok(!archivedContext.includes('缓存的保管状态'), 'editorial paraphrases cannot become facts in later chapters');
 const changed = older.map(c => c.order === 0 ? { ...c, content: c.content + '作者修改。' } : c);
 assert.ok(!buildWritingContext(source,bible,changed,4,[memory]).includes('第1章原文片段，由审读选取'), 'editing a chapter invalidates its cached excerpts');
+const transfer = {
+  ...memory,
+  continuityNotes: [
+    { ...memory.continuityNotes[0], link: { kind: 'relationship', subject: '林岚', predicate: '交票登记', object: '保安' } },
+    { ...memory.continuityNotes[0], link: { kind: 'fact', subject: '车票', predicate: '存放在', object: '档案室' } },
+  ],
+};
+assert.equal(getChapterGraphEvidence(older, [transfer]).filter(note => note.link).length, 1);
+assert.deepEqual(getChapterGraphEvidence(changed, [transfer]), [], 'edited prose invalidates graph links from the old draft');
+const pendingTransfer = { ...transfer, status: 'needs-revision' };
+assert.deepEqual(getChapterGraphEvidence(older, [pendingTransfer]), []);
+assert.ok(getChapterGraphEvidence(older, [pendingTransfer], true).every(note => note.pending));
+assert.doesNotMatch(buildWritingContext(source, bible, older, 1, [pendingTransfer]), /林岚 → 交票登记 → 保安/);
+assert.match(buildWritingContext(source, bible, older, 1, [transfer]), /林岚 → 交票登记 → 保安/);
+assert.doesNotMatch(buildWritingContext(source, bible, older, 0, [transfer]), /林岚 → 交票登记 → 保安/);
+
+const bagDiscovery = '林岚在7路末班车最后一排座位底下发现黄色帆布包。';
+const delayedPayoff = '核对黄色帆布包遗失时所处的位置，追查谁把它带进7路末班车。';
+const longBook = Array.from({length:34},(_,i)=>chapter(i,i===0
+  ? '夜班有些冷。'.repeat(95) + bagDiscovery + '窗外的店都关了。'.repeat(100)
+  : i===33 ? '尚未写到的未来独家证词。' : '她走进档案室翻找目录。'));
+for (const purpose of ['writing', 'review']) {
+  const focused = buildWritingContext(source,bible,longBook,33,[],purpose,{},delayedPayoff);
+  assert.ok(focused.includes('【第1章《章0》相关原文】\n' + bagDiscovery));
+  assert.equal(focused.includes('尚未写到的未来独家证词'), false);
+  assert.equal(focused.split(bagDiscovery).length, 2, 'a retrieved quotation is included once');
+}
+const revisedLongBook = longBook.map((item,i)=>i===0?{...item,content:item.content.replace('最后一排','第二排')}:item);
+const revisedEvidence = buildWritingContext(source,bible,revisedLongBook,33,[],'review',{},delayedPayoff);
+assert.ok(revisedEvidence.includes(bagDiscovery.replace('最后一排','第二排')));
+assert.ok(!revisedEvidence.includes(bagDiscovery), 'retrieval responds to edits to the source prose');
+const lockedCabinet = '刘姐把包和票装进登记袋，封口，锁进铁皮柜。';
+const longOpeningQuote = '雨水顺着车玻璃往下流。'.repeat(80) + lockedCabinet;
+const graphBook = longBook.map((item, order) => order === 0 ? { ...item, content: longOpeningQuote } : item);
+const closingLink = { kind: 'fact', subject: '刘姐', predicate: '封存交接', object: '铁皮柜' };
+const firstChapterGraph = {
+  chapter: 0, status: 'reviewed', contentFingerprint: textFingerprint(longOpeningQuote),
+  continuityNotes: [{ fact: '封存过程', quote: longOpeningQuote, link: closingLink }],
+};
+const recentGraph = [30, 31, 32].map(chapter => ({
+  chapter, status: 'reviewed', contentFingerprint: textFingerprint(graphBook[chapter].content),
+  continuityNotes: Array.from({ length: 3 }, () => ({
+    fact: '翻找目录', quote: graphBook[chapter].content,
+    link: { kind: 'fact', subject: '档案室', predicate: '翻找', object: '目录' },
+  })),
+}));
+for (const purpose of ['writing', 'review']) {
+  const result = buildWritingContext(source,bible,graphBook,33,[...recentGraph,firstChapterGraph],purpose,{},'核对封存交接。');
+  assert.match(result, /第1章叙事关联，须结合引文核对】\n刘姐 → 封存交接 → 铁皮柜\n[^\n]*刘姐把包和票装进登记袋，封口，锁进铁皮柜。/);
+  assert.ok(result.indexOf('刘姐 → 封存交接 → 铁皮柜') < result.indexOf('档案室 → 翻找 → 目录'));
+  assert.equal((result.match(/叙事关联，须结合引文核对/g) ?? []).length, 4, 'repeated notes within a chapter only occupy one slot');
+}
+const fullLengthBook = longBook.map(c => ({ ...c, content: c.content + '长篇正文对照段落。'.repeat(360) }));
+const longContext = buildWritingContext(source,bible,fullLengthBook,33,[],'writing',{},delayedPayoff);
+const budget = new ContextBudgetAllocator();
+budget.registerSlot({ name:'EDITORIAL_CONTINUITY', tier:'T0', content:longContext, estimatedTokens:0, priority:140 });
+budget.registerSlot({ name:'CURRENT_CHAPTER_PROSE', tier:'T0', content:'本章正在写作的正文。'.repeat(220), estimatedTokens:0, priority:139 });
+assert.ok(budget.allocate().prompt.includes(bagDiscovery), 'the oldest clue survives the actual beat budget at book length');
 
 const metadata = { chapters: [chapter(9,'旧版正文')], storyNodes: [{ id:'b',nodeType:'chapter',order:20,content:'后章' }, { id:'v',nodeType:'volume',order:0 }, {id:'a',nodeType:'chapter',order:10,content:'前章'}] };
 assert.deepEqual(getNovelChapters(metadata).map(c => [c.id,c.order,c.content]), [['a',0,'前章'],['b',1,'后章']], 'reading tools share the current story tree rather than stale legacy chapters');
@@ -89,6 +152,21 @@ const directReview = parseEditorialAssessment(JSON.stringify({...assessment,find
 }],continuityNotes:[]}),directProse,'');
 assert.equal(directReview.findings[0].basis,'conflict','numeric and localized spellings of the cited clock time match');
 assert.equal(needsEditorialRevision(directReview),true);
+const spokenTime = '老吴说访客当晚22:10来过。\n\n他又说访客晚上十点四十到。';
+const spokenFinding = {
+  ...timeFinding, currentEvidence: '晚上十点四十', referenceEvidence: '22:10',
+  problem: '同一次来访分别写成22:10和22:40。'
+};
+const spokenAssessment = finding => JSON.stringify({ ...assessment, findings: [finding], continuityNotes: [] });
+assert.equal(needsEditorialRevision(parseEditorialAssessment(spokenAssessment(spokenFinding), spokenTime, '')), true);
+const ambiguousFinding = { ...spokenFinding, currentEvidence: '十点四十' };
+assert.equal(needsEditorialRevision(parseEditorialAssessment(
+  spokenAssessment(ambiguousFinding), spokenTime.replace('晚上十点四十', '十点四十'), '',
+)), false, 'an unqualified Chinese clock time must not imply evening');
+assert.equal(needsEditorialRevision(parseEditorialAssessment(
+  spokenAssessment({ ...spokenFinding, currentEvidence: '晚上10点40分', problem: '同一次来访写成22:10和10:40。' }),
+  spokenTime.replace('晚上十点四十', '晚上10点40分'), '',
+)), false, 'an explicit evening time cannot also serve as a morning citation');
 const minorConflict = parseEditorialAssessment(JSON.stringify({ ...assessment, findings: [{
   ...timeFinding, severity: 'minor', currentEvidence: '22:40', problem: '同一次到站分别写为23:45和22:40。',
 }], continuityNotes: [] }), directProse, '');
@@ -137,4 +215,10 @@ assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'
 assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'R2-R3',after:'改前文',reason:'越权'}] }),structuralDraft), /无效/);
 assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId:'C1-C4',after:'',reason:'误删全文'}] }),structuralDraft), /清空/);
 assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [null] }),structuralDraft), /有效对象/);
+const repeatedScene = Array.from({ length: 23 }, (_, i) => '环节 ' + (i + 1)).join('\n\n');
+const duplicateDraft = repeatedScene + '\n\n现场结束。\n\n' + repeatedScene + '\n\n她锁上值班室。';
+const deleteDuplicate = parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId: 'C25-C47', after: '', reason: '删去第二遍登记。' }] }), duplicateDraft);
+assert.equal(applyEditorialEdits(duplicateDraft, deleteDuplicate), repeatedScene + '\n\n现场结束。\n\n\n\n她锁上值班室。');
+assert.throws(() => applyEditorialEdits(duplicateDraft.replace('现场结束。', '现场结束。\n\n她签了字。'), deleteDuplicate), /已经改变/);
+assert.throws(() => parseEditorialEdits(JSON.stringify({ edits: [{ paragraphId: 'C25-C47', after: '新场景。', reason: '替换长场景。' }] }), duplicateDraft), /最多连续20段/);
 console.log('Novel editorial contracts passed: chronological source text, no future/outline facts, stale-memory rejection, current story tree, grounded review, hard-conflict gate, exact edits and full ending preservation.');

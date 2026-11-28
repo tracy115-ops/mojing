@@ -7,7 +7,7 @@ export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Runs the actual release executable with an isolated WebView2 profile.
 // Only input configuration may be seeded by callers; native IPC stays intact.
-export async function desktopSession({ executable, profile, allowedOrigins = [], softwareRendering = true }) {
+export async function desktopSession({ executable, profile, allowedOrigins = [], softwareRendering = true, interceptRequests = true }) {
   const reservation = createServer();
   await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
   const port = reservation.address().port;
@@ -102,13 +102,27 @@ export async function desktopSession({ executable, profile, allowedOrigins = [],
   const choose = async (selector, label) => {
     await nativeClick(selector);
     const input = `(()=>{const e=document.querySelector(${JSON.stringify(selector)});return e?.matches('input')?e:e?.querySelector('input');})()`;
-    const option = `(()=>{const input=${input},popup=document.getElementById(input?.getAttribute('aria-controls'))?.closest('.ant-select-dropdown');if(!popup||popup.classList.contains('ant-select-dropdown-hidden'))return;return[...popup.querySelectorAll('.ant-select-item-option')].find(e=>e.title===${JSON.stringify(label)}||e.textContent===${JSON.stringify(label)});})()`;
+    const popup = `document.getElementById((${input})?.getAttribute('aria-controls'))?.closest('.ant-select-dropdown:not(.ant-select-dropdown-hidden)')`;
+    const option = `[...((${popup})?.querySelectorAll('.ant-select-item-option') ?? [])].find(e=>e.title===${JSON.stringify(label)}||e.textContent===${JSON.stringify(label)})`;
+    await waitFor(`Boolean(${popup})`, 'open select dropdown');
+    const holder = `(${popup})?.querySelector('.rc-virtual-list-holder')`;
+    if (!await evaluate(`Boolean(${option})`) && await evaluate(`Boolean(${holder})`)) {
+      await evaluate(`(${holder}).scrollTop = 0`);
+      await delay(80);
+      while (!await evaluate(`Boolean(${option})`)) {
+        const scrolled = await evaluate(`(()=>{const list=${holder};if(!list||list.scrollTop+list.clientHeight>=list.scrollHeight-1)return false;list.scrollTop+=Math.max(1,list.clientHeight-32);return true;})()`);
+        if (!scrolled) break;
+        await delay(80);
+      }
+    }
     await waitFor(`Boolean(${option})`, 'select option ' + label);
     await evaluate(`(${option}).click()`);
     await waitFor(`(${input})?.getAttribute('aria-expanded')!=='true'`, 'selected dropdown closes');
   };
   const screenshot = async path => { const result = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(path, Buffer.from(result.data, 'base64')); };
-  await call('Runtime.enable'); await call('Page.enable'); await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
+  await call('Runtime.enable');
+  await call('Page.enable');
+  if (interceptRequests) await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
   await waitFor('!!window.__TAURI__?.core?.invoke', 'real Tauri API');
   return { child, call, evaluate, waitFor, click, textButton, fill, nativeClick, nativeTextButton, choose, screenshot, errors, blocked, consoleMessages,
     close: async () => {

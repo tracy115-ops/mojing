@@ -16,7 +16,7 @@ import {
 import { useTranslation } from '@/i18n';
 import { providerRouter } from '@/services/providers';
 import { getTemplate } from '@/services/novel/prompt-templates';
-import { collectPlanningText } from '@/services/novel/planning-generation';
+import { collectNovelStreamText } from '@/services/novel/planning-generation';
 import { reviewStoryPlan } from '@/services/novel/story-plan-review';
 import { validateWizardPlot } from '@/services/novel/story-plan-contract';
 import { decodeNovelReference, formatNovelReference, prepareNovelReference, REFERENCE_GUIDE_LIMIT,
@@ -121,7 +121,7 @@ const NovelSetupWizard: React.FC<NovelSetupWizardProps> = ({ open, onComplete, o
     const controller = new AbortController();
     abortRef.current = controller;
     setBudgetRetry(false);
-    return collectPlanningText(maxTokens => providerRouter.stream({
+    return collectNovelStreamText(maxTokens => providerRouter.stream({
         taskType: 'generation',
         systemPrompt,
         userPrompt,

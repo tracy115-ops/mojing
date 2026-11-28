@@ -4,14 +4,18 @@
 // ============================================================================
 
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
-import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip } from 'antd';
+import { Typography, Tag, Space, Empty, Badge, Input, Button, List, Modal, Form, message, Tooltip, Select, Checkbox } from 'antd';
+import { format } from 'echarts';
+import { useNovelGraphEvidence } from './useNovelGraphEvidence';
+import type { ChapterGraphEdge } from '@/services/novel/chapter-graph-evidence';
 import {
   ApartmentOutlined, PlusOutlined, DeleteOutlined, SearchOutlined,
-  FullscreenOutlined,
+  ReloadOutlined,
   CheckOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import { useTranslation } from '@/i18n';
+import ContinuityEvidence from './ContinuityEvidence';
 import { NarrativeRepository } from '@/services/novel/narrative-repository';
 import type { RelationshipTriple } from '@/types/narrative';
 import { useChartTheme, chartTooltipStyle, chartLegendStyle } from '@/hooks/useChartTheme';
@@ -56,11 +60,14 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   const { t } = useTranslation();
   const chartTheme = useChartTheme();
   const repo = useMemo(() => new NarrativeRepository(novelId), [novelId]);
+  const evidence = useNovelGraphEvidence(repo, novelId);
+  const [evidenceChapter, setEvidenceChapter] = useState<number>();
 
   const [rawTriples, setRawTriples] = useState<RelationshipTriple[]>(() => repo.loadTriples());
   const [searchQuery, setSearchQuery] = useState('');
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [showAllLabels, setShowAllLabels] = useState<boolean>();
   const [revision, refresh] = useState(0);
   useEffect(() => repo.subscribe(['bible', 'triples'], () => { setRawTriples(repo.loadTriples()); refresh(n => n + 1); }), [repo]);
   const echartRef = useRef<ReactECharts | null>(null);
@@ -93,7 +100,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   // Merge extracted triples with Bible-derived ones (dedup by subject|predicate|object)
   const triples = useMemo(() => {
     const seen = new Set<string>();
-    const merged: RelationshipTriple[] = [];
+    const merged: Array<RelationshipTriple | ChapterGraphEdge> = [];
     for (const tr of [...bibleTriples, ...rawTriples]) {
       const k = `${tr.subject}|${tr.predicate}|${tr.object}`;
       if (!seen.has(k)) {
@@ -101,8 +108,18 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         merged.push(tr);
       }
     }
+    const matchingEvidence = evidence.filter(note => evidenceChapter === undefined || note.chapter === evidenceChapter);
+    for (const note of matchingEvidence.slice(0, 60)) {
+      const subject = note.link?.subject ?? t('novel.chapterOrder', { order: note.chapter + 1 });
+      const predicate = note.link?.predicate ?? t('workbench.graph.excerptEdge');
+      const object = note.link?.object ?? note.fact;
+      const key = JSON.stringify([note.chapter, subject, predicate, object]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ subject, predicate, object, sinceChapter: note.chapter, source: 'extracted', evidence: note });
+    }
     return merged;
-  }, [rawTriples, bibleTriples]);
+  }, [rawTriples, bibleTriples, evidence, evidenceChapter, t]);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return triples;
@@ -117,8 +134,9 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
 
   const selectedTriples = useMemo(() => {
     if (!selectedNode) return [];
-    return triples.filter((tr) => tr.subject === selectedNode || tr.object === selectedNode);
-  }, [selectedNode, triples]);
+    return filtered.filter((tr) => tr.subject === selectedNode || tr.object === selectedNode);
+  }, [selectedNode, filtered]);
+  const allLabels = showAllLabels ?? filtered.length <= 20;
 
   const option = useMemo(() => {
     if (filtered.length === 0) return null;
@@ -130,9 +148,11 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
     }
 
     const connectionCount = new Map<string, number>();
+    const excerptNodes = new Set<string>();
     for (const tr of filtered) {
       connectionCount.set(tr.subject, (connectionCount.get(tr.subject) ?? 0) + 1);
       connectionCount.set(tr.object, (connectionCount.get(tr.object) ?? 0) + 1);
+      if ('evidence' in tr && tr.object === tr.evidence.fact) excerptNodes.add(tr.object);
     }
 
     const typeToIdx: Record<string, number> = { character: 0, location: 1, unknown: 2 };
@@ -152,11 +172,14 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           shadowColor: ENTITY_COLORS[type] + '40',
         },
         label: {
-          show: true,
+          show: allLabels || !excerptNodes.has(id) || selectedNode === id,
           fontSize: conns > 3 ? 13 : 11,
           fontWeight: conns > 3 ? 'bold' : 'normal',
           color: chartTheme.textPrimary,
+          width: 150,
+          overflow: 'truncate',
         },
+        emphasis: { label: { show: true } },
         category: typeToIdx[type] ?? 2,
       };
     });
@@ -173,7 +196,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         type: tr.source === 'extracted' ? 'dashed' as const : 'solid' as const,
       },
       label: {
-        show: true,
+        show: allLabels || tr.subject === selectedNode || tr.object === selectedNode,
         formatter: tr.predicate.length > 6 ? tr.predicate.slice(0, 6) + '…' : tr.predicate,
         fontSize: 9,
         color: chartTheme.textSecondary,
@@ -181,6 +204,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         padding: [1, 3],
         borderRadius: 2,
       },
+      emphasis: { label: { show: true } },
     }));
 
     const categories = [
@@ -197,16 +221,13 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           if (params.dataType === 'node') {
             const type = entitySet.get(params.name) || 'unknown';
             const conns = connectionCount.get(params.name) ?? 0;
-            return `<b>${params.name}</b><br/>` +
+            return `<b>${format.encodeHTML(params.name)}</b><br/>` +
               `<span style="color:${ENTITY_COLORS[type]}">${t('knowledgeGraph.entityType.' + type)}</span>` +
               `<br/><span style="color:#888">${conns} ${t('knowledgeGraph.connections')}</span>`;
           }
           if (params.dataType === 'edge') {
-            const src = params.data.source;
-            const tr = filtered.find((t) => t.subject === src && t.predicate === params.data.value);
-            const srcLabel = tr?.source === 'extracted'
-              ? `<span style="color:#8b5cf6">(${t('knowledgeGraph.inferred')})</span>` : '';
-            return `${params.data.source} → <b>${params.data.value}</b> → ${params.data.target}<br/>${srcLabel}`;
+            const { source, value, target } = params.data;
+            return [source, value, target].map(format.encodeHTML).join(' → ');
           }
           return '';
         },
@@ -226,6 +247,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         data: nodes,
         links,
         categories,
+        labelLayout: { hideOverlap: true },
         roam: true,
         draggable: true,
         force: {
@@ -245,7 +267,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         },
       }],
     };
-  }, [filtered, charNames, locNames, selectedNode, chartTheme, t]);
+  }, [filtered, charNames, locNames, selectedNode, allLabels, chartTheme, t]);
 
   useEchartsReady(echartRef, option);
 
@@ -290,7 +312,7 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
   };
 
   return (
-    <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+    <div className="novel-knowledge-graph">
       <div style={{
         padding: '4px 12px', fontWeight: 600, fontSize: 13,
         borderBottom: '1px solid var(--border-secondary)',
@@ -307,9 +329,17 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       </div>
 
       <p style={{ padding: '0 12px', fontSize: 12, color: 'var(--text-secondary)' }}>{t('workbench.graph.hint')}</p>
+      {evidence.length > 0 && <div style={{ padding: '0 12px' }}>
+        <Select size="small" style={{ width: '100%' }} allowClear aria-label={t('workbench.graph.evidenceChapter')}
+          placeholder={t('workbench.graph.evidenceChapter')} value={evidenceChapter}
+          onChange={chapter => { setEvidenceChapter(chapter); setSelectedNode(null); }}
+          options={[...new Set(evidence.map(note => note.chapter))].map(chapter => ({
+            value: chapter, label: t('novel.chapterOrder', { order: chapter + 1 }),
+          }))} />
+      </div>}
 
       {/* Search */}
-      <div style={{ padding: '6px 12px 0', display: 'flex', gap: 6 }}>
+      <div className="novel-knowledge-graph__controls">
         <Input
           prefix={<SearchOutlined />}
           placeholder={t('knowledgeGraph.searchPlaceholder')}
@@ -317,14 +347,19 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
           onChange={(e) => setSearchQuery(e.target.value)}
           allowClear
           size="small"
-          style={{ flex: 1 }}
         />
         <Space size={2}>
-          <Button size="small" icon={<FullscreenOutlined />} onClick={handleResetZoom} />
+          <Checkbox checked={allLabels} onChange={event => setShowAllLabels(event.target.checked)}>
+            {t('workbench.graph.showLabels')}
+          </Checkbox>
+          <Tooltip title={t('workbench.graph.resetView')}>
+            <Button size="small" aria-label={t('workbench.graph.resetView')} icon={<ReloadOutlined />} onClick={handleResetZoom} />
+          </Tooltip>
         </Space>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden', minHeight: 200 }}>
+      <div className="novel-knowledge-graph__body">
+      <div className="novel-knowledge-graph__canvas">
         {!option ? (
           <div style={{ padding: 40 }}>
             <Empty description={t('knowledgeGraph.empty')} image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -342,10 +377,8 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
       </div>
 
       {/* Selected node triples or full triple list */}
-      <div style={{
-        maxHeight: 180, overflow: 'auto', borderTop: '1px solid var(--border-secondary)',
-        padding: '4px 12px',
-      }}>
+      <div className="novel-knowledge-graph__details">
+      <div className="novel-knowledge-graph__relations">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <Text strong style={{ fontSize: 11 }}>
             {selectedNode
@@ -360,9 +393,15 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         </div>
         <List
           size="small"
-          dataSource={selectedNode ? selectedTriples : triples.slice(0, 20)}
+          dataSource={selectedNode ? selectedTriples : filtered}
+          pagination={filtered.length > 20 ? { pageSize: 20, size: 'small', showSizeChanger: false } : false}
           renderItem={(triple) => {
             const idx = triples.indexOf(triple);
+            if ('evidence' in triple) return <List.Item><div data-testid="knowledge-graph-evidence">
+              <Text strong>{triple.subject} → {triple.predicate} → {triple.object}</Text>
+              {triple.evidence.pending && <Tag color="warning">{t('novel.editor.needsRevision')}</Tag>}
+              <div><Text type="secondary">{t('novel.chapterOrder', { order: triple.sinceChapter + 1 })} · {triple.evidence.quote}</Text></div>
+            </div></List.Item>;
             return (
               <List.Item style={{ padding: '2px 8px', fontSize: 11 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1 }}>
@@ -390,7 +429,11 @@ const KnowledgeGraphView: React.FC<KnowledgeGraphViewProps> = ({ novelId }) => {
         />
       </div>
 
-      {/* Add triple modal */}
+      <div className="novel-knowledge-graph__evidence">
+        <ContinuityEvidence novelId={novelId} />
+      </div>
+      </div>
+      </div>
       <Modal
         title={t('knowledgeGraph.addTriple')}
         open={addModalOpen}

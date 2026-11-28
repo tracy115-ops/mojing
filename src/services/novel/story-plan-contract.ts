@@ -14,12 +14,19 @@ const readField = (object: unknown, key: string): unknown =>
     : undefined;
 
 export class InvalidStoryPlanEdits extends Error {}
+export class UnresolvedStoryPlan extends Error {
+  readonly candidate: { plan: Record<string, unknown>; changes: string[] };
+
+  constructor(candidate: { plan: Record<string, unknown>; changes: string[] }, issues: string[]) {
+    super('全书情节仍需调整：' + (issues.join('；') || '未形成可写方案'));
+    this.candidate = candidate;
+  }
+}
 
 export function applyStoryPlanAssessment(text: string, draft: string) {
   const result = parseLLMJson<StoryPlanAssessment>(text);
   if (!result || typeof result.ready !== 'boolean' || !Array.isArray(result.edits) || !Array.isArray(result.unresolvedIssues)
     || !result.unresolvedIssues.every(nonempty)) throw new InvalidStoryPlanEdits('全书情节审读结果不完整，未采用新方案。');
-  if (!result.ready || result.unresolvedIssues.length) throw new Error('全书情节仍需调整：' + (result.unresolvedIssues.join('；') || '未形成可写方案'));
   const plan = parseLLMJson(draft);
   if (!plan || typeof plan !== 'object' || Array.isArray(plan)) throw new Error('待审全书方案格式不完整。');
 
@@ -41,7 +48,9 @@ export function applyStoryPlanAssessment(text: string, draft: string) {
     editedFields.add(field);
     changes.push(edit.reason.trim());
   }
-  return { plan, changes };
+  const candidate = { plan, changes };
+  if (!result.ready || result.unresolvedIssues.length) throw new UnresolvedStoryPlan(candidate, result.unresolvedIssues);
+  return candidate;
 }
 
 export function validateWizardPlot(plan: Record<string, unknown>): void {
